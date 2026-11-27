@@ -35,6 +35,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`wm_restart_activity` on the same record), so the root never changes. `onSaveInstanceState` still runs (the client
   never reads the flag). Left: AOSP still removes a record that is `finishing`, or not visible and launched 3 times in
   the last minute (a crash loop) - then the old state can come back. Run: `docs/testing/emulator.md` §6ai.
+- **The kiosk's end relies on it** (design 141): the unpin has Home stop lock task from its own task
+  (`lock/HomeRootStop.kt`), which from the root clears every other locked task - a leftover `BlockedAppActivity`
+  included - and empties the locked list (`hardening.md`, "The kiosk ends from its root"). With the kiosk on and the
+  phone unlocked Home is the root in every designed flow (Home roots it, the glance re-roots through Home at its leave,
+  Home's record survives a process death in place). If it isn't the root after all, Home's stop clears only Home's own
+  task - which the emptying did anyway - and the emptying runs as before.
 
 ## Install Now: the parent's one-time update (design 37, `docs/design/37-install-now.md`, at the monorepo root)
 

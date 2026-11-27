@@ -1,6 +1,6 @@
 # Design 141: the kiosk ends from its root
 
-Status: design rev 2, 2026-11-27 (branch `kiosk-root-design`; rev 1 7f84d99d2, its design QA 0H 3M 5L all taken - §14);
+Status: built 2026-11-27 on branch `kiosk-root` (§15), not gated; design rev 2 (branch `kiosk-root-design`; rev 1 7f84d99d2, its design QA 0H 3M 5L all taken - §14);
 PLAN "Fix backlog" 1k. Launcher only, no server or contract change (Q1: log only unless the owner asks for the PWA
 line). Android 14-17: AOSP `android14-release`, `android15-release`, `android16-release` and `main` read 2026-11-27 - the
 functions below are the same code in all four (§7); the APIs are `Activity.stopLockTask` (API 21) and
@@ -336,3 +336,20 @@ stuck" - with "Start telefonen på nytt" / "Restart the phone" behind the (i). I
   `IllegalArgumentException` and the broad catch (§2, §3.2); §7's one-line `performStopLockTask` difference.
 - **L5** tests and rows: the "only in the unpin" scan, PINNED rows, the `isChangingConfigurations` scan (§10); gate rows
   11 (end and start within ~1 s) and 12 (font size); rows 2, 3, 6 and 9 on both images (§11).
+
+## 15. The build (2026-11-27, branch `kiosk-root`)
+
+`lock/HomeRootStop.kt` (the stop, the resumed-activity tracker, the stuck check, §3.4), the pure rules in
+`lock/LockTaskRoot.kt` (`LockTaskRootTest`), `LockTaskChrome.writeLockTask`'s unpin, `HomeActivity`'s register/unregister
+and its stop's `PinLockRuntime.requestChromePass`; the source scans in `HomeFrontTest`. Where the build fills in what the
+design left open:
+- `homeRootStopAnswer` reads NOT_LOCKED first, then `LOCKED_CHROME`, then `NO_HOME`: §4's boot cover and process-start
+  rows (no Home, nothing locked) answer NOT_LOCKED, never a bring.
+- `unpinStep` has a third answer, `WAIT_FOR_HOME`: a pass while the brought Home is awaited (brought, the 3 s not over)
+  leaves the list too - emptying it then would clear Home's root record before its stop.
+- A pass that brings Home or waits for it schedules no stuck check (it would log stuck before Home resumes); the 3 s
+  pass does.
+- The retry's tracker skips `PinLockActivity` (the glance's lock task is its own, `lockTaskEntry`/`lockLeave`); with no
+  activity of ours resumed the retry answers `NO_HOME`.
+- `NOT_LOCKED` is never logged (every kiosk-off pass answers it); the stuck line is once per kiosk-off spell, as
+  `REFUSED`/`NO_HOME`.

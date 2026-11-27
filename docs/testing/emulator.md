@@ -1934,6 +1934,7 @@ Written, not run as a whole:
 - §6bk - Apple's cell lookup (design 125b) - never run; its §9 rows (neighbours, NR, a second SIM, Apple's answer) are
   the Jelly Star's with a SIM.
 - §6bz - Storytel books sealed on the phone (design 117) - never run.
+- §6cf - the kiosk ends from its root (design 141) - never run; its rows on Android 17 are owed (no API 37 image).
 
 Rows:
 - §6: the row-count change - an untick uninstalls the app.
@@ -3721,3 +3722,21 @@ from the hold's end (`spanFrom = max(from, holdEnd)`).
 | 15 | Blocked: not reachable with Vibb's maximum time to lock |
 
 No product code changed. The emulator and the server were stopped at 15:05 UTC.
+
+
+## 6cf. The kiosk ends from its root (design 141, branch `kiosk-root`) - written, not run
+
+The rows are design 141 §11 (`docs/design/141-kiosk-ends-from-root.md`): its setup (the branch's debug launcher as Device
+Owner on `jelly36` and `compat34`, the kiosk on with the block `0x7f`, Home's task `mLockTaskModeTasks` #0, the lock-task
+protolog on after every boot - `adb shell wm logging enable-text WM_DEBUG_LOCKTASK`), "a leftover" (an `am start -n` of a
+package neither pinned nor suspended, "App is not available", then the Home key), what to record per row, and rows 1-12.
+Rows 2, 3, 6 and 9 on both images, the rest on 16 unless the row says; row 1 is the control on `main`. Android 17 owed.
+What the build adds for the gate:
+- the log: `adb logcat -s HomeRootStop LockTaskChrome HomeActivity` - "The kiosk's end: Home's stop ASKED" (`NO_HOME`,
+  `REFUSED`, `FAILED`, `LOCKED_CHROME`; `NOT_LOCKED` is silent; `REFUSED`/`NO_HOME` once per kiosk-off spell), "lock task
+  still on, retry from our resumed activity ..." and "lock task ended after the retry" (rows 7, 9), "Lock task still on
+  after the kiosk's end (Home's stop: ..., retry: ...)" (the stuck line: row 8's dark half; row 1 runs `main`, which has none), "no Home in
+  this process - Home brought, the list waits for its stop" (row 8);
+- the state: `adb shell dumpsys activity activities | grep -E 'mLockTaskModeState|mLockTaskModeTasks' -A3`, right after
+  and ~2 s after each pass; Home's record: `adb logcat -b events | grep -E 'wm_(finish_activity|on_create_called).*HomeActivity'`.
+
