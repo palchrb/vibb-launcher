@@ -39,7 +39,11 @@ plug-in, `RefrontPolicy.kt` "(4i)") - unchecked, gate row 10.
 ## 2. Why a stop from the root fixes it, and the gap it opens (AOSP)
 
 - `Activity.stopLockTask()` is one binder call with the activity's token (Activity 9019-9021, 16: 9626-9628; ACC
-  1218-1220 -> ATMS `stopLockTaskModeInternal` 2613-2639, 16: 2687-2713). No foreground check (only the start has
+  1218-1220 -> ATMS `stopLockTaskModeInternal` 2613-2639, 16: 2687-2713). **On Android 14 and 15 it is `oneway`**
+  (`IActivityClientController.aidl`: `oneway void stopLockTaskModeByToken`, and the start, in `android14-release` and
+  `android15-release`; plain `void` in `android16-release` and `main`, read 2026-11-27 - emulator.md §6cg F1): there
+  `stopLockTask()` returns before system_server has run the stop, and no exception comes back - a `SecurityException`
+  ("Invalid uid", §1) is lost, so `REFUSED` is never seen on 14/15. §3.5 waits for the stop to land. No foreground check (only the start has
   "Invalid task, not in foreground", ATMS 2590-2593, 16: 2667-2670) and no thread check. A token whose record is gone
   returns silently (`r == null -> return`); a record without a task throws `IllegalArgumentException` ("can't stop
   LockTask for null task", LTC 507-509).
@@ -54,7 +58,7 @@ plug-in, `RefrontPolicy.kt` "(4i)") - unchecked, gate row 10.
   the root, or isn't locked at all, it clears that task (Activity's own doc: "will not terminate the LockTask mode, but
   only finish its own task").
 - So: Home stops lock task from its own task while it is the root -> every other locked task is closed, Home stays as
-  it is, the locked list is empty at once. The `setLockTaskPackages(admin, [])` that follows finds no locked task:
+  it is, the locked list is empty at once (on 16+ when the call returns; on 14/15 when the oneway stop has run, §3.5). The `setLockTaskPackages(admin, [])` that follows finds no locked task:
   nothing removed, no Home restart, so neither of §6af's races can happen (both were the system's Home restart inside
   that call).
 - **The gap.** The state stays LOCKED until the posted `performStopLockTask` (LTC 587) runs. In that window:
@@ -70,9 +74,9 @@ plug-in, `RefrontPolicy.kt` "(4i)") - unchecked, gate row 10.
     then brings the in-call UI forward - ours with the dialer role, the system dialer without); Home's `onResume`,
     resumed by step 3's clear, can launch `LockActivity` (a rule's reason), `SetupFlowActivity`
     (`SetupRun.takeReturnAfterPause`, the setup hold), `ConnectActivity` and the role prompt (the permission
-    controller, a pinned helper). Step 4 follows step 3 at once on the same thread, so a launch must come within one
-    binder round trip; Home's need a client transaction and a main-thread hop first. Narrow, but real - §3.3's retry
-    and gate rows 7 and 9 cover it.
+    controller, a pinned helper). Step 4 follows step 3 at once on the same thread (after §3.5's wait, once the state
+    reads NONE: then on the "skips it" side), so a launch must come within that window; Home's need a client
+    transaction and a main-thread hop first. Narrow, but real - §3.3's retry and gate rows 7 and 9 cover it.
 
 ## 3. The fix
 
@@ -82,6 +86,8 @@ plug-in, `RefrontPolicy.kt` "(4i)") - unchecked, gate row 10.
 2. `kioskEnabled(false)` - unchanged (§6af part 2). It must come before step 3: Home, resumed by the clear of the task
    in front, reads it in `reconcileKioskMode` and must not start lock task again.
 3. **New: `HomeRootStop.stop(context)`** (§3.2) - only while `lockTaskModeState == LOCK_TASK_MODE_LOCKED`.
+3b. **New (§3.5, emulator.md §6cg F1): `HomeRootStop.settle(context)`** - right after a stop of Home's, wait (bounded)
+   until lock task isn't LOCKED: on 14/15 the stop is oneway.
 4. `setLockTaskPackages(admin, [])` - unchanged; it is also the cleanup for anything started in the gap before the
    posted stop, and the whole fallback when step 3 couldn't stop it. Skipped once when step 3 answers `NO_HOME` and
    Home is being brought (§3.4).
@@ -170,6 +176,36 @@ another app was in front; Home's record stays the root and is restarted only whe
   does too.
 - This shrinks §5's residual to a process death plus a leftover plus a dark screen or an undecided lock.
 
+### 3.5 The wait for a oneway stop (Android 14 and 15; emulator.md §6cg F1, added after the gate)
+
+On 14 and 15 `stopLockTask()` is oneway (§2): it returned `ASKED` and the emptying went out in the same ms, and in 8 of
+the gate's 37 kiosk ends the emptying reached the lock first - it removed and cleared Home's task, and the stop, run
+11 ms later, found no record. With a leftover locked that is §1's stuck picture again (5 of 5); without one Home is
+recreated (§6af's path). When the stop won, it won by 0-19 ms. So between step 3 and step 4:
+- `HomeRootStop.settle(context)` reads `lockTaskModeState` every 10 ms (`KIOSK_END_STOP_POLL_MS`) while it reads LOCKED
+  and Home's stop went through less than **300 ms** ago (`KIOSK_END_STOP_SETTLE_MS`), then step 4 runs. NONE means the
+  stop has landed: AOSP posts `performStopLockTask`, which sets NONE first, only once the locked list is empty. Pure rule
+  `stopSettle(sinceAskedMs, waited, state)`.
+- "Home's stop went through" is `KioskEndSpell.askedAtMs`: the pass's own `ASKED`, and Home's own stop at a resume
+  (`homeStopped()`) - §3.4's pass after a brought Home's stop answers `ASKED_BEFORE` and would race the same way. An older
+  stop (a stuck spell's later passes) waits for nothing and reads nothing.
+- **The bound**: over 15 times the gate's worst (19 ms, and the lost stop's 11 ms behind) for a busy system_server at
+  the kiosk's end; short enough that a main-thread taker of the chrome monitor waits at most 0.3 s once per kiosk-off
+  spell (no ANR near), and it ends well before §3.3's 1 s check.
+- **No deadlock**: the wait waits on system_server alone (its stop under `mGlobalLock`, the posted end on its own
+  handler), never on this process's main thread, so holding the chrome monitor through it can't block on main;
+  `SystemClock.sleep` ignores interrupts (no early exit into the race).
+- **Out of time** (still LOCKED at 300 ms - on 14/15 also Home's lost `REFUSED`, or a gap launch's new root, §2):
+  today's emptying, and one line per spell, "The kiosk's end: lock task still LOCKED ... ms after Home's stop - the list
+  is emptied regardless"; §3.3's check follows as before. A wait that ended logs "lock task ended ... ms after Home's
+  stop, then the list".
+- On 16+ the stop has run when the call returns; the wait is then only the posted end's few ms. It runs on every
+  version (no version gate): the same code, and 15 is oneway too.
+- **The retry (§3.3)** needs no wait: nothing follows it but the check 1 s later, which reads the true state; on 14/15
+  its `REFUSED` reads `ASKED` (logged as such), the check after it tells. **`HomeActivity.reconcileKioskMode`**: its own
+  stop is oneway too; it records the stop's time (`homeStopped()`), so the pass it asks for waits as above, and Home's
+  next resume reads the state anew.
+
 ## 4. Every way the kiosk ends
 
 All reach the one writer (`setLockTaskPackages` is called nowhere else) through `EnforcementPlan.kioskPackages ==
@@ -211,14 +247,15 @@ A call live at the kiosk's end: ATMS calls `TelecomManager.showInCallScreen(fals
 ## 6. Threading
 
 - The pass runs where it runs today (apply's IO thread, the chrome executor, rarely main) and holds the same two
-  monitors; it gains one binder read and at most one binder call (or one `startActivity` for §3.4) - no wait, no new
-  lock, no callback into the app.
+  monitors; it gains one binder read and at most one binder call (or one `startActivity` for §3.4) and, right after a
+  stop of Home's, §3.5's bounded wait (at most 300 ms of 10 ms reads, on system_server only) - no new lock, no callback
+  into the app.
 - Home's register/unregister and the resumed-activity reference are main-thread writes of volatile fields; the pass
   reads them once.
 - The stuck check and its retry post to the main looper and read only `lockTaskModeState` and volatile fields - no
   monitor. §3.4's follow-up pass and timer go through the chrome executor like any other pass.
 - No deadlock: nothing waits for the main thread, and the main thread's own monitor takers (§3.2) wait only for the
-  pass's binder calls, as today.
+  pass's binder calls and §3.5's bounded wait.
 
 ## 7. Android 14-17
 
@@ -226,7 +263,10 @@ A call live at the kiosk's end: ATMS calls `TelecomManager.showInCallScreen(fals
 line the same in `android14-release`, `android15-release`, `android16-release` and `main` (diffed 2026-11-27); so are
 ATS's join, ATMS's `stopLockTaskModeInternal` with its in-call screen, ACC's token path and `Activity.stopLockTask`.
 `performStopLockTask` differs by one line (14 also calls `mWindowManager.onLockTaskStateChanged`, 16 doesn't) - nothing
-this design reads. `BlockedAppActivity`'s manifest entry is the same on 14 and 16. Gate on 14 and 16 (the Jelly Star
+this design reads. **Except the call itself** (missed here, found by the gate, emulator.md §6cg F1): ACC's
+`stopLockTaskModeByToken` is `oneway` in `android14-release` and `android15-release`, plain `void` in
+`android16-release` and `main` - on 14/15 `stopLockTask()` returns before the stop has run and throws nothing; §3.5's wait
+covers it on every version. `BlockedAppActivity`'s manifest entry is the same on 14 and 16. Gate on 14 and 16 (the Jelly Star
 runs 16); Android 17 is owed - no API 37 image runs here (`docs/testing/emulator.md` "Owed rows").
 
 ## 8. Alternatives
@@ -266,6 +306,10 @@ runs 16); Android 17 is owed - no API 37 image runs here (`docs/testing/emulator
   only in `LockTaskChrome.kt`; `HomeActivity` registers in `onCreate` and its `onDestroy` unregisters only behind
   `!isChangingConfigurations`.
 - `LockTaskHelpersTest`'s `unpinFeatures` rows stay.
+- §3.5: `stopSettle` (no stop or an older one: no wait, no read; LOCKED within 300 ms waits; NONE/PINNED ended; out of
+  time after a wait; the wait run against a stop landing at 0, 19, 300 ms and never), `KioskEndSpell.askedAtMs`, the
+  timeout's line once per spell; the scan: `settle` between the EMPTY step and the emptying, both stops record the time,
+  `settle` has no main-thread hop, latch or `Thread.sleep`.
 
 ## 11. Emulator gate (Android 14 and 16; 17 owed)
 
@@ -375,3 +419,8 @@ Code QA (2026-11-27, 0H 1M 4L), all taken:
 - **L3** the stuck line names the answer of the pass that scheduled the check, not the last pass's.
 - **L4** the order scan also checks that a step other than EMPTY returns before `setLockTaskPackages` and that
   `HomeRootStop.kioskOn()` is in the pin branch.
+
+The night gate on 14 (2026-11-27, emulator.md §6cg F1), branch `night-fixes`: on 14 and 15 `stopLockTask()` is oneway, so
+the emptying could beat Home's stop (8 of 37 kiosk ends; 5 stuck). §3.5 adds the bounded wait between Home's stop and
+the emptying (`HomeRootStop.settle`, pure `stopSettle`, 10 ms reads up to 300 ms after the stop, the pass's `ASKED` and
+Home's own stop alike); §2 and §7 corrected. Owed: rows 2, 3 and 12 again on 14, 10+ times each.

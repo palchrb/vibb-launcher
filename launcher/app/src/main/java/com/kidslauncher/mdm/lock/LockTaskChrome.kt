@@ -458,6 +458,9 @@ object LockTaskChrome {
             val stopAnswer = HomeRootStop.stop(context)
             // §3.4: no Home in this process with the screen on - Home is brought and the list waits for its root stop.
             if (HomeRootStop.step(context, stopAnswer) != UnpinStep.EMPTY) return false
+            // §3.5: on 14 and 15 Home's stop is oneway - wait (bounded) for it to land, or the emptying can get there
+            // first, remove Home's root task and leave a blocked task locked alone (emulator.md §6cg F1).
+            HomeRootStop.settle(context)
             try {
                 dpm.setLockTaskPackages(admin, emptyArray())
             } catch (e: Exception) {

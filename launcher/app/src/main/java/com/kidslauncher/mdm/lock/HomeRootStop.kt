@@ -25,6 +25,9 @@ private const val LOG_TAG = "HomeRootStop"
  * - Off the main thread, directly: `stopLockTask()` is one binder call with the activity's token, no foreground or
  *   thread check. No latch: the pass holds `LockTaskChrome`'s monitor, which the main thread takes itself (the LOCKED
  *   edge's pass, the "sos" yield) - a wait for main there would time out into the very path this fixes.
+ * - The wait before the emptying ([settle], §3.5): on Android 14 and 15 the stop is oneway and returns before it has run,
+ *   so the unpin reads `lockTaskModeState` until it isn't LOCKED, at most [KIOSK_END_STOP_SETTLE_MS] - a wait on
+ *   system_server only, never on main.
  * - Home registers in `onCreate` and unregisters in `onDestroy` unless `isChangingConfigurations` (a relaunch keeps the
  *   record and its token; the new instance registers again), and only while it is the registered one.
  * - The stuck check ([afterUnpin], §3.3): 1 s after a pass that found lock task LOCKED, lock task still on and not ours
@@ -102,7 +105,7 @@ object HomeRootStop {
             stopFrom(activity)
         }
         val logIt = synchronized(logLock) {
-            if (answer == HomeRootStopAnswer.ASKED) spell.asked()
+            if (answer == HomeRootStopAnswer.ASKED) spell.asked(SystemClock.elapsedRealtime())
             log.answer(answer)
         }
         if (logIt) Log.i(LOG_TAG, "The kiosk's end: Home's stop $answer")
@@ -115,8 +118,45 @@ object HomeRootStop {
      * awaited (§3.4) - only then does Home ask for the pass that empties the list.
      */
     fun homeStopped(): Boolean = synchronized(logLock) {
-        spell.asked()
+        spell.asked(SystemClock.elapsedRealtime())
         spell.awaitingHome
+    }
+
+    /**
+     * Design 141 §3.5, after [step] answered EMPTY and before the emptying: when Home's stop went through less than
+     * [KIOSK_END_STOP_SETTLE_MS] ago (this pass's ASKED, or Home's own stop whose pass this is) and lock task still reads
+     * LOCKED, wait for it to read otherwise - on Android 14 and 15 `stopLockTask()` is oneway and returns before the stop
+     * has run, and an emptying that gets there first removes Home's root task and leaves a blocked task locked alone
+     * (emulator.md §6cg F1). Reads every [KIOSK_END_STOP_POLL_MS]; the wait waits on system_server alone (its stop and
+     * its posted `performStopLockTask`), never on this process's main thread, so holding the chrome monitor here can't
+     * deadlock with a main-thread taker - it waits at most the bound. Out of time: today's emptying, one log line per
+     * spell. Never throws.
+     */
+    fun settle(context: Context): StopSettle {
+        val askedAt = synchronized(logLock) { spell.askedAtMs } ?: return StopSettle.NOT_ASKED
+        var reads = 0
+        while (true) {
+            val since = SystemClock.elapsedRealtime() - askedAt
+            val settle = stopSettle(since, waited = reads > 0) { lockTaskState(context) }
+            when (settle) {
+                StopSettle.WAIT -> {
+                    reads++
+                    // Uninterruptible: an interrupt can't cut the wait short into the race.
+                    SystemClock.sleep(KIOSK_END_STOP_POLL_MS)
+                }
+                StopSettle.ENDED -> {
+                    if (reads > 0) Log.i(LOG_TAG, "The kiosk's end: lock task ended $since ms after Home's stop, then the list")
+                    return settle
+                }
+                StopSettle.TIMED_OUT -> {
+                    if (synchronized(logLock) { log.settleTimedOut() }) {
+                        Log.w(LOG_TAG, "The kiosk's end: lock task still LOCKED $since ms after Home's stop - the list is emptied regardless")
+                    }
+                    return settle
+                }
+                StopSettle.NOT_ASKED -> return settle
+            }
+        }
     }
 
     /**

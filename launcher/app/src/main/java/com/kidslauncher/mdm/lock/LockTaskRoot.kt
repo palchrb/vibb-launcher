@@ -235,6 +235,50 @@ const val KIOSK_END_HOME_WAIT_MS = 3_000L
 /** When the stuck check runs after a kiosk-off pass that found lock task LOCKED, and again after its retry. */
 const val KIOSK_END_STUCK_CHECK_MS = 1_000L
 
+/**
+ * Design 141 §3.5: how long the unpin waits, after Home's stop, for lock task to read not LOCKED before it empties the
+ * list. On Android 14 and 15 `stopLockTask()` is a oneway binder call (`IActivityClientController`'s
+ * `stopLockTaskModeByToken`; plain `void` from 16): it returns before system_server has run the stop, and the emptying
+ * could get there first (emulator.md §6cg F1). The stop landed 0-19 ms ahead of an unwaited emptying when it won, and
+ * its `stopLockTaskModeInternal` 11 ms behind one when it lost; 300 ms is over 15 times that for a busy system_server at
+ * the kiosk's end, and short enough under the chrome monitor: a main-thread taker (the LOCKED edge's pass, the "sos"
+ * yield) waits at most this once per kiosk-off spell, far from an ANR, and it ends well before the 1 s stuck check.
+ */
+const val KIOSK_END_STOP_SETTLE_MS = 300L
+
+/** How often the wait of [KIOSK_END_STOP_SETTLE_MS] reads `lockTaskModeState`: at most 30 binder reads. */
+const val KIOSK_END_STOP_POLL_MS = 10L
+
+/** One read of the wait for Home's stop to land ([stopSettle]). */
+enum class StopSettle {
+    /** No stop of Home's within [KIOSK_END_STOP_SETTLE_MS], or an older one (a stuck spell's later passes, §3.3's job):
+     * no wait, no read. */
+    NOT_ASKED,
+
+    /** Lock task isn't LOCKED: the stop landed (its `performStopLockTask` runs only once the locked list is empty). */
+    ENDED,
+
+    /** LOCKED, the stop asked less than [KIOSK_END_STOP_SETTLE_MS] ago: read again in [KIOSK_END_STOP_POLL_MS]. */
+    WAIT,
+
+    /** Still LOCKED when the wait ran out: today's emptying (one log line per spell). On 14/15 also Home's REFUSED,
+     * which a oneway call can't report. */
+    TIMED_OUT,
+}
+
+/**
+ * Design 141 §3.5: one read of the unpin's wait before the emptying. [sinceAskedMs]: elapsed ms since Home's stop went
+ * through in this spell (the pass's ASKED or Home's own stop, [KioskEndSpell.askedAtMs]; `null` = not asked); [waited]:
+ * an earlier read of this wait answered [StopSettle.WAIT]. [state] is read only when a stop is pending.
+ */
+fun stopSettle(sinceAskedMs: Long?, waited: Boolean, state: () -> LockTaskState): StopSettle = when {
+    sinceAskedMs == null || sinceAskedMs < 0 -> StopSettle.NOT_ASKED
+    !waited && sinceAskedMs >= KIOSK_END_STOP_SETTLE_MS -> StopSettle.NOT_ASKED
+    state() != LockTaskState.LOCKED -> StopSettle.ENDED
+    sinceAskedMs < KIOSK_END_STOP_SETTLE_MS -> StopSettle.WAIT
+    else -> StopSettle.TIMED_OUT
+}
+
 /** What the unpin does after Home's stop ([unpinStep]). */
 enum class UnpinStep {
     /** Empty the list (`setLockTaskPackages(admin, [])`) - as before design 141. */
@@ -262,13 +306,14 @@ fun unpinStep(answer: HomeRootStopAnswer, interactive: Boolean, broughtThisSpell
 
 /**
  * Design 141 §3.2's log: one line per answer, with fixed words; [HomeRootStopAnswer.REFUSED],
- * [HomeRootStopAnswer.NO_HOME] and [HomeRootStopAnswer.ASKED_BEFORE] (the passes repeat while stuck) and the stuck line at
+ * [HomeRootStopAnswer.NO_HOME] and [HomeRootStopAnswer.ASKED_BEFORE] (the passes repeat while stuck) and the stuck line and the wait's timeout (§3.5) at
  * most once per kiosk-off spell, which a kiosk-on pass ends ([kioskOn]). NOT_LOCKED is never logged: a phone with the kiosk off and nothing locked logs
  * nothing new. Not thread-safe on its own; [HomeRootStop] holds it under its own monitor.
  */
 class KioskEndLogOnce {
     private val logged = mutableSetOf<HomeRootStopAnswer>()
     private var stuckLogged = false
+    private var settleLogged = false
 
     /** Whether to log [answer] now. */
     fun answer(answer: HomeRootStopAnswer): Boolean = when (answer) {
@@ -280,10 +325,14 @@ class KioskEndLogOnce {
     /** Whether to log the stuck line now. */
     fun stuck(): Boolean = !stuckLogged.also { stuckLogged = true }
 
+    /** Whether to log the wait's [StopSettle.TIMED_OUT] now (§3.5). */
+    fun settleTimedOut(): Boolean = !settleLogged.also { settleLogged = true }
+
     /** A kiosk-on pass: the next spell logs again. */
     fun kioskOn() {
         logged.clear()
         stuckLogged = false
+        settleLogged = false
     }
 }
 
@@ -295,6 +344,10 @@ class KioskEndLogOnce {
 class KioskEndSpell {
     /** Home's stop went through in this spell (its answer ASKED, or Home's own stop at a resume): never again (code QA M1). */
     var homeAsked = false
+        private set
+
+    /** When Home's stop last went through in this spell (elapsed ms, §3.5's wait), `null` = not yet. */
+    var askedAtMs: Long? = null
         private set
 
     /** When Home was brought (§3.4, elapsed ms), `null` = not brought in this spell. */
@@ -312,9 +365,10 @@ class KioskEndSpell {
      * a resume ask for the pass that empties it (code QA M1: else that pass is a second unpin with no use). */
     val awaitingHome: Boolean get() = broughtAtMs != null && !emptiedSinceBring
 
-    /** Home's stop went through (the pass's ASKED, or Home's own stop). */
-    fun asked() {
+    /** Home's stop went through at [atMs] (the pass's ASKED, or Home's own stop). */
+    fun asked(atMs: Long) {
         homeAsked = true
+        askedAtMs = atMs
     }
 
     fun brought(atMs: Long) {
@@ -337,6 +391,7 @@ class KioskEndSpell {
     /** A kiosk-on pass: a new spell. */
     fun kioskOn() {
         homeAsked = false
+        askedAtMs = null
         broughtAtMs = null
         emptiedSinceBring = false
         retried = false
