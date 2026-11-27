@@ -6808,3 +6808,42 @@ WAV, mostly zeros; AES output has about 0.4 %).
 | 6 | Step 5 with "Download on mobile data" on and the emulator on cellular only (`adb shell svc wifi disable`) | the books come back over mobile data (the parent's rule, §16 ASK 1); with the switch off they wait for Wi-Fi and the report's `waiting` says `wifi` |
 
 On the **Jelly Star** after the release: `seal level` logged once (TEE expected), and a 10-hour book played and sought.
+
+## 6cb. The gate of 2026-11-27, Android 16 (branch `gate-1127b`)
+
+On **Android 16 only**, `jelly36` (Google Play image, `-wipe-data`, port 5560), with the owner's OK for the day,
+08:30-10:30 UTC; Android 14 is gate A's §6ca (`compat34`). `main` at `e9875c082`: gate A's debug launcher
+(`assembleDebug`) and its debug server 0.94.1 (`--features emulator_keys`) run as this gate's own copy on
+`127.0.0.1:3200` with its own data (`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` the debug signer, the debug component). The
+phone: §4's adb lines, Telefon 1 made with "Blokker USB-feilsøking" off and Foreldre-PIN 246813, Koble til with a typed
+code, the setup flow skipped through; no Barne-PIN. Location Regularly 10 min, Google's `network` provider off (a test
+provider, again after each boot), the satellite feed and made-up scans of `PlacesDebugReceiver` as §6bw. Logs and the
+hand-made probe app in the session's `scratchpad/gb/` (not committed).
+
+### Row 2: design 139 step 0's probe (§8 row 1) on Android 16
+
+`docs/design/139-app-groups.md` (branch `app-groups-design`) §8 row 1 and §9 step 0, on `jelly36` only (Android 14 is
+§6ca's). Vibb One: first `main`'s debug launcher (no `PACKAGE_USAGE_STATS`), then gate A's throwaway probe build installed over it
+(`probe-139` `ffd5fbe2c`: `main` + the declaration + a debug `queryEvents` dump, `UsageProbeReceiver`; still Device Owner).
+Most events were read first by a throwaway app made by hand outside the repo (`probe.usage`, "Usage probe": `aapt2`, `javac`,
+`d8`, `apksigner` with the machine's debug key; never on a real phone): it declares `PACKAGE_USAGE_STATS` and
+`QUERY_ALL_PACKAGES` as the launcher would, an exported receiver logs `UsageStatsManager.queryEvents(now - N s, now)`
+through the public `UsageEvents.Event` getters (type, package, class, time), and its one activity supports
+picture-in-picture. On the managed phone it was `adb install`ed, ticked on the phone's Apps page and let out with
+"Allow these apps" (`outside_play`, §3b). Kiosk off = a parent pause (`/devices/1/start-pause`, lock task `NONE`).
+
+| Part | Result |
+|---|---|
+| Vibb One on "App usage data" during a pause | **Pass** with gate A's probe build (below). In the pause, Settings › "App usage data" lists "Vibb One (debug)" "Not allowed" among the apps that declare the permission; its page has the switch live; on: `cmd appops get me.vibb.launcher.debug GET_USAGE_STATS` -> `allow`. With `main`'s build (no declaration) Vibb One is not listed, and `ACTION_USAGE_ACCESS_SETTINGS` with `package:me.vibb.launcher.debug` still opens its own page with the switch greyed (`enabled=false`, a tap does nothing) - so the declaration is what puts it there. `package:<pkg>` opens the app's own page on 16 |
+| Restricted settings (ECM) on 16 | **Not guarded as installed here; the QR-provisioned, self-updated case Blocked.** The adb-installed Vibb One (`packageSource=1`, initiator `com.android.shell`) and the probe app: switches live, no "Restricted setting" dialog. Vibb One's self-update (`AppInstaller.installSilently`, `launcher/app/src/main/java/com/kidslauncher/mdm/server/AppInstaller.kt:77-82`) sets no package source (`PACKAGE_SOURCE_UNSPECIFIED`) and QR provisioning installs through Android's provisioning - neither path runs on this emulator (no QR, no signed release to self-update to), so that stays the owner's device check after the release. The probe app couldn't stand in: its own session install (source 4, `DOWNLOADED_FILE`) stops at `STATUS_PENDING_USER_ACTION` under Vibb's `no_install_unknown_sources` |
+| The grant | **Pass.** The probe's page in the pause: the switch on, `cmd appops get probe.usage GET_USAGE_STATS` -> `allow`. Before it (`default`, op mode 3) `queryEvents` returned **no events and no exception** - the step's `UsageAccess` must read the app-op, an empty answer says nothing |
+| Ordinary open and close | **Pass.** `PAUSED` Home (`me.vibb.launcher.debug` `HomeActivity`), `RESUMED` probe 19 ms later, `STOPPED` Home; Home key: `PAUSED` probe, `RESUMED` Home 1 ms later, `STOPPED` probe 0.4 s later. Third-party callers see Vibb's own Home and the `android` events (`SCREEN_*`, `KEYGUARD_*`, `DEVICE_*`) |
+| Same-class relaunch | **Pass - the order H1 needs.** A new instance of the same class over the old one (`am start -f 0x18000000`, a new task; and `-f 0x10008000`, clear task): `PAUSED` (old), `RESUMED` (new) 8-13 ms later, then the old instance's `STOPPED` 0.6 s **after** that `RESUMED`, same package and class (`getInstanceId` hidden: not told apart). A fold that ended the span at any `STOPPED` would cut a running app; §4.1's rule (a `STOPPED` ends a span only when no `RESUMED` came after the last `PAUSED`) keeps it |
+| `kill -9` of the front app | **Pass, with what it means.** `run-as probe.usage kill -9 <pid>` (the shell's own `kill` is refused on this user build; the probe is debuggable): `STOPPED` probe 0.1 s after the kill with **no `PAUSED` before it**, then `RESUMED` Home 1 ms later. Android writes the stop itself on 16 |
+| `am crash` of the front app | **Pass.** The same as `kill -9`: `STOPPED` (no `PAUSED`), `RESUMED` Home 1 ms later; no crash dialog stayed up |
+| Picture-in-picture across screen off and on (kiosk off) | **Pass - an event marks it visible again.** Entering PiP: `RESUMED` probe, then `RESUMED` Home and `PAUSED` probe (on-paused, the PiP window visible). Screen off: `SCREEN_NON_INTERACTIVE`, then `STOPPED` probe (cut at screen off), `KEYGUARD_SHOWN`. Screen on: `SCREEN_INTERACTIVE` and nothing for the probe while the keyguard is up; at the unlock `RESUMED` Home and **`PAUSED` probe with no `RESUMED` before it** (the app itself ran `onResume`, `onPause`), then `KEYGUARD_HIDDEN`. Twice, the same. So a `PAUSED` that arrives while the package is off means on-paused again (PiP back on screen) |
+| Split screen | **Pass.** Recents (Quickstep's fallback over Vibb's Home) › the probe's menu › "Split screen" with Settings: both `RESUMED` in the same ms (multi-resume); Home key: `PAUSED` both, `RESUMED` Home, `STOPPED` both. (`am start --windowingMode 6` alone gives a multi-window task, not a split pair) |
+| A visible activity suspended, kiosk off | **Noted.** `pm suspend probe.usage` with the probe in front: `PAUSED` probe and `RESUMED` Home in the same ms, `STOPPED` probe 0.3 s later - an ordinary close; the task is gone (not in `dumpsys activity`), the process stays (`pidof`). Unsuspended, nothing comes back |
+| A reboot (`svc power reboot`) | **Noted.** Before: `PAUSED` Home, `DEVICE_SHUTDOWN` 20 ms later (no `STOPPED`); after: `SCREEN_INTERACTIVE`, `KEYGUARD_SHOWN`, `DEVICE_STARTUP`, then the launcher's own events |
+
+**Vibb One's own read** (gate A's probe build, `UsageProbeReceiver`, access granted as above): an open and close, a `kill -9` and PiP across screen off and on gave the same events in the same order as the probe app's - `STOPPED` with no `PAUSED` at the kill, the lone `PAUSED` of the PiP app at the unlock. So the hand-made app's reads stand for Vibb One's.
