@@ -1,6 +1,44 @@
 # Music notes: the per-package part of the stack and layout list
 
-Moved from music/CLAUDE.md on 2026-11-01.
+Moved from music/CLAUDE.md on 2026-11-01 (the `sonos/` to `src/debug/` part) and 2026-11-27 (the `model/` to `playback/` part; the core keeps one line per package).
+
+## Stack and layout: the `model/`, `logic/`, `data/`, `sync/`, `media/` and `playback/` packages
+
+- `model/` - the library and listing documents (lenient: a bad element is dropped, a non-`v: 1` document refused).
+- `logic/` - every rule, pure and unit-tested: resume (`Bookmarks`), play order, queue/shuffle, previous/next,
+  keep/prune (`Offline`), NY/Nytt, the network gate, cache keys, the public-address guard, the report, the screens'
+  words. Put new rules here, not in the Android classes.
+- `data/` - `Store` (files: library, received listings, covers, own-file copies in noBackupFilesDir - each with the
+  SHA-256 checked on arrival in `own/<id>.sha256`, so a copy under a reused file id is fetched again, design 29 step
+  4, `logic/OwnFiles.kt` - the report),
+  Room (`MusicDb`), `Snapshot` (what the screens and the player read; `visible()` hides url-null items without a copy;
+  `forRenderer(remote)` is the view for a renderer - on a room every Storytel book, on the phone only those with a copy;
+  a listed Spotify item shows in both views, a context-mode Spotify entry as one synthetic item). Spotify's own files
+  in noBackupFilesDir: `spotify_state.json` (the account word), `spotify_context.json` (a context's live track), both
+  the store's, and the web player's `spotify_page_account`.
+- `sync/` - the sync and download workers (WorkManager; never a dataSync FGS, QA #1), `DownloadPlan` and the pure
+  `DownloadRun` (the worker's decisions behind a `DownloadIo` seam), `ArtPlan` (the art want set), `Inbox` (what the
+  bridge hands over, checked), the Nytt notification, `CacheThrough` (design 30: a played stream settled into a
+  copy, the extras' eviction, the orphan sweep, a new queue's stale bytes).
+- `media/` - the one `SimpleCache` (no evictor; item keys, an HLS key factory), the guarded OkHttp clients, and design
+  30's wrappers: `ThroughSink` (the player's cache sink), `StreamGate` (the player's upstream asks the streaming
+  switch), `LengthGuard` (a changed source at a resume is a synthetic 416); design 117's sealed books: `BookKeys` (the
+  Keystore key, the per-book data keys, the check) and `SealStreams` (the sealing sink and source, the plain sinks'
+  guard), their pure rules in `logic/Seal.kt`.
+- `playback/` - `PlaybackService` (MediaSessionService; FGS only from a tap or a media command - a media button
+  puts it in the foreground at once and it lets go by `logic/ForegroundHold.kt`: Media3's notification once it plays,
+  else silent and stopped, compat-fix-1; every resumption refusal is a `ResumptionRefused`; its notification
+  through `SecretMediaNotification` - Media3's default provider's notification made `VISIBILITY_SECRET`, also the one
+  the artwork's callback hands back, so a secure lock screen shows none of it; 2026-11-04, the launcher's lock tile
+  reads the session; not device-checked), `PlayerHub` (the
+  live state for the screens, same process) and the renderer axis (26a §0, §3): `Renderer` (who makes the sound),
+  `LocalRenderer` (the ExoPlayer, the phone's 10 s sleep fade, audio focus) and `RendererGate` (the startup gate).
+  The output axis (`Output` keys `phone`/`dev:<id>`/`sonos:<uid>`, `setPreferredAudioDevice`, the headset callbacks)
+  stays the phone's and always goes to `LocalRenderer`. "Spill av på"'s rows: the phone, the routed outputs, the paired
+  headsets not routed now ("Koble til" / "Bytt til", design 52), the rooms of the current Wi-Fi's household only - on a live room session our group's block
+  and a "+" on every other row (design 53 §2.7, `groupSheet`) -, "Se etter høyttalere" (`outputSheetRows`/`outputSheetItems`). The third renderer is `spotify/SpotifyRenderer` (26c §5);
+  `RendererRules.kt` holds the pure rules of which renderer an entry gets, a Spotify item's playability, the queue's
+  kind and its claim, and the call test (`RendererRulesTest`).
 
 ## Stack and layout (continued): the `sonos/`, `storytel/`, `spotify/`, `bluetooth/`, `ui/` and `src/debug/` packages
 
