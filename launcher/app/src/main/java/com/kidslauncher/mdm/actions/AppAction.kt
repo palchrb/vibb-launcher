@@ -18,6 +18,8 @@ class AppAction(val app: AppInfo) {
 
     fun invoke(context: Context, rect: Rect? = null): Boolean {
         val packageName = app.packageName
+        // Design 139 §4.3: an app closed by its app group opens the group's sheet, not Android's "app paused".
+        if (com.kidslauncher.mdm.timerules.AppGroupTiles.intercept(context, packageName)) return false
         if (app.user != INVALID_USER) {
             val launcherApps =
                 context.getSystemService(Service.LAUNCHER_APPS_SERVICE) as LauncherApps

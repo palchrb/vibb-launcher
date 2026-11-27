@@ -441,6 +441,12 @@ mod tests {
         assert!(fits(bedtime, "rule", Some(4)));
         assert!(!fits(bedtime, "rule", Some(5)), "another rule");
         assert!(!fits(bedtime, "budget", None), "time doesn't open a rule");
+        // Design 139 §5.2: a group's extra time answers neither (code QA L7).
+        assert!(
+            !fits(Need::Time, "group", None),
+            "a group's time isn't screen time"
+        );
+        assert!(!fits(bedtime, "group", None));
         let unknown = Need::Rules { active_rule: None };
         assert!(fits(unknown, "rule", None));
         assert!(!fits(unknown, "rule", Some(4)));

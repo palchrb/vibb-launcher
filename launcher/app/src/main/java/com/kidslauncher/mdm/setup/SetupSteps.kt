@@ -15,7 +15,7 @@ enum class StepNeed { REQUIRED, OPTIONAL }
 enum class StepReadBy { PHONE, SERVER, PARENT }
 
 /** §2.3: when a step applies. */
-enum class StepWhen { ALWAYS, CALLS_MANAGED, CALLS_UNMANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE, LOCATION_INTERVAL }
+enum class StepWhen { ALWAYS, CALLS_MANAGED, CALLS_UNMANAGED, WRITE_SETTINGS_USED, AIRPLANE, AIRPLANE_ROLE, ANDROID_LOCK, MAP_LINKS, LINK_GATE, LOCATION_INTERVAL, APP_GROUPS }
 
 enum class StepSummary { COUNT, OWN_ROW }
 
@@ -93,6 +93,13 @@ enum class SetupStep(
         "write_settings", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.WRITE_SETTINGS_USED, StepSummary.COUNT, StepLevel.ACTION,
         listOf("touch", "clock_format"), listOf("android.settings.action.MANAGE_WRITE_SETTINGS"),
         R.string.setup_step_write_settings, R.string.setup_how_write_settings,
+    ),
+    // Design 139 §5.3: Android's "App usage data" for Vibb One - the app groups count with it, and without it their apps
+    // are closed (D6). Its own page (`package:`), then the list.
+    USAGE_ACCESS(
+        "usage_access", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.APP_GROUPS, StepSummary.COUNT, StepLevel.ACTION,
+        listOf("app_groups"), listOf("android.settings.USAGE_ACCESS_SETTINGS"),
+        R.string.setup_step_usage_access, R.string.setup_how_usage_access,
     ),
     ASSISTANT(
         "assistant", StepNeed.REQUIRED, StepReadBy.PHONE, StepWhen.AIRPLANE, StepSummary.COUNT, StepLevel.ACTION,
@@ -236,6 +243,8 @@ data class SetupInputs(
     val linkGate: Boolean = false,
     /** Design 125: location is Regularly (the policy's `location_policy.mode` `interval`). */
     val locationInterval: Boolean = false,
+    /** Design 139: an app group limits some day ([com.kidslauncher.mdm.timerules.groupsLimit]). */
+    val appGroups: Boolean = false,
 ) {
     companion object {
         val NONE = SetupInputs(0, "system", callsManaged = false, androidLock = false, mapLinksOn = false, mapAppInstalled = false)
@@ -271,6 +280,7 @@ fun setupApplies(step: SetupStep, inputs: SetupInputs, readings: Map<String, Boo
     StepWhen.MAP_LINKS -> inputs.mapLinksOn && inputs.mapAppInstalled
     StepWhen.LINK_GATE -> inputs.linkGate
     StepWhen.LOCATION_INTERVAL -> inputs.locationInterval
+    StepWhen.APP_GROUPS -> inputs.appGroups
 }
 
 /**

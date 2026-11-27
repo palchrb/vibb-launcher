@@ -663,6 +663,7 @@ mod tests {
         "device_advanced.html",
         "device_apps.html",
         "device_bedtime.html",
+        "device_group.html",
         "device_calls.html",
         "device_filter.html",
         "device_home.html",

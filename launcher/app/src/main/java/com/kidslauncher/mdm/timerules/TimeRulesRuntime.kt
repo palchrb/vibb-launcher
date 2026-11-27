@@ -9,6 +9,7 @@ import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.calls.messagingAppPackages
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
@@ -93,9 +94,44 @@ object TimeRulesRuntime {
     fun ledger(context: Context, policy: TimePolicy?, clocks: Clocks = clocks(), zone: ZoneId = zone()): ScreenTimeLedger {
         val before = loadLedger(context, policy?.lifts.orEmpty(), clocks, zone)
         var after = observe(before, clocks, zone).ledger
-        if (policy != null) after = applyBudgetLifts(after, policy.lifts)
+        if (policy != null) after = applyGroupLifts(applyBudgetLifts(after, policy.lifts), policy.lifts)
         saveLedger(context, before, after)
         return after
+    }
+
+    /**
+     * Design 139 §4.1: a fold's result into today's ledger - its groups' minutes and the new folded point, saved with
+     * them - when the ledger's point is still the one the read started [from]: a read that raced a cleared or newer
+     * point is dropped, so `from` and `carry` stay as they were. True when applied. An unreadable ledger takes the
+     * point too (its groups stay closed, D6), so the next day starts with the state known.
+     */
+    @Synchronized
+    fun applyGroupFold(context: Context, policy: TimePolicy, plan: ReadPlan, out: FoldOut, count: Boolean, from: FoldPoint?): Boolean {
+        val clocks = clocks()
+        val zone = zone()
+        val before = loadLedger(context, policy.lifts, clocks, zone)
+        val after = applyFoldIfCurrent(observe(before, clocks, zone).ledger, from, plan, out, clocks, zone, BootClock.bootCount(), count)
+            ?: return false
+        saveLedger(context, before, after)
+        return true
+    }
+
+    /** Design 139 §4.1: the folded point, `null` when there is none (no group, a new or unreadable ledger). */
+    @Synchronized
+    fun foldPoint(context: Context): FoldPoint? = try {
+        prefs(context).getString(LEDGER_KEY, null)?.let { ServerJson.decodeFromString(ScreenTimeLedger.serializer(), it) }?.foldPoint
+    } catch (e: Exception) {
+        null
+    }
+
+    /** The policy lost its last group: the next group's first fold reads the lookback (§4.1 "The first fold"). */
+    @Synchronized
+    fun clearFoldPoint(context: Context) {
+        val clocks = clocks()
+        val zone = zone()
+        val before = loadLedger(context, emptyList(), clocks, zone)
+        if (before.foldPoint == null || before.unreadable) return
+        saveLedger(context, before, before.copy(foldPoint = null))
     }
 
     /** Adds a counted stretch that began at elapsed realtime [sinceElapsedMs]. */
@@ -126,6 +162,13 @@ object TimeRulesRuntime {
         return after
     }
 
+    /** The trusted Vibb music app (security review S-L8): never closed by a group (D8). */
+    fun musicApps(context: Context): Set<String> = try {
+        com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet()
+    } catch (e: Exception) {
+        emptySet()
+    }
+
     private fun messagingApps(context: Context): Set<String> {
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
         return messagingAppPackages(rules, CallSystem.defaultSmsPackage(context))
@@ -145,6 +188,10 @@ object TimeRulesRuntime {
         val phoneLiftIds: List<Long> = emptyList(),
         /** The ledger can't be saved ([storageFull]): `time_state.storage_full`. */
         val storageFull: Boolean = false,
+        /** Design 139: each app group today ([groupStates]). */
+        val groups: List<GroupState> = emptyList(),
+        /** Design 139: the usage access as read for this snapshot (`null` unreadable). */
+        val usageAccess: Boolean? = null,
     )
 
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
@@ -159,12 +206,21 @@ object TimeRulesRuntime {
         val records = liftRecords(context, tp.lifts, clocks)
         val budget = budgetUse(ledger, tp)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
-        val lock = decideTimeLock(
+        val decided = decideTimeLock(
             tp, at, overrideActive, ruleLifts(context, records, tp.lifts, clocks), budget, messagingApps(context),
             // Security review S-L8: only the music app with our signer is exempt from the budget.
             musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
-        return Snapshot(lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks), storageFull())
+        // Design 139 §4.2: the app groups today - lifted by the pause and the override (D9), their apps closed
+        // otherwise, but the live VoIP call's own package (D7); out of the lock's usable apps (D8).
+        val access = if (tp.groups.isEmpty()) null else UsageAccess.granted(context)
+        val groups = groupStates(tp, ledger, access, AppGroupUsage.readFailed, overrideActive, musicApps(context))
+        val closed = groupSuspends(groupClosedApps(groups), com.kidslauncher.mdm.lock.VoipCalls.pinnedPackage)
+        val lock = if (closed.isEmpty()) decided else decided.copy(groupClosed = closed, usableApps = decided.usableApps - closed, usableBeforeGroups = decided.usableApps)
+        return Snapshot(
+            lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks), storageFull(),
+            groups = groups, usageAccess = access,
+        )
     }
 
     /** The PWA's lifts through their records, and design 98's parent-code pauses through their own entries. */
@@ -254,6 +310,12 @@ object TimeRulesRuntime {
             clockTrust = clock?.trust?.wire,
             unanchoredMs = clock?.unanchoredMs,
             storageFull = snap.storageFull,
+            usageAccess = snap.usageAccess,
+            groups = snap.groups.map {
+                com.kidslauncher.mdm.server.dto.GroupReport(
+                    it.id, (it.usedMs / 60_000L).toInt(), it.extraMinutes, it.status.closes,
+                )
+            },
         )
     }
 

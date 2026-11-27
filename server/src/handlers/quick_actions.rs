@@ -92,6 +92,8 @@ pub(crate) struct QuickActions {
     /// A refusal's words, shown in the sheet it reopened.
     pub sheet_flash: Option<String>,
     pub setup: Option<SetupRow>,
+    /// Design 139 §5.3: the phone's app groups (id, name) - the Skjermtid sheet's "Hva" while there is one.
+    pub groups: Vec<(i64, String)>,
 }
 
 impl QuickActions {
@@ -572,6 +574,11 @@ pub(crate) async fn build(
         // Without a sheet to show it in, a refusal stays in Today's group (the caller's flash).
         sheet_flash: input.refusal.filter(|_| open.is_some()),
         setup,
+        groups: crate::app_groups::of_device(db, input.device_id)
+            .await?
+            .into_iter()
+            .map(|g| (g.id, g.name))
+            .collect(),
     })
 }
 

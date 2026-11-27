@@ -66,6 +66,11 @@ object SetupPages {
             SetupStep.LOCATION, SetupStep.DATA_SAVER, SetupStep.FULL_SCREEN_INTENT, SetupStep.MAP_VIBB_LINKS ->
                 listOfNotNull(page(context, Intent(actions[0], ours(context))))
             SetupStep.MAP_PLAY_LINKS -> listOfNotNull(page(context, Intent(actions[0], Uri.parse("package:$PLAY_SERVICES"))))
+            // Design 139 §5.3: Vibb One's own page (14 and 16 open it with `package:`), then Android's list.
+            SetupStep.USAGE_ACCESS -> listOfNotNull(
+                page(context, Intent(actions[0], ours(context))),
+                page(context, Intent(actions[0])),
+            )
             SetupStep.BACKGROUND -> listOfNotNull(BatteryExemption.dialogIntent(context))
             SetupStep.VIBB_NOTIFICATIONS -> NotificationChannelsReader.pageIntents(context)
             SetupStep.WRITE_SETTINGS -> WriteSettingsAccess.pageIntents(context)

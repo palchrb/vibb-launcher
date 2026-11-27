@@ -571,10 +571,19 @@ async fn policy_json_keys_snapshot() {
     // Design 100 §14.2: `request_answers` always (this server answers requests); `answer` only once a request of the
     // phone's day is answered - its keys and a lift's `by`/`at_ms` are pinned by `time_request.json`'s `policy_*`
     // rows (`time_request::the_contract_policies`), which the launcher decodes.
+    // Design 139 §5.2: `groups` always (`[]` when none); a group's keys and a group lift's `group_id` are pinned by
+    // `app_groups.json` (`tests::app_groups`), which the launcher decodes.
     assert_eq!(
         time_keys,
-        ["daily_budget_minutes", "lifts", "request_answers", "rules"]
+        [
+            "daily_budget_minutes",
+            "groups",
+            "lifts",
+            "request_answers",
+            "rules"
+        ]
     );
+    assert_eq!(time_policy["groups"], serde_json::json!([]));
     assert_eq!(time_policy["request_answers"], serde_json::json!(true));
     // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
     // during the rule - the launcher's default is false;

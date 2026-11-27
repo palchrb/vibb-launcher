@@ -45,9 +45,9 @@ class AppFilter(
         apps = apps.filter { info ->
             val packageName = (info.getRawInfo() as? AppInfo)?.packageName
             hiddenVisibility.predicate(hidden, info)
-                    && !isMdmSuspended(info)
-                    // compat-fix-1: what the enforcement plan wants hidden or suspended, also when Android refused it (the rule is GPL, server/PlatformRefusals.kt).
-                    && !(packageName != null && com.kidslauncher.mdm.server.PlatformRefusals.plannedOff(context, packageName))
+                    // compat-fix-1: what the enforcement plan wants hidden or suspended, also when Android refused it (the rule is GPL, server/PlatformRefusals.kt);
+                    // design 139: an app closed by its app group alone stays, dimmed (the rule is GPL, timerules/AppGroupTiles.kt).
+                    && (com.kidslauncher.mdm.timerules.AppGroupTiles.dimmed(context, packageName) || (!isMdmSuspended(info) && !(packageName != null && com.kidslauncher.mdm.server.PlatformRefusals.plannedOff(context, packageName))))
                     && kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)
                     && com.kidslauncher.mdm.logins.loginRoleListable(packageName, loginRole)
                     && com.kidslauncher.mdm.appdisplay.onHomeListable(com.kidslauncher.mdm.appdisplay.AppDisplay.entry(packageName), windowOpen)

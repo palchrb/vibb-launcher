@@ -482,6 +482,15 @@ fn lift_row(
             "device.summary.lift.all_rules",
             &[("duration", &length)],
         ),
+        // Design 139: "Spill: 15 min ekstra".
+        ("group", _) => t_params(
+            lang,
+            "device.summary.lift.group_extra",
+            &[
+                ("group", lift.group_name.as_deref().unwrap_or("")),
+                ("duration", &length),
+            ],
+        ),
         _ => t_params(lang, "device.summary.lift.extra", &[("duration", &length)]),
     };
     // Design 98 §4.4.5: the parent code's pause on the phone, by its window ("Leggetid på pause 21:10–21:40

@@ -464,14 +464,14 @@ pub async fn show_schedules(
 
 /// One day's limit field; `error` is the refusal's reason under it.
 pub(crate) struct BudgetInput {
-    index: usize,
-    name: &'static str,
-    value: String,
-    error: Option<String>,
+    pub(crate) index: usize,
+    pub(crate) name: &'static str,
+    pub(crate) value: String,
+    pub(crate) error: Option<String>,
 }
 
 /// The 7 fields from a stored budget (a corrupt one shows empty fields - its warning says so).
-fn budget_inputs(lang: Lang, json: &str) -> Vec<BudgetInput> {
+pub(crate) fn budget_inputs(lang: Lang, json: &str) -> Vec<BudgetInput> {
     let values = time_rules::parse_budget(json).unwrap_or_else(|_| vec![None; 7]);
     (0..7)
         .map(|i| BudgetInput {
@@ -484,7 +484,7 @@ fn budget_inputs(lang: Lang, json: &str) -> Vec<BudgetInput> {
 }
 
 /// The 7 fields as typed, the refused one with its reason.
-fn budget_entered(
+pub(crate) fn budget_entered(
     lang: Lang,
     fields: &[(String, String)],
     error: &(usize, String),
@@ -1843,8 +1843,109 @@ struct DeviceTimeTemplate {
     budget: Vec<BudgetInput>,
     budget_corrupt: bool,
     budget_saved: bool,
+    /// Design 139 §5.3: Appgrupper - a row per group to its editor.
+    groups: Vec<GroupRow>,
+    /// A group's row says "Can't count": its (i) says how to fix it.
+    groups_cant_count: bool,
+    /// The flash after a group's delete, or a group gone in another tab.
+    group_notice: Option<&'static str>,
+    /// Design 114's lines (the `groups` section's: "Data om appbruk er av").
+    setup_warnings: crate::setup_status::Warnings,
 }
 crate::i18n::words!(DeviceTimeTemplate);
+
+/// One app group on Device › Time Rules: its name over "{days} · {n} apps", today's state as a quiet value.
+pub(crate) struct GroupRow {
+    pub(crate) id: i64,
+    pub(crate) name: String,
+    /// "Mon-Fri 1 h · Sat-Sun 2 h · 3 apps"; "Can't be read" for a group that doesn't read.
+    pub(crate) summary: String,
+    pub(crate) corrupt: bool,
+    /// "40 of 60 min", "Used up", "No limit", "Can't count"; `None` without today's report, and for a group with no
+    /// limit on any day (its sub-line says "No limit" already).
+    pub(crate) value: Option<String>,
+    /// The value is a wrong state (`text-alarm`): the phone closed the group without its time used up - no "App usage
+    /// data", an unreadable record or a failed read (D6). How to fix is behind the group's (i).
+    pub(crate) alarm: bool,
+}
+
+/// The rows of Appgrupper: each group's days and apps, and today's state from the phone's report - the phone's own day
+/// (`time_state.day`, its weekday picks the limit), when it is no older than yesterday by [today] (the server's zone:
+/// a phone abroad may be a day off); the limit of the day with its extra minutes, and the report's `closed`.
+pub(crate) fn group_rows(
+    lang: Lang,
+    rows: &[crate::app_groups::AppGroupRow],
+    latest: Option<&DeviceStatus>,
+    today: chrono::NaiveDate,
+) -> Vec<GroupRow> {
+    use chrono::Datelike;
+    let (day, reported) =
+        crate::app_groups::reported(latest.and_then(|s| s.time_state_json.as_deref()));
+    let phone_day = day
+        .as_deref()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .filter(|d| *d >= today - chrono::Days::new(1));
+    let weekday = phone_day.unwrap_or(today).weekday().num_days_from_monday() as usize;
+    rows.iter()
+        .map(|row| match row.to_policy() {
+            Ok(group) => {
+                let apps = t_count(
+                    lang,
+                    "device.groups.apps_count",
+                    group.apps.len() as i64,
+                    &[],
+                );
+                let limit = group.days.get(weekday).copied().flatten();
+                let mine = reported
+                    .iter()
+                    .find(|r| r.id == group.id)
+                    .filter(|_| phone_day.is_some());
+                let words = |key: &str| Some(t(lang, key).to_string());
+                let (value, alarm) = match (limit, mine) {
+                    _ if group.days.iter().all(Option::is_none) => (None, false),
+                    (None, _) => (words("device.time.no_limit"), false),
+                    (Some(0), _) => (words("device.groups.not_today"), false),
+                    (Some(limit), Some(r)) if r.used_minutes >= limit + r.extra_minutes => {
+                        (words("device.groups.used_up"), false)
+                    }
+                    // D6: closed with time left - the phone can't count.
+                    (Some(_), Some(r)) if r.closed => (words("device.groups.cant_count"), true),
+                    (Some(limit), Some(r)) => (
+                        Some(t_params(
+                            lang,
+                            "device.groups.used_of",
+                            &[
+                                ("used", &r.used_minutes.to_string()),
+                                ("limit", &(limit + r.extra_minutes).to_string()),
+                            ],
+                        )),
+                        false,
+                    ),
+                    (Some(_), None) => (None, false),
+                };
+                GroupRow {
+                    id: row.id,
+                    name: group.name,
+                    summary: format!("{} · {apps}", budget_summary(lang, &group.days)),
+                    corrupt: false,
+                    value,
+                    alarm,
+                }
+            }
+            Err(err) => {
+                tracing::warn!(group = row.id, %err, "an app group doesn't read");
+                GroupRow {
+                    id: row.id,
+                    name: row.name.clone(),
+                    summary: t(lang, "device.groups.unreadable").to_string(),
+                    corrupt: true,
+                    value: None,
+                    alarm: false,
+                }
+            }
+        })
+        .collect()
+}
 
 /// GET `/devices/{id}/time`: Device › Time.
 pub async fn view_device_time(
@@ -1941,6 +2042,17 @@ async fn render_device_time(
     };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
+    let groups = match crate::app_groups::of_device(&state.db, id).await {
+        Ok(rows) => group_rows(lang, &rows, latest.as_ref(), zone.today(now)),
+        Err(err) => return read_failed_in(lang, err, "the app groups"),
+    };
+    let setup_warnings = crate::setup_status::page_warnings(
+        lang,
+        &policy,
+        latest.as_ref(),
+        &state.integrations.setup(state, id).await,
+        "time",
+    );
 
     // What the phone last said (design 31 §3.10's badge; the end only when provably right).
     let report = latest.as_ref().and_then(|s| {
@@ -2073,6 +2185,14 @@ async fn render_device_time(
                 None => budget_inputs(lang, &policy.daily_budget_json),
             },
             budget_saved: !refused && query.get("saved").map(String::as_str) == Some("budget"),
+            groups_cant_count: groups.iter().any(|g| g.alarm),
+            groups,
+            group_notice: match query.get("notice").map(String::as_str) {
+                Some("group_deleted") => Some(t(lang, "device.groups.deleted")),
+                Some("group_gone") => Some(t(lang, "device.groups.gone")),
+                _ => None,
+            },
+            setup_warnings,
             device,
         },
         if refused {

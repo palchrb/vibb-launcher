@@ -143,6 +143,9 @@ pub struct PolicyLift {
     pub by: Option<String>,
     /// When it was given (`time_lifts.created_at`, epoch ms): the phone shows a lift's note for 30 minutes (D10, D12).
     pub at_ms: i64,
+    /// Design 139 D9: the app group a `group` lift adds its minutes to; absent on the other targets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<i64>,
 }
 
 /// `PolicyResponse.time_policy.answer` (design 100 §14.2): the newest answered request for more time asked in the
@@ -174,6 +177,8 @@ pub struct TimePolicy {
     /// The newest answer of the phone's day ([PolicyAnswer]); absent when none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<PolicyAnswer>,
+    /// Design 139 §5.2: the phone's app groups, always sent (`[]` when none).
+    pub groups: Vec<crate::app_groups::PolicyGroup>,
 }
 
 /// `PolicyResponse.location_policy` - always sent. `interval_minutes` is the served one (design
@@ -313,6 +318,12 @@ pub struct TimeLiftRow {
     /// pages word its source from it.
     #[sqlx(default)]
     pub phone_key: Option<String>,
+    /// Design 139 (migration 0186): a `group` lift's group name, the pages' words once the group is gone.
+    #[sqlx(default)]
+    pub group_name: Option<String>,
+    /// Its group, NULL once the group is deleted (the lift is then no longer delivered).
+    #[sqlx(default)]
+    pub group_id: Option<i64>,
 }
 
 pub fn valid_minute(m: i64) -> bool {
@@ -379,7 +390,8 @@ pub fn valid_package_name(name: &str) -> bool {
 pub fn valid_lift(target: &str, minutes: i64) -> bool {
     match target {
         "rule" => RULE_LIFT_MINUTES.contains(&minutes),
-        "budget" => BUDGET_LIFT_MINUTES.contains(&minutes),
+        // Design 139 D9: a group's extra time, as screen time's.
+        "budget" | "group" => BUDGET_LIFT_MINUTES.contains(&minutes),
         _ => false,
     }
 }
@@ -1062,7 +1074,7 @@ pub async fn rules_off(
 }
 
 /// A `time_lifts` row as [deliverable_lifts] reads it: id, target, rule, minutes, expiry (ms), the phone's key, who gave
-/// it, when (ms).
+/// it, when (ms), its app group (design 139).
 type LiftRow = (
     i64,
     String,
@@ -1072,6 +1084,7 @@ type LiftRow = (
     Option<String>,
     Option<String>,
     i64,
+    Option<i64>,
 );
 
 /// Lifts the phone should still see: not ended early, not expired.
@@ -1090,9 +1103,10 @@ pub async fn deliverable_lifts(
                            WHERE a.device_id = l.device_id AND a.lift_id = l.id LIMIT 1) \
                      ELSE (SELECT NULLIF(TRIM(u.display_name), '') FROM admin_users u \
                            WHERE u.username = l.created_by AND u.removed_at IS NULL) END, \
-                CAST(strftime('%s', l.created_at) AS INTEGER) * 1000 \
+                CAST(strftime('%s', l.created_at) AS INTEGER) * 1000, l.group_id \
          FROM time_lifts l WHERE l.device_id = ? AND l.ended_early_at IS NULL \
-         AND l.expires_at > datetime('now') ORDER BY l.id",
+         AND l.expires_at > datetime('now') \
+         AND (l.target <> 'group' OR l.group_id IS NOT NULL) ORDER BY l.id",
     )
     .bind(device_id)
     .fetch_all(db)
@@ -1100,15 +1114,18 @@ pub async fn deliverable_lifts(
     Ok(rows
         .into_iter()
         .map(
-            |(id, target, rule_id, minutes, expires_at_ms, phone_key, by, at_ms)| PolicyLift {
-                id,
-                target,
-                rule_id,
-                minutes,
-                expires_at_ms,
-                phone_key,
-                by: by.filter(|b| !b.trim().is_empty()),
-                at_ms,
+            |(id, target, rule_id, minutes, expires_at_ms, phone_key, by, at_ms, group_id)| {
+                PolicyLift {
+                    id,
+                    target,
+                    rule_id,
+                    minutes,
+                    expires_at_ms,
+                    phone_key,
+                    by: by.filter(|b| !b.trim().is_empty()),
+                    at_ms,
+                    group_id,
+                }
             },
         )
         .collect())

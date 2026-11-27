@@ -12,6 +12,12 @@
     <string name="lock_title_screen_time">Skjermtiden er brukt opp</string>
     <string name="lock_until">Til %1$s</string>
     <string name="anchor_time_left">%1$s igjen i dag</string>
+    <!-- Design 139 Q4 (b): an app group's last minutes, while one of its apps is on screen. -->
+    <string name="anchor_group_left">%1$s: %2$s igjen</string>
+    <!-- Design 139 §4.3: a used-up app group's sheet, from its dimmed tile. -->
+    <string name="app_group_used_up">Brukt opp i dag</string>
+    <string name="app_group_not_today">Ikke i dag</string>
+    <string name="app_group_cant_count">Kan ikke telle nå</string>
     <string name="anchor_time_used_up">Skjermtiden er brukt opp i dag</string>
     <string name="anchor_ask_more_time">Be om mer tid</string>
     <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
@@ -915,6 +921,7 @@
     <string name="setup_step_vibb_notifications">Varsler fra Vibb One</string>
     <string name="setup_step_full_screen_intent">Fullskjermvarsler</string>
     <string name="setup_step_write_settings">Endre systeminnstillinger</string>
+    <string name="setup_step_usage_access">Data om appbruk</string>
     <string name="setup_step_assistant">Digital assistent</string>
     <string name="setup_step_wifi_airplane">Wi-Fi i flymodus</string>
     <string name="setup_step_call_filter">Samtalefilter</string>
@@ -944,6 +951,7 @@
     <string name="setup_how_vibb_notifications_role">Grå bryter? Sett Anrop og SMS til «Ikke styrt» i foreldreappen, og tilbake etterpå.</string>
     <string name="setup_how_full_screen_intent">Slå på Tillat fullskjermvarsler.</string>
     <string name="setup_how_write_settings">Slå på Tillat.</string>
+    <string name="setup_how_usage_access">Slå på Vibb One. Grå bryter: trykk på den, OK, så Appinfo › ⋮ › Tillat begrensede innstillinger.</string>
     <string name="setup_how_assistant">Velg Vibb One, og trykk OK.</string>
     <string name="setup_how_wifi_airplane">Slå på Wi-Fi i panelet.</string>
     <string name="setup_how_call_filter">Velg Vibb One begge gangene.</string>

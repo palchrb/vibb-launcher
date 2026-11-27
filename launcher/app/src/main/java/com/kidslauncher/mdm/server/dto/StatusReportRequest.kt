@@ -479,6 +479,21 @@ data class TimeState(
      * ([com.kidslauncher.mdm.server.StorageWrites]). The count keeps enforcing; a restart loses the time used since
      * storage filled. Left out while false. */
     val storageFull: Boolean = false,
+    /** Design 139 §4.4: Android's "App usage data" for Vibb One ([com.kidslauncher.mdm.timerules.UsageAccess]); left
+     * out when unreadable. */
+    val usageAccess: Boolean? = null,
+    /** Design 139 §4.4: each app group today - minutes, never which app. Left out while the phone has none. */
+    val groups: List<GroupReport> = emptyList(),
+)
+
+/** One app group in `time_state.groups` (design 139 §4.4, `app_groups.json`): [closed] when used up, closed by a limit
+ * of 0, or by D6 (no access, an unreadable record, a failed read). */
+@Serializable
+data class GroupReport(
+    val id: Long,
+    val usedMinutes: Int,
+    val extraMinutes: Int,
+    val closed: Boolean,
 )
 
 /**

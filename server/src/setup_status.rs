@@ -58,6 +58,8 @@ pub enum When {
     LinkGate,
     /// Location is Regularly (`location_mode` `interval`): design 125's Wi-Fi places learn there.
     LocationInterval,
+    /// Design 139 §5.3: the phone has an app group with a limit on some day.
+    AppGroups,
 }
 
 /// In the summary's N, or its own Attention row (§2.1).
@@ -247,6 +249,20 @@ pub const STEPS: &[Step] = &[
         "setup.step.write_settings",
         "setup.how.write_settings",
         Some("setup.warn.write_settings")
+    ),
+    // Design 139 §5.3: Android's "App usage data" for Vibb One - the app groups count with it, and without it their
+    // apps are closed (D6).
+    step!(
+        "usage_access",
+        Required,
+        Phone,
+        AppGroups,
+        Count,
+        Action,
+        ["app_groups"],
+        "setup.step.usage_access",
+        "setup.how.usage_access",
+        Some("setup.warn.usage_access")
     ),
     step!(
         "assistant",
@@ -571,6 +587,12 @@ pub const FEATURES: &[Feature] = &[
         page: "logins",
         anchor: "logins-apps",
     },
+    // Design 139 §5.3: Device › Time Rules' Appgrupper.
+    Feature {
+        key: "app_groups",
+        page: "time",
+        anchor: "groups",
+    },
 ];
 
 /// The need rule's inputs (§2.3), from the policy and, for `map_links`, the installed apps.
@@ -586,6 +608,8 @@ pub struct Inputs {
     pub link_gate: bool,
     /// Design 125: location is Regularly (`location_mode` `interval`).
     pub location_interval: bool,
+    /// Design 139: an app group limits some day (`app_groups::setup_input`, carried in the setup part's inputs).
+    pub app_groups: bool,
 }
 
 /// The readings: step key to `Some(true)`/`Some(false)`, `None` unreadable; a key left out is absent (not on this
@@ -630,6 +654,7 @@ pub fn applies(step: &Step, inputs: &Inputs, readings: &Readings) -> bool {
         When::MapLinks => inputs.map_links_on && inputs.map_app_installed,
         When::LinkGate => inputs.link_gate,
         When::LocationInterval => inputs.location_interval,
+        When::AppGroups => inputs.app_groups,
     }
 }
 
@@ -769,8 +794,12 @@ pub fn inputs_of(policy: &DevicePolicy, latest: Option<&DeviceStatus>, part: &Se
         map_app_installed,
         link_gate: browser_role(latest).is_some(),
         location_interval: policy.location_mode == "interval",
+        app_groups: part.inputs.contains(&APP_GROUPS_INPUT),
     }
 }
+
+/// The setup part's input that says an app group limits some day (design 139, `Integrations::setup`).
+pub const APP_GROUPS_INPUT: &str = "app_groups";
 
 /// Design 119: the latest report's `login_browser.browser_role` - Vibb One holds Android's browser role; `None` while
 /// the phone's link gate is off (or no report says).
@@ -855,6 +884,11 @@ pub fn readings_of(
         put("call_filter_early", Some(Some(screening && redirection)));
     }
     put("vibb_browser", browser_role(Some(latest)).map(Some));
+    // Design 139 §4.4: the report's `time_state.usage_access`, left out by the phone when unreadable.
+    put(
+        "usage_access",
+        crate::app_groups::usage_access(latest.time_state_json.as_deref()).map(Some),
+    );
     for (key, reading) in &part.readings {
         put(key, Some(*reading));
     }
@@ -1087,6 +1121,7 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
         "call_filter" => Some(t(lang, "setup.why.call_filter").to_string()),
         "call_filter_early" => Some(t(lang, "setup.why.call_filter_early").to_string()),
         "location_private" => Some(t(lang, "setup.why.location_private").to_string()),
+        "usage_access" => Some(t(lang, "setup.why.usage_access").to_string()),
         "number_verification" => Some(t(lang, "setup.why.number_verification").to_string()),
         "ad_id" => Some(t(lang, "setup.why.ad_id").to_string()),
         "diagnostics" => Some(t(lang, "setup.why.diagnostics").to_string()),
@@ -1353,6 +1388,7 @@ fn feature_on(feature: &str, choices: &Choices) -> bool {
         "airplane" => inputs.airplane(),
         "calls" => inputs.calls_managed,
         "map_links" => inputs.map_links_on,
+        "app_groups" => inputs.app_groups,
         _ => true,
     }
 }
@@ -1394,6 +1430,7 @@ mod tests {
             When::MapLinks => "map_links",
             When::LinkGate => "link_gate",
             When::LocationInterval => "location_interval",
+            When::AppGroups => "app_groups",
         }
     }
 
@@ -1474,6 +1511,7 @@ mod tests {
             map_app_installed: row["map_app_installed"].as_bool().unwrap(),
             link_gate: row["link_gate"].as_bool().unwrap(),
             location_interval: row["location_interval"].as_bool().unwrap(),
+            app_groups: row["app_groups"].as_bool().unwrap(),
         }
     }
 

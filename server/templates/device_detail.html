@@ -236,6 +236,18 @@
             <form method="post" action="/devices/{{ device.id }}/lifts#quick" class="cell">
                 <input type="hidden" name="target" value="budget">
                 <input type="hidden" name="back" value="summary">
+                {#- Design 139 §5.3: while the phone has app groups, Hva picks screen time or one group (`what`). -#}
+                {% if !qa.groups.is_empty() %}
+                <div class="row row-stacked">
+                    <span class="row-label" id="qa-what">{{ self.t("device.summary.qa.what") }}</span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="qa-what">
+                        <label class="segment"><input type="radio" name="what" value="budget" checked><span class="segment-face">{{ self.t("device.summary.qa.time") }}</span></label>
+                        {% for (gid, name) in qa.groups %}
+                        <label class="segment"><input type="radio" name="what" value="group-{{ gid }}"><span class="segment-face">{{ name }}</span></label>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
                 <div class="row row-stacked">
                     <span class="row-label" id="qa-much">{{ self.t("device.summary.qa.how_much") }}</span>
                     <div class="segmented" role="radiogroup" aria-labelledby="qa-much">

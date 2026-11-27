@@ -37,6 +37,7 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `core/app_access.json` | 127 step 2 | by hand | server `app_permissions::tests`; launcher `AppAccessContractTest` |
 | `core/app_icons.json` | 14 | by hand; `scripts/material-symbols.sh` generates `app_icons.rs` and the launcher's table from it | server `app_display::tests`; launcher `AppGlyphsTest` |
 | `core/app_logos.json` | 87, 87b | by hand | server `tests::app_logos`; launcher `AppLogosTest` |
+| `core/app_groups.json` | 139 | by hand | server `tests::app_groups`; launcher `AppGroupsContractTest` |
 | `core/blocked_numbers.json` | blocked numbers (2026-11) | by hand | server `blocked_numbers::tests`, `tests::blocked_numbers`; launcher `BlockedNumbersTest` |
 | `core/calendar_feeds.json` | 72 §3 | `CALENDAR_FEEDS_CONTRACT_WRITE=1` (`calendar_feeds::tests::the_contract`) | server `calendar_feeds::tests`; launcher `CalendarFeedsTest` |
 | `core/calendar_kid_events.json` | 72b §8 | `CALENDAR_KID_EVENTS_CONTRACT_WRITE=1` (`calendar_kid_events::tests::the_contract`) | server `calendar_kid_events::tests`, `tests::intake_limits`; launcher `KidCaldavTest` |
@@ -67,7 +68,7 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `core/sms_contract.json` | 77 §7, 80, 82, 83 | by hand | server `sms::tests`, `tests::sms`; launcher `SmsContractTest` |
 | `core/status_heartbeat.json` | 95 §3.5 | by hand | server `tests::status_heartbeat`; launcher `StatusReportsTest` |
 | `core/time_request.json` | r13 §2.5, 100 §14.5 | by hand | server `tests::time_request`; launcher `TimeRequestsTest` |
-| `core/time_status_report.json` | 34 P13 | by hand | server `tests::devices_list`; launcher `TimeStateZoneTest` |
+| `core/time_status_report.json` | 34 P13, 139 | by hand | server `tests::devices_list`; launcher `TimeStateZoneTest` |
 | `core/unified_push.json` | 108, 108b, 115 | by hand | server `tests::unified_push`; launcher `UnifiedPushContractTest` |
 | `core/weather.json` | 75 §7.1 | `WEATHER_CONTRACT_WRITE=1` (`weather::tests`) | server `weather::tests`; launcher `WeatherContractTest` |
 | `core/zone_networks.json` | 138 | by hand | server `tests::zone_networks`; launcher `ZoneNetworksContractTest` |

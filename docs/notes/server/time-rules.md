@@ -264,3 +264,45 @@ Decisions on the phone use the server's time (`docs/notes/launcher/time-rules.md
   feil" and every phone answer carries `Vibb-Clock: off` (`clock_skew::mark_answers`), which a phone never takes as its
   time. A check that failed, or none yet, is unknown: never said as wrong.
 - (0170 is another branch's migration number; this one is 0171.)
+
+## App groups (design 139 part A, `docs/design/139-app-groups.md`, migration `0186_app_groups.sql`)
+
+- **Model** (`src/app_groups.rs`): `app_groups` per phone - `name` (1-40 characters), `apps_json` (at most 50 packages,
+  never ours: `never_grouped`, `me.vibb.*`), `days_json` (7 limits Monday first, minutes 0-1440 or null; the budget's
+  shape, `time_rules::parse_budget`). An app is in at most one of the phone's groups (D2, checked on save; the phone
+  fails closed on a race). A stored group that doesn't read makes the policy a 500 (`CorruptTimePolicy`), never fewer
+  groups.
+- **Wire** (contract `contracts/core/app_groups.json`): `time_policy.groups` always (`[]` when none); a group's extra
+  time is a `time_lifts` row with target `group`, `group_id` (NULL once the group is gone, `ON DELETE SET NULL` - the
+  lift is then no longer delivered) and `group_name` (Activity's words), delivered 12 h like screen time's, served with
+  `group_id`. `fits` never takes it for a screen-time request. The report's `time_state.usage_access` and `groups`
+  (`[{id, used_minutes, extra_minutes, closed}]`, at most 50, `device_api::Field::Objects`).
+- **Pages** (`handlers::app_groups`, `device_group.html`): `GET/POST /devices/{id}/time/groups/new`,
+  `GET/POST /devices/{id}/time/groups/{gid}`, `POST .../{gid}/delete`. Shaped like the Bedtime page (Save on the band,
+  Navn, Apper - the phone's reported, allowed apps without ours and without its other groups', a ticked one no longer
+  offered keeps its note -, Grense from `partials/budget_rows.html`, Slett gruppe… outside the form). Add lands on the
+  new group's `?saved=added#group`, Save on `?saved=1#group`, Delete on Device › Time Rules'
+  `?notice=group_deleted#groups`; a group deleted in another tab lands there with `notice=group_gone` (not `gone`, which
+  the own rules' flash reads), nothing written; another phone's group is a 404. Logged as `app_group_saved` /
+  `app_group_deleted` with the name, each nudges the phone.
+- **Device › Time Rules** gets Appgrupper (`#groups`) after Daily Limit: a row per group ("Mon-Fri 1 h · Sat-Sun 2 h · 3
+  apps", today's state from the phone's report of today as a quiet value: "40 of 75 min", "Used up", "Not today", "No
+  limit"), Legg til gruppe, the (i), and design 114's line for the step `usage_access` (feature `app_groups`).
+- **The setup step** `usage_access` (required, `when: app_groups` - a group limits some day; read from
+  `time_state.usage_access`): the core's input rides in `Integrations::setup`'s part (`setup_status::APP_GROUPS_INPUT`),
+  so every page's lines see it. A read error counts as a group with a limit (the line shows rather than hides).
+- **Quick actions**: the Skjermtid sheet gets "Hva" (Skjermtid, then each group) while the phone has a group; it posts
+  `what=group-{gid}` (the same as `target=group&group={gid}`) to `/devices/{id}/lifts`.
+- Tests: `tests::app_groups` (the pages, D2, 404, the policy against the contract, the group lift and Activity, the
+  report's kept keys, the setup line, the migration on a database with lifts and answers), the group rows of
+  `time_pages::every_form_on_the_time_pages_returns_to_its_group`, `time_request::a_fitting_lift_answers_the_open_request`
+  (a group lift answers nothing), `app_groups::tests`, `handlers::app_groups::tests`.
+- **Code QA (2026-11-27):** a row whose report says `closed` with time left says "Can't count" ("Kan ikke telle") in
+  `text-alarm`, how to fix behind the group's (i); the weekday is the phone's own `time_state.day` (yesterday or later by
+  the server's zone); a group with no limit on any day shows no value (its sub-line says "No limit"). At most 50 groups
+  per phone (`MAX_GROUPS`, "At most 50 groups"); the report keeps the first 50, never drops the key. The overlap check
+  (D2) and the write run in one `BEGIN IMMEDIATE`, and a group whose apps don't read conflicts with any app. A group lift
+  reads its group and writes its row in one transaction (a group gone in between is the 404). Today shows a lift whose
+  group is gone as done, not sent. The Apper list never offers `app_groups::NEVER_GROUPED` (the Play Store, Play
+  services, the WebView, the usual dialers, clocks and keyboards).
+

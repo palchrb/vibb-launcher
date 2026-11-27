@@ -156,6 +156,8 @@ object SetupReadings {
         put("map_vibb_links", read { vibbLinksDone(MapLinksRuntime.vibbHosts(context)) })
         // Design 119: the report's `login_browser.browser_role`, as the server reads it.
         put("vibb_browser", read { com.kidslauncher.mdm.logins.LinkGateRuntime.roleHeld(context) })
+        // Design 139 §5.3: the app-op's own reading (`null` unreadable), as the report's `time_state.usage_access`.
+        put("usage_access", com.kidslauncher.mdm.timerules.UsageAccess.granted(context))
     }
 
     /** §2.3's inputs from [policy]; [SetupInputs.NONE] before the first one. */
@@ -172,6 +174,7 @@ object SetupReadings {
             mapAppInstalled = mapAppInstalled(reportedPackages(context)),
             linkGate = com.kidslauncher.mdm.logins.LinkGateRuntime.enabled(context),
             locationInterval = policy.locationPolicy?.mode == "interval",
+            appGroups = com.kidslauncher.mdm.timerules.groupsLimit(policy.timePolicy),
         )
     }
 

@@ -1320,6 +1320,9 @@ class PolicyResponseCompatTest {
         assertNull(time.lifts[1].by)
         assertEquals(0L, time.lifts[1].atMs)
         assertNull(time.answer)
+        // Design 139 §5.2: an older server's policy without `groups` has none, and a lift without `group_id` none.
+        assertEquals(emptyList<com.kidslauncher.mdm.timerules.AppGroup>(), time.groups)
+        assertNull(time.lifts[1].groupId)
         val answered = (decodeCached(
             withTime.replace(
                 "\"minutes\": 15, \"expires_at_ms\": 1759690000000}]",

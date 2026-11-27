@@ -698,6 +698,46 @@ class EnforcementPlanTest {
         assertTrue(plan(allowlist, overrideActive = true).hide.isEmpty())
     }
 
+    /** Design 139 §4.2, D8: a closed app group's apps are suspended, never hidden, out of the kiosk's pins and out of
+     * the lock's usable apps (bedtime's included); [EnforcementPlan.groupOnly] leaves out an app the lock or the
+     * allowlist also suspends; what is spared from every restriction, the alarm apps and ours are never touched; a group
+     * sets the date/time lock and the overlay block, and the override lifts the group. */
+    @Test
+    fun `a closed group's apps are suspended, unpinned and never hidden`() {
+        val allowed = listOf("org.example.music", "org.example.game", "com.android.chrome", "me.vibb.music", "org.example.clock")
+        fun groupPlan(locked: Boolean = false, usable: Set<String> = emptySet(), override: Boolean = false, closed: Set<String>) =
+            computeEnforcementPlan(
+                allowed, true, 0, override, controllable + listOf("me.vibb.music", "org.example.clock"), OWN, DIALER,
+                scheduleLocked = locked, lockUsableApps = usable, alarmApps = setOf("org.example.clock"),
+                groupClosedApps = closed, groupsSet = true,
+            )
+        // The trusted music app never reaches the plan (the snapshot spares it, AppGroupStatesTest).
+        val open = groupPlan(closed = setOf("org.example.game", DIALER, OWN, "org.example.clock"))
+        assertTrue("org.example.game" in open.suspend)
+        assertFalse("org.example.game" in open.hide)
+        assertFalse("org.example.game" in open.kioskPackages!!)
+        assertEquals(setOf("org.example.game"), open.groupOnly)
+        for (spared in listOf(DIALER, OWN, "org.example.clock")) assertFalse(spared, spared in open.suspend)
+        assertTrue(open.lockDateTime)
+        assertTrue(open.restrictCreateWindows)
+        // Bedtime leaves the game usable: the closed group still wins, and the lock alone suspends the music.
+        val bedtime = groupPlan(locked = true, usable = setOf("org.example.game", "org.example.music"), closed = setOf("org.example.game", "com.android.chrome"))
+        assertTrue("org.example.game" in bedtime.suspend)
+        assertFalse("org.example.game" in bedtime.kioskPackages!!)
+        assertTrue("org.example.music" in bedtime.kioskPackages!!)
+        // Chrome is suspended by the lock anyway: hidden from the dim, as before.
+        assertEquals(setOf("org.example.game"), bedtime.groupOnly)
+        // Not allowed: hidden by the allowlist, never dimmed.
+        val notAllowed = computeEnforcementPlan(listOf("org.example.music"), true, 0, false, controllable, OWN, DIALER, groupClosedApps = setOf("org.example.game"))
+        assertTrue("org.example.game" in notAllowed.hide)
+        assertEquals(emptySet<String>(), notAllowed.groupOnly)
+        // The override and the pause lift the group (and the overlay block).
+        val lifted = groupPlan(override = true, closed = setOf("org.example.game"))
+        assertFalse("org.example.game" in lifted.suspend)
+        assertFalse(lifted.restrictCreateWindows)
+        assertTrue(lifted.lockDateTime)
+    }
+
     private companion object {
         const val OWN = "me.vibb.launcher"
         const val DIALER = "com.android.dialer"

@@ -510,6 +510,15 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
         .await
         .unwrap();
     let time = device_page(id, Section::Time);
+    // Design 139 §5.3: an app group's editor (its apps already stored: no app need be reported).
+    let group: i64 = sqlx::query_scalar(
+        "INSERT INTO app_groups (device_id, name, apps_json, days_json) VALUES (?, 'Spill', \
+         '[\"org.example.game\"]', '[60,60,60,60,60,120,120]') RETURNING id",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
     let pages = [
         time.clone(),
         "/schedules/screen-time".to_string(),
@@ -517,6 +526,8 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
         format!("/schedules/rules/new?device={id}"),
         format!("/schedules/rules/{global}"),
         format!("/schedules/rules/{own}"),
+        format!("/devices/{id}/time/groups/new"),
+        format!("/devices/{id}/time/groups/{group}"),
     ];
     let mut seen = Vec::new();
     for page in pages {
@@ -536,8 +547,25 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                     .await
                     .unwrap()
             };
+            let new_group = || async {
+                sqlx::query_scalar::<_, i64>("SELECT MAX(id) FROM app_groups")
+                    .fetch_one(&app.db)
+                    .await
+                    .unwrap()
+            };
             let mut expected: (String, Option<&str>) =
-                if target == format!("/devices/{id}/time/rules/{global}") {
+                if target == format!("/devices/{id}/time/groups/new") {
+                    add(&mut sent, "name", "Video");
+                    add(&mut sent, "apps", "org.example.video");
+                    (String::new(), Some("group")) // the new id, after the post
+                } else if target == format!("/devices/{id}/time/groups/{group}") {
+                    add(&mut sent, "name", "Spill");
+                    add(&mut sent, "apps", "org.example.game");
+                    add(&mut sent, "b0", "30");
+                    (format!("{target}?saved=1"), Some("group"))
+                } else if target == format!("/devices/{id}/time/groups/{group}/delete") {
+                    (format!("{time}?notice=group_deleted"), Some("groups"))
+                } else if target == format!("/devices/{id}/time/rules/{global}") {
                     // Unticked: off for the phone.
                     (time.clone(), Some("everyone"))
                 } else if target == format!("/devices/{id}/time/rules/{kept}") {
@@ -623,6 +651,12 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
             if target == "/schedules/rules" {
                 expected.0 = format!("/schedules/rules/{}?saved=added", new_id().await);
             }
+            if target == format!("/devices/{id}/time/groups/new") {
+                expected.0 = format!(
+                    "/devices/{id}/time/groups/{}?saved=added",
+                    new_group().await
+                );
+            }
             assert_redirect(&res, &expected.0, expected.1);
             app.assert_lands(&res, &cookie).await;
             seen.push(target);
@@ -643,6 +677,9 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
             format!("/schedules/rules/{global}/delete"),
             format!("/schedules/rules/{own}"),
             format!("/schedules/rules/{own}/delete"),
+            d("time/groups/new"),
+            d(&format!("time/groups/{group}")),
+            d(&format!("time/groups/{group}/delete")),
         ],
         "every form on the pages is in the table, in page order"
     );

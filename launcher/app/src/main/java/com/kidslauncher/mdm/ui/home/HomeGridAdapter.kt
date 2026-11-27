@@ -281,6 +281,9 @@ class HomeGridAdapter(
     /** [glyphTint]: the glyph's colour, `null` = its own white. */
     private fun glyphTile(holder: ViewHolder, color: Int, glyph: Int, label: Int, glyphTint: Int? = null) {
         val context = holder.itemView.context
+        // A recycled app tile may have been dimmed (design 139).
+        holder.icon.alpha = 1f
+        holder.label.alpha = 1f
         holder.icon.backgroundTintList = ColorStateList.valueOf(context.getColor(color))
         holder.icon.setImageResource(glyph)
         holder.icon.imageTintList = glyphTint?.let { ColorStateList.valueOf(context.getColor(it)) }
@@ -350,6 +353,9 @@ class HomeGridAdapter(
                 }
                 holder.label.text = tile.app.label
                 bindAppBadge(holder, tile)
+                // Design 139 §4.3: an app closed by its group stays, dimmed; a tap opens the group's sheet (AppAction).
+                holder.icon.alpha = if (tile.dimmed) com.kidslauncher.mdm.timerules.AppGroupTiles.DIM_ALPHA else 1f
+                holder.label.alpha = holder.icon.alpha
             }
         }
     }

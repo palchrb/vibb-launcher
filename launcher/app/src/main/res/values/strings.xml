@@ -20,6 +20,12 @@
     <!-- The anchor's notification with a screen-time budget today (design r13 §2.2): the time left as its title, the
          one action, and the asked line (plain text, never a button). -->
     <string name="anchor_time_left">%1$s left today</string>
+    <!-- Design 139 Q4 (b): an app group's last minutes, while one of its apps is on screen. -->
+    <string name="anchor_group_left">%1$s: %2$s left</string>
+    <!-- Design 139 §4.3: a used-up app group's sheet, from its dimmed tile. -->
+    <string name="app_group_used_up">Used up today</string>
+    <string name="app_group_not_today">Not today</string>
+    <string name="app_group_cant_count">Can\'t count now</string>
     <string name="anchor_time_used_up">Screen time is used up today</string>
     <string name="anchor_ask_more_time">Ask for more time</string>
     <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
@@ -1007,6 +1013,7 @@
     <string name="setup_step_vibb_notifications">Vibb One notifications</string>
     <string name="setup_step_full_screen_intent">Full-screen notifications</string>
     <string name="setup_step_write_settings">Modify system settings</string>
+    <string name="setup_step_usage_access">App usage data</string>
     <string name="setup_step_assistant">Digital assistant</string>
     <string name="setup_step_wifi_airplane">Wi-Fi in airplane mode</string>
     <string name="setup_step_call_filter">Call filter</string>
@@ -1036,6 +1043,7 @@
     <string name="setup_how_vibb_notifications_role">Switch grey? Set Calls and SMS to “Not managed” in the parent app, and back afterwards.</string>
     <string name="setup_how_full_screen_intent">Turn on Allow full-screen notifications.</string>
     <string name="setup_how_write_settings">Turn on Allow.</string>
+    <string name="setup_how_usage_access">Turn on Vibb One. Greyed switch: tap it, OK, then App info › ⋮ › Allow restricted settings.</string>
     <string name="setup_how_assistant">Choose Vibb One, then OK.</string>
     <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
     <string name="setup_how_call_filter">Choose Vibb One both times.</string>

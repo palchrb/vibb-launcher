@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod admin;
+pub mod app_groups;
 pub mod app_page;
 pub mod app_push;
 pub mod auth;

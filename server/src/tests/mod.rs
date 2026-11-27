@@ -6,6 +6,7 @@ mod admin_auth;
 mod airplane_mode;
 mod android_lock_page;
 mod app_display;
+mod app_groups;
 mod app_lock;
 mod app_logos;
 mod app_page;

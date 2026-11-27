@@ -75,11 +75,29 @@ pub async fn create_lift(
         Err(err) => return server_error(lang, err, "failed to read a device"),
     }
 
-    let target = form.get("target").map(String::as_str).unwrap_or("");
+    // Design 139 §5.3: the Skjermtid sheet's Hva (`what`): `budget`, or `group-{gid}` - the same as `target=group` with
+    // `group={gid}`.
+    let (target, group) = match form.get("what").map(String::as_str) {
+        Some(what) if what.starts_with("group-") => ("group", what.strip_prefix("group-")),
+        Some("budget") => ("budget", None),
+        _ => (
+            form.get("target").map(String::as_str).unwrap_or(""),
+            form.get("group").map(String::as_str),
+        ),
+    };
     let minutes = form
         .get("minutes")
         .and_then(|m| m.trim().parse::<i64>().ok())
         .unwrap_or(0);
+    if target == "group" {
+        let Some(group_id) = group.and_then(|g| g.trim().parse::<i64>().ok()) else {
+            return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_lift");
+        };
+        return match record_group_lift(&state, lang, id, &admin, group_id, minutes).await {
+            Ok(done) => back_to(id, "extra", done),
+            Err(refused) => refused,
+        };
+    }
     let rule = form.get("rule").map(|r| r.trim()).unwrap_or("all");
     match record_lift(&state, lang, id, &admin, target, rule, minutes).await {
         // Design 123 §3.4: the flash names the rule refused.
@@ -214,6 +232,85 @@ pub(crate) async fn record_lift(
     lift_line(state, admin, id, target, rule_name.as_deref(), minutes).await;
     let _ = state.command_notify.send(id);
     Ok(if target == "rule" { "pause" } else { "extra" })
+}
+
+/// Design 139 D9: extra time for one of the phone's app groups - a `group` lift, delivered for
+/// [BUDGET_LIFT_DELIVERY_HOURS] like screen time's and added once to the day the phone first sees it. It never answers
+/// a request for more time (`time_answers::fits`). A group of another phone, or one gone, is a 404.
+#[allow(clippy::result_large_err)]
+async fn record_group_lift(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    group_id: i64,
+    minutes: i64,
+) -> Result<&'static str, Response> {
+    if !time_rules::valid_lift("group", minutes) {
+        return Err(crate::i18n::error(
+            lang,
+            StatusCode::BAD_REQUEST,
+            "error.unknown_lift",
+        ));
+    }
+    // Code QA L4: the group's read and the lift's row in one transaction - a group deleted in between is the 404 below,
+    // never a lift of a group that is gone.
+    let written = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM app_groups WHERE id = ? AND device_id = ?")
+                .bind(group_id)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, minutes, expires_at, created_by, group_id, group_name) \
+             VALUES (?, 'group', ?, datetime('now', ?), ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(minutes)
+        .bind(format!("+{BUDGET_LIFT_DELIVERY_HOURS} hours"))
+        .bind(&admin.username)
+        .bind(group_id)
+        .bind(&name)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(Some(name))
+    };
+    let group_name = match written.await {
+        Ok(Some(name)) => name,
+        Ok(None) => {
+            return Err(crate::i18n::error(
+                lang,
+                StatusCode::NOT_FOUND,
+                "error.group_not_found",
+            ));
+        }
+        Err(err) => return Err(server_error(lang, err, "failed to record a group lift")),
+    };
+    let detail = security::Detail::words(
+        "security.detail.lift.group",
+        &[
+            ("device", &id.to_string()),
+            ("minutes", &minutes.to_string()),
+            ("group", &group_name),
+        ],
+    )
+    .with_facts(format!("device {id}"));
+    security::record_security_event(
+        &state.db,
+        "time_lift",
+        Some(&admin.username),
+        None,
+        Some(detail),
+    )
+    .await;
+    let _ = state.command_notify.send(id);
+    Ok("extra")
 }
 
 /// A parent's lift row (`target` "rule" with `rule_id` - `None`: every rule - or "budget"), in the
@@ -538,8 +635,17 @@ pub(crate) async fn today(
                 (what, state)
             } else {
                 (
-                    t_params(lang, "device.summary.today.extra", &[("duration", &length)]),
-                    if active {
+                    match (lift.target.as_str(), lift.group_name.as_deref()) {
+                        // Design 139: "Spill: 15 min ekstra".
+                        ("group", Some(group)) => t_params(
+                            lang,
+                            "device.summary.lift.group_extra",
+                            &[("group", group), ("duration", &length)],
+                        ),
+                        _ => t_params(lang, "device.summary.today.extra", &[("duration", &length)]),
+                    },
+                    // Code QA L6: a group lift whose group is gone is no longer sent.
+                    if active && !(lift.target == "group" && lift.group_id.is_none()) {
                         LiftState::Sent
                     } else {
                         LiftState::Done

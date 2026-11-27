@@ -37,6 +37,24 @@ object AnchorNotice {
             durationText(text.minutes, context.getString(R.string.duration_unit_hours), context.getString(R.string.duration_unit_minutes)),
         )
         TimeLeftText.UsedUp -> context.getString(R.string.anchor_time_used_up)
+        is TimeLeftText.GroupLeft -> context.getString(
+            R.string.anchor_group_left,
+            text.name,
+            durationText(text.minutes, context.getString(R.string.duration_unit_hours), context.getString(R.string.duration_unit_minutes)),
+        )
+    }
+
+    /** Design 139 Q4 (b): the app group whose last minutes the title names now ([refreshGroups]), `null` for none. */
+    @Volatile
+    private var groupWarning: TimeLeftText.GroupLeft? = null
+
+    /** Q4 (b), after each group fold: the warning for [states] with [onScreen] at the fold; a change posts the notice
+     * again (r13's one notification, no sound, no second notice). */
+    fun refreshGroups(context: Context, states: List<com.kidslauncher.mdm.timerules.GroupState>, onScreen: Set<String>) {
+        val warning = com.kidslauncher.mdm.timerules.groupWarningText(states, onScreen)
+        if (warning == groupWarning) return
+        groupWarning = warning
+        refreshNow(context)
     }
 
     /** The note line's words (design 100 §8.4, §14.3): "Spurt kl. 14:02 · venter på svar", "Pappa svarte nei kl.
@@ -98,12 +116,15 @@ object AnchorNotice {
      * the shade: the pause or the override, and the request's state from its DE prefs - no snapshot
      * (qa-r13-rule-card-code Q-5). */
     fun noticeFor(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long): TimePart =
-        timePart(
-            budget,
-            OfflineOverride.isActive() || RestrictionsPause.isActive(),
-            TimeRequests.state(context, day, policy),
-            policy,
-            nowMs,
+        com.kidslauncher.mdm.timerules.withGroupWarning(
+            timePart(
+                budget,
+                OfflineOverride.isActive() || RestrictionsPause.isActive(),
+                TimeRequests.state(context, day, policy),
+                policy,
+                nowMs,
+            ),
+            groupWarning,
         )
 
     /** The notice for [snap] (`recheck`'s, the tap's), handed to the poster. */
@@ -116,7 +137,10 @@ object AnchorNotice {
     @Synchronized
     fun refresh(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long) {
         val state = TimeRequests.state(context, day, policy)
-        val time = timePart(budget, OfflineOverride.isActive() || RestrictionsPause.isActive(), state, policy, nowMs)
+        val time = com.kidslauncher.mdm.timerules.withGroupWarning(
+            timePart(budget, OfflineOverride.isActive() || RestrictionsPause.isActive(), state, policy, nowMs),
+            groupWarning,
+        )
         AnchorNotification.notice(context, time)
         val seen = time to state
         if (seen != lastSeen) {

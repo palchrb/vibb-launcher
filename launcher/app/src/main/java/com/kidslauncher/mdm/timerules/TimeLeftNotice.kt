@@ -13,7 +13,18 @@ sealed interface TimeLeftText {
     data class Left(val minutes: Int) : TimeLeftText
 
     data object UsedUp : TimeLeftText
+
+    /** Design 139 Q4 (b): an app group's last minutes while one of its apps is on screen - "Spill: 3 min igjen". */
+    data class GroupLeft(val name: String, val minutes: Int) : TimeLeftText
 }
+
+/** Q4 (b): [time] with the group's warning as its title (`null`: as it is). The rest - the note, the ask - stays. */
+fun withGroupWarning(time: TimePart, warning: TimeLeftText.GroupLeft?): TimePart =
+    if (warning == null) time else time.copy(text = warning)
+
+/** Q4 (b): the warning for [states] with [onScreen] at the last fold ([groupWarning]), `null` for none. */
+fun groupWarningText(states: List<GroupState>, onScreen: Set<String>): TimeLeftText.GroupLeft? =
+    groupWarning(states, onScreen)?.let { TimeLeftText.GroupLeft(it.name, leftMinutes(it.remainingMs ?: 0)) }
 
 /** The ask's part - the plain notice's action and Snarveier's Mer tid disc: [Action] "Be om mer tid" (usable),
  * [Asked] a request is open (the disc dimmed, "Mer tid, spurt"; no action), or [None] (no budget, the pause, or the

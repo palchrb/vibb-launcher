@@ -326,6 +326,18 @@ object AppEnforcer {
     var lastPlanHide: Set<String>? = null
         private set
 
+    /** Design 139 §4.3: the last [apply]'s apps suspended by a closed app group alone (`null` = none ran yet) - Home
+     * and the app list keep them, dimmed ([com.kidslauncher.mdm.timerules.AppGroupTiles]). */
+    @Volatile
+    var lastPlanGroupOnly: Set<String>? = null
+        private set
+
+    /** Design 139 D7: the closed groups' apps the last [apply] enforced (`null` = none ran yet), for the cut and the
+     * tracker's first re-check (code QA M1). */
+    @Volatile
+    var lastGroupClosed: Set<String>? = null
+        private set
+
     /** The last [apply]'s never-restrict set (`null` = none ran yet): what map links' step 2 never suspends. */
     @Volatile
     var lastNeverRestrict: Set<String>? = null
@@ -546,7 +558,8 @@ object AppEnforcer {
             scheduleLocked = scheduleLocked,
             alarmApps = alarmAppPackages(context),
             inputMethods = keptInputMethods(enabledImes, systemImes, allowlist),
-            lockUsableApps = lock.usableApps,
+            // Design 139: the plan takes the closed groups out itself (D8), and knows which apps they alone close.
+            lockUsableApps = lock.usableBeforeGroups ?: lock.usableApps,
             // Design 105 §2.1: a rule (not the used-up budget alone) keeps the clocks it doesn't leave usable unpinned.
             ruleLocked = lock.rules.isNotEmpty(),
             ruleBlocksCalls = lock.callsBlocked,
@@ -564,6 +577,10 @@ object AppEnforcer {
             androidAutoInstalled = installedEvenHidden(pm, ANDROID_AUTO),
             allowAndroidAuto = policy?.allowAndroidAuto == true,
             locationWatched = policy?.locationPolicy?.mode == "interval",
+            // Design 139 §4.2: the closed app groups' apps (the live VoIP call's own package held back, D7), and the
+            // date/time lock and the overlay block while the policy has a group.
+            groupClosedApps = lock.groupClosed,
+            groupsSet = timePolicy?.groups?.isNotEmpty() == true,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -585,6 +602,8 @@ object AppEnforcer {
 
         lastPlanSuspend = plan.suspend
         lastPlanHide = plan.hide
+        lastPlanGroupOnly = plan.groupOnly
+        com.kidslauncher.mdm.timerules.AppGroupTiles.storePlan(context, plan.groupOnly)
         lastNeverRestrict = plan.neverRestrict
         PlatformRefusals.storePlan(context, plan.suspend, plan.hide)
         // What the platform refused on this boot because the package is exempt (Android 17's Settings): not asked again
@@ -682,6 +701,14 @@ object AppEnforcer {
             context, dpm, admin, gateOn, pauseEnded = lastEnforcedOverride == true && !overrideActive,
         )
         lastEnforcedLockKey = lock.key()
+        // Design 139 D7: a group that just closed over the app in front brings Home.
+        val groupClosedBefore = lastGroupClosed
+        lastGroupClosed = lock.groupClosed
+        try {
+            com.kidslauncher.mdm.timerules.AppGroupUsage.afterApply(context, lock.groupClosed, groupClosedBefore)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The group cut failed: ${e.javaClass.simpleName}")
+        }
         lastEnforcedPlayState = playState
         lastEnforcedOverride = overrideActive
         lastChromeUpdateUnhidden = roleChrome && playState.updateWindow
@@ -1818,6 +1845,9 @@ object AppEnforcer {
             recentsPackage = systemRecentsPackage(context),
             relockBlocked = relockBlocked,
             emergencySos = emergencySosPackage(context),
+        ) || com.kidslauncher.mdm.timerules.groupClosesNewPackage( // Design 139: installed again, it stays closed (QA L4).
+            packageName, lock.groupClosed, lastNeverRestrict.orEmpty() + setOfNotNull(systemDialerPackage(context)),
+            alarmAppPackages(context),
         )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
