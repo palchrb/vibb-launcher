@@ -3750,3 +3750,97 @@ What the build adds for the gate:
   and ~2 s after each pass; Home's record: `adb logcat -b events | grep -E 'wm_(finish_activity|on_create_called).*HomeActivity'`;
 - row 7 (code QA M1) also records, each time, the flow back in front (its step, not Home) and Home not recreated.
 
+
+
+## 6ch. Night gate 2026-11-27, Android 16 (branch `gate-night-1127b`)
+
+Design 141's gate table (§6cf, design 141 §11) and design 139 revision 6's owed rows (13, 18 and row 6's setup hold) on
+**Android 16 only**: `jelly36` (Google Play image, `-wipe-data`, port 5560), 2026-11-27 22:08-23:30 UTC, with the owner's
+OK for the night; Android 14 is gate A's (`compat34`). `main` at `671e30a40`: gate A's debug launcher and debug server
+(`--features emulator_keys`), run as this gate's own copy (admin `127.0.0.1:3200`, phones `10.0.2.2:3201`, own data).
+The phone: §4's adb lines, "Telefon 1" with Foreldre-PIN 246813, Koble til with a typed code, the setup flow skipped
+through, Barne-PIN 4826 (Android's PIN), screen timeout 10 min, system language English, our dialer role held. The kiosk
+on with the block (`mFlags= 127`, `0x7f`), Home's task `#8` the root (`mLockTaskModeTasks #0`), the protolog on
+(`wm logging enable-text WM_DEBUG_LOCKTASK`). Chrome and §6ce's test apps X/Y/Z (`probe.usage`, `probe.other`,
+`probe.below`) allowed. State read every ~0.2-0.4 s (`dumpsys activity activities`: `mLockTaskModeState`, the locked
+tasks, `topResumedActivity`), Home's record from `logcat -b events` (`wm_on_create_called`/`wm_finish_activity` for
+`HomeActivity`), the lock-task protolog and `HomeRootStop` from one `logcat` stream. Times are the phone's.
+
+**The leftover.** Settings is hidden while it isn't allowed, and after the first pause `SET_WALLPAPER` opens a chooser,
+so "a leftover" here is `am start -n com.android.wallpaper.livepicker/.LiveWallpaperActivity` ("App is not available
+- Live Wallpaper Picker"), then the Home key: `#1 Task{... type=standard A=1000:android}` beside Home's `#0`. **On 16 the
+leftover goes at the next new task**: an app opened from Home (Chrome, Probe Z, kid Settings), the setup flow's start and
+the glance's start at a screen-off each removed it ~0.1 s after (`removeLockedTask: removed ... A=1000:android`,
+`wm_task_removed ... BlockedAppActivity`; 6 of 6). An app's task brought back to the front (an `am start` of a task that
+exists) kept it. So rows 3 (an app in front), 6 (dark) and 7 (the flow) met no leftover at the pass unless built that way
+(row 3 try 3); the stuck picture of §1 needs the leftover, the Home key and the kiosk's end with no app launch between.
+
+| Row | Android 16 (`jelly36`) |
+|---|---|
+| 1 | Not on 16 (the control on `main` is 14's) |
+| 2 | **Pass, 10 of 10.** Each: a leftover, the pause from Settings (drawer › Settings › Parent PIN › "Pause all restrictions" › PIN). Order every time: `Allowing features 0:0x3f`, `removeLockedTask` of the leftover, then Home's ("last task, reverting locktask mode"), then `Allowlisting 0:[]` 1-33 ms after the revert (`0:0x10` after it). `HomeRootStop: Home's stop ASKED` in 8; in 2 no line (Home's own listener stopped first: the pass read `NOT_LOCKED`, silent). `NONE` at the first read after the pass (30-110 ms) and at every read for the next 2-5 s; Home's task `#8` and record unchanged (no `wm_on_create_called`/`wm_finish_activity` for `HomeActivity` from 22:29 to the end of the rows); Settings in front (`SettingsActivity t8`), Back -> Home, Chrome opened from Home (its first-run screen); the PWA's end re-pinned (LOCKED, `#8` alone) 11-15 s after the post. One more pass without a leftover (try 2): the same with Home's task alone |
+| 3 | **Pass.** The PWA's pause: (1) a leftover, Home in front: as 2, `NONE` 30 ms after `Allowlisting 0:[]`; (2) Chrome in front (the leftover gone at Chrome's start, above): Chrome's task cleared (`wm_finish_activity ... FirstRunActivity,clear-task-all`), Home resumed, not recreated; (3) Probe Z brought back over a leftover (Chrome's, Z's and the leftover's tasks locked): all three cleared, then Home's, `Home's stop ASKED`, `NONE`, Home `t8` in front |
+| 4 | **Pass.** Home's "Lock again" in a pause: `Allowing features 0:0x7f`, `Allowlisting 0:[<the kiosk list>]`, `startLockTaskMode`/`Locking to` Home's `#8`, `Relocked (lock_again, [pause])`; LOCKED, `#8` alone, `mFlags= 127`. The PWA's end (`/end-windows`): the same after every row-2/3 try |
+| 5 | **Pass.** `kiosk_desired = 0` on the test server (the switch isn't in the PWA any more) and a sync, with a leftover: `0x3f`, the leftover's and Home's `removeLockedTask`, `Home's stop ASKED`, `Allowlisting 0:[]`, `NONE` 15 ms after; Chrome opened; `NONE` after the next sync and after a screen-off and Android's PIN; the switch on again: LOCKED, `#8`, `0x7f` |
+| 6 | **Pass, both.** A leftover, the power key; in the dark the locked tasks were Home's and the glance's (`.pinlock`) - the leftover was gone at the glance's start (above). The PWA's pause in the dark: the kiosk-off LOCKED row (`Allowlisting` of our package and helpers, `0:0x31`, `mFlags= 49`), the tasks unchanged. Android's PIN: the glance's task and Home's removed, `Home's stop ASKED`, `Allowlisting 0:[]`, `NONE` at the first read, Home `t8` in front, not recreated, Chrome opens. The same with the kiosk switch off in the dark |
+| 7 | **Pass, 5 of 5.** Settings › Setup ("1 step left") › "Pause for 2 h" › PIN, the flow in front (its task locked beside Home's). Each: the flow's task cleared, Home's reverted, `Home's stop ASKED`, `Allowlisting 0:[]`; `NONE` at the first read; Settings (`t8`) in front for 2.2-2.4 s, then the flow back in a new task (`SetupFlowActivity` `t55`..`t63`, "1 of 11 · Digital assistant"), `NONE` and no locked task ~2 s after and to the end of the read; no retry line (the flow's start came after the posted stop, so §2's gap was never hit), Home not recreated. "Finish" then re-pinned (LOCKED, `#8`). No leftover at the pass: the flow's own start removed it |
+| 8 | **Not reachable on 16 as written.** Probe Z over a leftover, the launcher's process `kill -9`'d (`run-as`), the PWA's pause at once: the new process locked the phone at once (`PinLock: Process start: LOCKED (decided before any screen)`, `homeFirst=true`) and restarted Home in its record (`wm_on_create_called ... HomeActivity`, the same token, 1 s after the kill) - so the pass found Home registered, never `NO_HOME`. In the dark: the kiosk-off LOCKED row; the leftover went at the glance's start. Android's PIN: `Home's stop ASKED`, `NONE`, Home `t8`. No stuck line; §3.4's bring and the stuck line not seen |
+| 9 | **The kiosk's end: Pass, 5 of 5. The in-call screen: Fail (F1).** `adb emu gsm call` from Mamma, answered (`mCallState=2`), Home in front, the PWA's pause: the in-call task (`.call`, locked) and Home's removed, `Home's stop ASKED`, `NONE` at the first read and for 10 s after - no gap root, no retry line, never stuck. But the in-call screen never came back: `InCallActivity` destroyed (`finish-imm:clear-task-all`), Home stayed in front for the whole read, the call live (`mCallState=2`), only Vibb's call notification ("Mamma", `launcher:calls`) in the shade. **With the system dialer** as the in-call UI (`cmd role add-role-holder android.app.role.DIALER com.google.android.dialer`): Home's `NONE`, then Google's `InCallActivity` started 40 ms after the revert in a new task (unlocked, the posted stop had run), in front with "End call" - §2's gap not hit |
+| 10 | **Leftover: yes - and the pause clears it (Pass).** (a) A plain plug-in in the dark (`adb emu power ac on` after `dumpsys battery unplug`): no wake on this image, nothing started, no leftover. (b) §6bl's method (screen off; `dumpsys battery unplug; dumpsys battery set usb 1; am start -n <livepicker>; input keyevent KEYCODE_WAKEUP` in one line): `BlockedAppActivity` locked as `#73` over the glance's `#72`, Android's lock screen shown, the glance not back (no `power changed`, no re-front line - F2). After Android's PIN: the glance's task gone, **"App is not available" in front, `#73` still locked beside Home**. Home key, the PWA's pause: `#73` and Home's removed, `Home's stop ASKED`, `NONE` |
+| 11 | **Pass.** A pause from Settings, Back, "Lock again" and the PWA's pause ~1 s after the tap (it lands ~4 s later, the command's delivery): the Settings pause landed at .199 and the "Lock again" re-pinned 160 ms later (an end right after a start), then the PWA's pause: `Allowlisting 0:[]` 2 ms after Home's revert, `NONE`; no crash, `NONE` 12 s after; no `HomeRootStop` line in either pass (Home's listener first, `NOT_LOCKED`) |
+| 12 | **Pass.** `settings put system font_scale 1.3`: Home relaunched (`wm_relaunch_resume_activity`, `wm_on_create_called` with the same record `258451906`, task `#8`); then a leftover and the PWA's pause: `Home's stop ASKED` (never `NO_HOME`), as 2, `NONE` |
+
+Design 139 revision 6's owed rows (§18), the group "Test" of X and Y (limit 30 min), the kiosk off by a parent pause:
+
+| Row | Android 16 (`jelly36`) |
+|---|---|
+| 13 | **Pass, 5 of 5.** `r13`'s run (Z started, X over it, `am kill probe.below`, then X killed), the ledger read before and after 75 s of Z in front. STOPPED X to Z's cold RESUMED: **207, 676, 700 ms** (`kill -9`) and **1228, 1783 ms** (`am crash`), all within `KILL_FALLBACK_MS`; each run added exactly X's RESUMED-to-STOPPED (8290, 8055, 8013, 8020, 7951 ms) and nothing in Z's 75 s. The gaps were 2-5 times §6ce's (309-352 ms) with gate A's emulator and build on the machine; the crash's 1783 ms is 217 ms from the 2 s edge (noted) |
+| 18 | **Pass.** 0 `late event` lines and no `AppGroupUsage` warning over the whole run (phone 1 22:19-23:24 with the group from 23:07: a flow pause and a PWA pause with X in front, three PWA pause starts in the dark; phone 2's hold and relock) |
+| 6 (setup hold) | **Pass.** A second wiped phone ("Telefon 2", its group made before the enrolment), `The setup hold started` 23:26:11; X in front from 23:26:52.566 (75 s and a fold in the hold): `group_used_ms` stayed empty, `carry` followed X. The PWA's end: the relock's sync began 23:28:07.4 (the hold's flag cleared there), `Relocked (command, [pause])` 23:28:10.250, X PAUSED .350, STOPPED .944 (Home in front). The first counting fold added **3430 ms** = from the hold's end at the relock's start to X's STOPPED - nothing of the 78 s in the hold (§6ce F2 counted the hold's last 17.2 s) |
+
+### Findings
+
+**F1 (row 9) - Reproduced 5/5, traced. Medium, fix small.** With our dialer role a live call's screen is gone after the
+kiosk's end on 16: Home's root stop clears every other locked task, the in-call screen's included (as today's emptying
+did, design 141 §3.2), and ATMS's `showInCallScreen(false)` after the stop reaches Telecom, which asks the default
+dialer's `InCallService` to bring its UI forward - `launcher/app/src/main/java/com/kidslauncher/mdm/calls/KidInCallService.kt`
+has no `onBringToForeground` override (its overrides: `onCreate`, `onUnbind`, `onDestroy`, `onCallAdded`,
+`onCallRemoved`, the audio ones), so nothing starts `InCallActivity`. The call stays live; the way back is Vibb's call
+notification in the shade. Design 141 §4/§9's "its screen comes to the front" holds only with the system dialer (seen
+here). Fix: `onBringToForeground(showDialpad)` starts `InCallActivity` for the live call (as `onCallAdded` does); then
+row 9 again on 14 and 16, the gap race in mind (the start comes after the posted stop as Google's did here, or the
+retry ends a root it made).
+
+**F2 (row 10) - Reproduced 1/1 with §6bl's method, not traced (the glance's area, PLAN (4i)). Low-Medium.** The
+simulated charging glimpse left Android's lock screen up (no `AndroidLock: power changed`, no re-front; the glance had
+stopped at the screen-off before the wake), and after Android's PIN the kid's screen was "App is not available" with the
+blocked task still locked. Its OK, or now the kiosk's end (design 141), clears it. §6bl's run of 2026-11-24 got the glance
+back with the same method; the difference here may be the battery state left by (a) (AC already online from `power ac
+on` + `reset`, so the `unplug; set usb 1` pair may not have sent `ACTION_POWER_CONNECTED`) - worth a look in the next
+(4i) round.
+
+**Noted.**
+- The leftover on 16 lives only until the next new task (above). Suspected: Android trims the hidden,
+  excluded-from-Recents `BlockedAppActivity` task when a new task is added (RecentTasks' trim of inactive tasks) - not
+  traced in AOSP. Gate A can say whether 14 does the same; the design's stuck picture stands either way (it needs no
+  launch between the Home key and the kiosk's end).
+- Row 8's `NO_HOME` path can't be reached on 16 by a process kill: the restart locks the phone and brings Home itself.
+- Environment: at two of four enrolments adb dropped ~10 s after Koble til: the launcher's first apply wrote
+  `no_debugging_features` **true** (`DevicePolicyManager: Changing user restriction no_debugging_features ... to: true`)
+  although the server's switch was off (`device_policy.disallow_debugging_features = 0`), and `AdbService:
+  setAdbEnabled(false)`. Suspected: an apply that ran managed without the policy's hardening (`hardeningManaged` with
+  the call policy managed, `server/AppEnforcer.kt:432`, then `hardeningPlan`'s `defaultOn`, `server/Hardening.kt:122`) -
+  not traced. Worked around with a guest loop setting `adb_enabled 1` every 2 s through the enrolment.
+
+### Summary
+
+| | 16 |
+|---|---|
+| 141 rows 2, 3, 4, 5, 6, 7, 11, 12 | Pass (row 2 10/10, row 7 5/5) |
+| 141 row 9 | Kiosk's end Pass 5/5; the in-call screen **Fail** (F1) |
+| 141 row 10 | A blocked task is left after the unlock; the pause clears it (Pass); the glance not back (F2) |
+| 141 row 8 | Not reachable on 16 (the process start locks and brings Home) |
+| 141 row 1 | 14's |
+| 139 rows 13, 18, 6 (hold) | Pass |
+
+No product code changed. The emulator was shut down (`sync`, `emu kill`) at 23:29 UTC and the server stopped.
