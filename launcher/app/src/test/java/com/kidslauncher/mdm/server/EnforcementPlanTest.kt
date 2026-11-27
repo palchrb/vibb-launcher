@@ -711,12 +711,13 @@ class EnforcementPlanTest {
                 scheduleLocked = locked, lockUsableApps = usable, alarmApps = setOf("org.example.clock"),
                 groupClosedApps = closed, groupsSet = true,
             )
-        val open = groupPlan(closed = setOf("org.example.game", DIALER, OWN, "me.vibb.music", "org.example.clock"))
+        // The trusted music app never reaches the plan (the snapshot spares it, AppGroupStatesTest).
+        val open = groupPlan(closed = setOf("org.example.game", DIALER, OWN, "org.example.clock"))
         assertTrue("org.example.game" in open.suspend)
         assertFalse("org.example.game" in open.hide)
         assertFalse("org.example.game" in open.kioskPackages!!)
         assertEquals(setOf("org.example.game"), open.groupOnly)
-        for (spared in listOf(DIALER, OWN, "me.vibb.music", "org.example.clock")) assertFalse(spared, spared in open.suspend)
+        for (spared in listOf(DIALER, OWN, "org.example.clock")) assertFalse(spared, spared in open.suspend)
         assertTrue(open.lockDateTime)
         assertTrue(open.restrictCreateWindows)
         // Bedtime leaves the game usable: the closed group still wins, and the lock alone suspends the music.

@@ -110,9 +110,8 @@ object TimeRulesRuntime {
         val clocks = clocks()
         val zone = zone()
         val before = loadLedger(context, policy.lifts, clocks, zone)
-        val observed = observe(before, clocks, zone).ledger
-        if (observed.foldPoint != from) return false
-        val after = applyFold(observed, plan, out, clocks, zone, BootClock.bootCount(), count)
+        val after = applyFoldIfCurrent(observe(before, clocks, zone).ledger, from, plan, out, clocks, zone, BootClock.bootCount(), count)
+            ?: return false
         saveLedger(context, before, after)
         return true
     }
@@ -163,6 +162,13 @@ object TimeRulesRuntime {
         return after
     }
 
+    /** The trusted Vibb music app (security review S-L8): never closed by a group (D8). */
+    fun musicApps(context: Context): Set<String> = try {
+        com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet()
+    } catch (e: Exception) {
+        emptySet()
+    }
+
     private fun messagingApps(context: Context): Set<String> {
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
         return messagingAppPackages(rules, CallSystem.defaultSmsPackage(context))
@@ -208,7 +214,7 @@ object TimeRulesRuntime {
         // Design 139 §4.2: the app groups today - lifted by the pause and the override (D9), their apps closed
         // otherwise, but the live VoIP call's own package (D7); out of the lock's usable apps (D8).
         val access = if (tp.groups.isEmpty()) null else UsageAccess.granted(context)
-        val groups = groupStates(tp, ledger, access, AppGroupUsage.readFailed, overrideActive)
+        val groups = groupStates(tp, ledger, access, AppGroupUsage.readFailed, overrideActive, musicApps(context))
         val closed = groupSuspends(groupClosedApps(groups), com.kidslauncher.mdm.lock.VoipCalls.pinnedPackage)
         val lock = if (closed.isEmpty()) decided else decided.copy(groupClosed = closed, usableApps = decided.usableApps - closed, usableBeforeGroups = decided.usableApps)
         return Snapshot(

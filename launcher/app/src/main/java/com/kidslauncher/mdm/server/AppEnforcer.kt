@@ -332,9 +332,11 @@ object AppEnforcer {
     var lastPlanGroupOnly: Set<String>? = null
         private set
 
-    /** Design 139 D7: the closed groups' apps the last [apply] enforced (`null` = none ran yet), for the cut. */
+    /** Design 139 D7: the closed groups' apps the last [apply] enforced (`null` = none ran yet), for the cut and the
+     * tracker's first re-check (code QA M1). */
     @Volatile
-    private var lastGroupClosed: Set<String>? = null
+    var lastGroupClosed: Set<String>? = null
+        private set
 
     /** The last [apply]'s never-restrict set (`null` = none ran yet): what map links' step 2 never suspends. */
     @Volatile
@@ -1843,7 +1845,10 @@ object AppEnforcer {
             recentsPackage = systemRecentsPackage(context),
             relockBlocked = relockBlocked,
             emergencySos = emergencySosPackage(context),
-        ) || packageName in lock.groupClosed // Design 139: an app of a closed group, installed again, stays closed.
+        ) || com.kidslauncher.mdm.timerules.groupClosesNewPackage( // Design 139: installed again, it stays closed (QA L4).
+            packageName, lock.groupClosed, lastNeverRestrict.orEmpty() + setOfNotNull(systemDialerPackage(context)),
+            alarmAppPackages(context),
+        )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
         CallPolicyStore.ensureLoaded(context)

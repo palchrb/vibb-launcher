@@ -21,6 +21,10 @@ const val KILL_PAIR_MS = 50L
 /** The first fold's lookback (QA M3), read with the count off. */
 const val FIRST_FOLD_LOOKBACK_MS = 3L * 60 * 60_000L
 
+/** A point older than this starts a first fold instead (code QA L1): the read stays bounded, and a day's gap holds no
+ * time of today's that a lookback misses (every package goes off at a screen off). */
+const val STALE_POINT_MS = 24L * 60 * 60_000L
+
 /** A fall of the wall-minus-elapsed offset larger than this is a backward clock step (QA L4); smaller is two reads'
  * noise. */
 const val CLOCK_STEP_NOISE_MS = 50L
@@ -113,12 +117,13 @@ data class ReadPlan(
 fun planRead(point: FoldPoint?, nowWall: Long, nowElapsed: Long, bootCount: Int, checkedClock: Boolean): ReadPlan? {
     val to = nowWall - SETTLE_MS
     val toElapsed = nowElapsed - SETTLE_MS
-    if (point == null) {
-        // QA M3: no carry - the lookback fills it with the count off.
+    val rebooted = point != null && point.bootCount != bootCount
+    // QA M3: no carry - the lookback fills it with the count off. Code QA L1, L2: so does a point over a day old (an
+    // unbounded read), or one the clock is behind after a reboot (no read could ever reach past it).
+    if (point == null || to - point.wallMs > STALE_POINT_MS || (rebooted && to <= point.wallMs)) {
         val from = to - FIRST_FOLD_LOOKBACK_MS
         return ReadPlan(from, from, to, toElapsed, first = true, stepBackMs = 0, rebooted = false, capMs = 0)
     }
-    val rebooted = point.bootCount != bootCount
     // QA L4: the offset is comparable within one boot only.
     val fall = if (rebooted) 0L else point.offsetMs - (nowWall - nowElapsed)
     val stepBack = if (fall > CLOCK_STEP_NOISE_MS) fall else 0L
@@ -315,6 +320,20 @@ fun applyFold(
     }
     return ledger.copy(groupUsedMs = used, foldPoint = point)
 }
+
+/** Code QA L7: [applyFold] onto [observed] only while its point is still the one the read started [from] - a read that
+ * raced a cleared or newer point is dropped (`null`), so `from` and `carry` stay as they were. */
+fun applyFoldIfCurrent(
+    observed: ScreenTimeLedger,
+    from: FoldPoint?,
+    plan: ReadPlan,
+    out: FoldOut,
+    clocks: Clocks,
+    zone: ZoneId,
+    bootCount: Int,
+    count: Boolean,
+): ScreenTimeLedger? =
+    if (observed.foldPoint != from) null else applyFold(observed, plan, out, clocks, zone, bootCount, count)
 
 /** The trusted local midnight that starts [day] in [zone], epoch ms. */
 internal fun dayStartMs(day: LocalDate, zone: ZoneId): Long = day.atStartOfDay(zone).toInstant().toEpochMilli()

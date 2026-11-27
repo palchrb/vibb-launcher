@@ -297,4 +297,12 @@ Decisions on the phone use the server's time (`docs/notes/launcher/time-rules.md
   report's kept keys, the setup line, the migration on a database with lifts and answers), the group rows of
   `time_pages::every_form_on_the_time_pages_returns_to_its_group`, `time_request::a_fitting_lift_answers_the_open_request`
   (a group lift answers nothing), `app_groups::tests`, `handlers::app_groups::tests`.
+- **Code QA (2026-11-27):** a row whose report says `closed` with time left says "Can't count" ("Kan ikke telle") in
+  `text-alarm`, how to fix behind the group's (i); the weekday is the phone's own `time_state.day` (yesterday or later by
+  the server's zone); a group with no limit on any day shows no value (its sub-line says "No limit"). At most 50 groups
+  per phone (`MAX_GROUPS`, "At most 50 groups"); the report keeps the first 50, never drops the key. The overlap check
+  (D2) and the write run in one `BEGIN IMMEDIATE`, and a group whose apps don't read conflicts with any app. A group lift
+  reads its group and writes its row in one transaction (a group gone in between is the 404). Today shows a lift whose
+  group is gone as done, not sent. The Apper list never offers `app_groups::NEVER_GROUPED` (the Play Store, Play
+  services, the WebView, the usual dialers, clocks and keyboards).
 

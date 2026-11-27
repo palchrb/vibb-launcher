@@ -257,4 +257,13 @@ the trusted time and `trust` how it is known (`server`, `gnss`, `carried`, `none
   icon dim it, and `AppAction` opens the group's sheet (`sheet_app_group.xml`) instead of launching it.
 - **The setup step** `usage_access` (`SetupStep.USAGE_ACCESS`, `StepWhen.APP_GROUPS`): Vibb One's own page with
   `package:`, then the list. The manifest declares `PACKAGE_USAGE_STATS` (`tools:ignore="ProtectedPermissions"`).
+- **Code QA (2026-11-27):** the tracker's first fold of a process compares the closed set with what the last apply
+  enforced (`groupRecheckNeeded` against `AppEnforcer.lastGroupClosed`), and the process's first apply cuts too
+  (`cutAfterApply`), so a group that ran out while the process was dead is enforced at once. A point over a day old, or
+  one the clock is behind after a reboot, starts a first fold (`planRead`). Spared from every group: exactly Vibb One's
+  two ids, the Play Store (its own rule decides it) and the trusted music app (`MusicTrust`), besides the plan's
+  `neverRestrict` and alarm apps; the server never offers those for a group (`app_groups::NEVER_GROUPED`). A new install
+  of a closed group's app follows the same filter (`groupClosesNewPackage`).
+- **The VoIP hold (D7, accepted):** while a VoIP call runs in a group's app, that app stays usable for the whole call,
+  however long, even with its group used up; the call's end closes it (`VoipCalls`' pinned change re-checks).
 

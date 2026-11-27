@@ -111,16 +111,22 @@ object ScreenTimeTracker {
             val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.takeIf { it.groups.isNotEmpty() }
             val states = policy?.let {
                 groupStates(it, TimeRulesRuntime.ledger(context, it), UsageAccess.granted(context), AppGroupUsage.readFailed,
-                    com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive())
+                    com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive(),
+                    TimeRulesRuntime.musicApps(context))
             }.orEmpty()
-            val closed = groupClosedApps(states)
-            val changed = groupsClosedWas != null && closed != groupsClosedWas
+            // As the snapshot puts it on the lock: the live VoIP call's own app held back (D7).
+            val closed = groupSuspends(groupClosedApps(states), com.kidslauncher.mdm.lock.VoipCalls.pinnedPackage)
+            val recheck = groupRecheckNeeded(closed, groupsClosedWas, com.kidslauncher.mdm.server.AppEnforcer.lastGroupClosed)
             groupsClosedWas = closed
-            if (changed) {
+            if (recheck) {
                 TimeRulesRuntime.recheck(context)
                 return
             }
-            if (!groupGate(context) || com.kidslauncher.mdm.server.RestrictionsPause.holdActive()) return
+            if (!groupGate(context) || com.kidslauncher.mdm.server.RestrictionsPause.holdActive()) {
+                // Code QA L6: no warning in the title outside the gate.
+                com.kidslauncher.mdm.server.AnchorNotice.refreshGroups(context, emptyList(), emptySet())
+                return
+            }
             groupRunsOutDelayMs(states)?.let { handler.postDelayed(groupRunsOut, it) }
             try {
                 com.kidslauncher.mdm.server.AnchorNotice.refreshGroups(context, states, AppGroupUsage.onScreen(context))
@@ -150,7 +156,10 @@ object ScreenTimeTracker {
                 handler.removeCallbacks(groupRunsOut)
                 if (groupGateWas && groups) handler.postDelayed(screenOffFold, SETTLE_MS + 500L)
                 // The policy lost its last group (or a new process): the point goes, once.
-                if (!groups && groupsWere != false) AppGroupUsage.fold(context, live = false)
+                if (!groups && groupsWere != false) {
+                    AppGroupUsage.fold(context, live = false)
+                    com.kidslauncher.mdm.server.AnchorNotice.refreshGroups(context, emptyList(), emptySet())
+                }
             }
             groupGateWas = gate
             groupsWere = groups

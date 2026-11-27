@@ -231,7 +231,7 @@ class TimeLeftNoticeTest {
         assertFalse(update, update.contains("refreshNow") || update.contains("snapshot("))
         // Design 139: the groups' fold before it notices nothing itself (its own refresh runs after the fold).
         assertTrue(update.contains("if (!appInUse(context)) {"))
-        assertFalse(update.substringBefore("if (!appInUse(context)) {").contains("AnchorNotice"))
+        assertFalse(update.substringBefore("if (!appInUse(context)) {").contains("AnchorNotice.refresh("))
         val sync = source("server/MdmSyncWorker.kt")
         assertTrue(sync.indexOf("PowerEvents.upload(context, api)") < sync.indexOf("TimeRequests.upload(context, api)"))
     }

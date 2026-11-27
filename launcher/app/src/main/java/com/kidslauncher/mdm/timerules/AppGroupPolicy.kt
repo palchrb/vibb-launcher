@@ -45,9 +45,15 @@ data class GroupState(
         }
 }
 
-/** Packages a group never closes (D8): Vibb One, Vibb music and our other packages. The plan also spares
- * `neverRestrict` and the alarm apps. */
-fun neverGrouped(pkg: String): Boolean = pkg.startsWith("me.vibb.")
+/** Vibb One's own application ids, release and debug. */
+val VIBB_ONE_PACKAGES = setOf("me.vibb.launcher", "me.vibb.launcher.debug")
+
+/** Packages a group never closes (D8, code QA L3, L5): Vibb One, the Play Store (its own rule decides it, so other
+ * apps' FCM keeps working), and the trusted Vibb music app ([music], `MusicTrust.installed`). The plan also spares
+ * `neverRestrict` (the dialer, the WebView, Play services, the keyboards) and the alarm apps; the server never offers
+ * any of these for a group. */
+fun neverGrouped(pkg: String, music: Set<String> = emptySet()): Boolean =
+    pkg in VIBB_ONE_PACKAGES || pkg == com.kidslauncher.mdm.play.PLAY_STORE || pkg in music
 
 /** A group's limit on [date]: Monday first; a [AppGroup.days] of the wrong size is 0 (D6), a value clamped to a day. */
 fun groupLimitFor(group: AppGroup, date: LocalDate): Int? {
@@ -71,6 +77,7 @@ fun groupStates(
     access: Boolean?,
     readFailed: Boolean,
     lifted: Boolean,
+    music: Set<String> = emptySet(),
 ): List<GroupState> {
     val date = ledger.date() ?: return emptyList()
     val cantCount = access != true || readFailed || ledger.unreadable
@@ -85,7 +92,7 @@ fun groupStates(
             used >= (limit + extra) * 60_000L -> GroupStatus.USED_UP
             else -> GroupStatus.OPEN
         }
-        GroupState(g.id, g.name, g.apps.filterNot(::neverGrouped).toSet(), limit, used, extra, status, lifted)
+        GroupState(g.id, g.name, g.apps.filterNot { neverGrouped(it, music) }.toSet(), limit, used, extra, status, lifted)
     }
 }
 
@@ -123,6 +130,23 @@ fun groupWarning(states: List<GroupState>, onScreen: Set<String>): GroupState? =
     states.filter { s ->
         !s.lifted && s.remainingMs.let { it != null && it in 1..GROUP_WARNING_MS } && s.apps.any { it in onScreen }
     }.minByOrNull { it.remainingMs ?: Long.MAX_VALUE }
+
+/** Code QA M1: whether the groups' closed apps ([closedNow], the VoIP hold applied) call for a re-check - a change
+ * since the last fold ([lastSeen]); on a process's first fold (`null`) a difference from what the last apply enforced
+ * ([enforced], `null` before any apply: nothing), so a group that ran out while the process was dead is enforced. */
+fun groupRecheckNeeded(closedNow: Set<String>, lastSeen: Set<String>?, enforced: Set<String>?): Boolean =
+    if (lastSeen != null) closedNow != lastSeen else closedNow != enforced.orEmpty()
+
+/** Code QA M1: the cut after an apply - Home over a [onScreen] app of a group that closed since the last apply
+ * ([closedBefore], `null` on the process's first apply: nothing was enforced by this process, so every closed group
+ * counts as just closed). */
+fun cutAfterApply(closedNow: Set<String>, closedBefore: Set<String>?, onScreen: Set<String>): String? =
+    if (closedNow == closedBefore) null else cutTarget(closedNow, closedBefore.orEmpty(), onScreen, voipPackage = null)
+
+/** Code QA L4: an app installed (again) while its group is closed stays closed - by the plan's own filter: never what
+ * is spared from every restriction ([neverRestrict], the last plan's), an alarm app or [neverGrouped]. */
+fun groupClosesNewPackage(pkg: String, groupClosed: Set<String>, neverRestrict: Set<String>, alarmApps: Set<String>): Boolean =
+    pkg in groupClosed && pkg !in neverRestrict && pkg !in alarmApps && !neverGrouped(pkg)
 
 /** The cut (D7, §4.2): what Home must cover - a [onScreen] package of a group that just closed ([closedNow] minus the
  * closed set before, [closedBefore]), except the live VoIP call's own package ([voipPackage]), which is held back

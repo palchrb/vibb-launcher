@@ -410,15 +410,42 @@ class AppGroupsTest {
         assertEquals(FoldPoint(p.to, p.toElapsed, 1, p.to - p.toElapsed, out.carry), newDay.foldPoint)
     }
 
+    /** Code QA L7: the compare-and-set - a read applies only onto the point it started from. */
     @Test
-    fun `a read not applied leaves the point and its carry`() {
+    fun `a read applies only onto the point it started from`() {
         val point = FoldPoint(10_000, 1_000, 3, 9_000, carryOn(x))
         val ledger = ledgerAt(10_000).copy(foldPoint = point)
-        val p = planRead(ledger.foldPoint, 30_000, 21_000, 3, true)!!
-        groupScreenMs(listOf(ev(15_000, x, UsageKind.STOPPED), ev(15_000, y, UsageKind.RESUMED)), p, point.carry, listOf(g), live = true, count = true)
-        // Dropped (a failed read, or one that came too late): the next fold reads from the same point.
-        assertEquals(point, ledger.foldPoint)
-        assertEquals(p.queryFrom, planRead(ledger.foldPoint, 31_000, 22_000, 3, true)!!.queryFrom)
+        val p = planRead(point, 30_000, 21_000, 3, true)!!
+        val out = groupScreenMs(listOf(ev(15_000, x, UsageKind.PAUSED)), p, point.carry, listOf(g), live = true, count = true)
+        val clocks = clocksAt(30_000, 21_000)
+        val applied = applyFoldIfCurrent(ledger, point, p, out, clocks, zone, 3, count = true)!!
+        assertEquals(p.to, applied.foldPoint!!.wallMs)
+        // Another fold moved the point meanwhile, or the point was cleared: dropped, nothing changes.
+        assertNull(applyFoldIfCurrent(applied, point, p, out, clocks, zone, 3, count = true))
+        assertNull(applyFoldIfCurrent(ledger.copy(foldPoint = null), point, p, out, clocks, zone, 3, count = true))
+        // A first fold applies onto no point only.
+        val first = planRead(null, 30_000, 21_000, 3, true)!!
+        val firstOut = groupScreenMs(emptyList(), first, FoldCarry(), listOf(g), live = true, count = false)
+        assertEquals(first.to, applyFoldIfCurrent(ledger.copy(foldPoint = null), null, first, firstOut, clocks, zone, 3, count = false)!!.foldPoint!!.wallMs)
+        assertNull(applyFoldIfCurrent(ledger, null, first, firstOut, clocks, zone, 3, count = false))
+    }
+
+    /** Code QA L1, L2: a point over a day old, or one the clock is behind after a reboot, starts a first fold. */
+    @Test
+    fun `a stale point or one ahead of the clock after a reboot starts a first fold`() {
+        val day = STALE_POINT_MS
+        val old = FoldPoint(1_000_000, 1_000, 3, 999_000, carryOn(x))
+        val stale = planRead(old, 1_000_000 + day + SETTLE_MS + 1, 2_000, 3, true)!!
+        assertTrue(stale.first)
+        assertEquals(stale.to - FIRST_FOLD_LOOKBACK_MS, stale.queryFrom)
+        assertFalse(planRead(old, 1_000_000 + day, 2_000, 3, true)!!.first)
+        // After a reboot the wall clock is behind the point: a first fold, never a read that can't reach past it.
+        val behind = planRead(old, 900_000, 5_000, 4, true)!!
+        assertTrue(behind.first)
+        // In the same boot it is a backward clock step, read from before the point.
+        val step = planRead(old, 900_000, 5_000, 3, true)!!
+        assertFalse(step.first)
+        assertTrue(step.stepBackMs > 0)
     }
 
     // ---- The timer (QA H1) ------------------------------------------------------------------------------------------

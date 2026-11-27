@@ -19,7 +19,7 @@ class AppGroupStatesTest {
         ScreenTimeLedger(day = day, groupUsedMs = mapOf(3L to usedMin * 60_000L), groupExtraMinutes = mapOf(3L to extra))
 
     private fun state(ledger: ScreenTimeLedger, access: Boolean? = true, failed: Boolean = false, lifted: Boolean = false) =
-        groupStates(policy, ledger, access, failed, lifted).single()
+        groupStates(policy, ledger, access, failed, lifted, music = setOf("me.vibb.music")).single()
 
     @Test
     fun the_limit_of_the_weekday() {
@@ -104,6 +104,37 @@ class AppGroupStatesTest {
         assertEquals("org.example.game", cutTarget(closed, emptySet(), setOf("org.example.game"), voipPackage = null))
         assertNull(cutTarget(closed, closed, setOf("org.example.game"), voipPackage = null))
         assertNull(cutTarget(setOf("org.example.chat"), emptySet(), setOf("org.example.chat"), voipPackage = "org.example.chat"))
+    }
+
+    /** Code QA M1, L3, L4, L5: the first fold of a process re-checks against what was enforced, the first apply cuts,
+     * a new install follows the plan's filter, and exactly our own, the Play Store and the trusted music app are spared. */
+    @Test
+    fun `the first fold and apply of a process, a new install, and what is spared`() {
+        val game = setOf("org.example.game")
+        // The first fold: a group closed while the process was dead - nothing enforced yet, so a re-check.
+        assertTrue(groupRecheckNeeded(game, lastSeen = null, enforced = null))
+        assertTrue(groupRecheckNeeded(game, lastSeen = null, enforced = emptySet()))
+        assertFalse(groupRecheckNeeded(game, lastSeen = null, enforced = game))
+        assertFalse(groupRecheckNeeded(emptySet(), lastSeen = null, enforced = null))
+        // Later folds: a change since the last fold.
+        assertFalse(groupRecheckNeeded(game, lastSeen = game, enforced = null))
+        assertTrue(groupRecheckNeeded(emptySet(), lastSeen = game, enforced = game))
+        // The process's first apply cuts too; an unchanged set doesn't.
+        assertEquals("org.example.game", cutAfterApply(game, null, setOf("org.example.game")))
+        assertNull(cutAfterApply(game, game, setOf("org.example.game")))
+        assertNull(cutAfterApply(game, null, setOf("org.example.other")))
+        // A new install: closed by its group, unless the plan spares it.
+        assertTrue(groupClosesNewPackage("org.example.game", game, emptySet(), emptySet()))
+        assertFalse(groupClosesNewPackage("org.example.game", game, game, emptySet()))
+        assertFalse(groupClosesNewPackage("org.example.game", game, emptySet(), game))
+        assertFalse(groupClosesNewPackage("org.example.other", game, emptySet(), emptySet()))
+        // Spared: exact packages, never a prefix.
+        assertTrue(neverGrouped("me.vibb.launcher"))
+        assertTrue(neverGrouped("me.vibb.launcher.debug"))
+        assertTrue(neverGrouped(com.kidslauncher.mdm.play.PLAY_STORE))
+        assertTrue(neverGrouped("me.vibb.music", music = setOf("me.vibb.music")))
+        assertFalse(neverGrouped("me.vibb.music"))
+        assertFalse(neverGrouped("me.vibb.other"))
     }
 
     /** §4.1: without the declaration Vibb One isn't on Android's list and its page shows the switch greyed. */

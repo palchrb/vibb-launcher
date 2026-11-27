@@ -89,7 +89,8 @@ object AppGroupUsage {
             done(app)
             return
         }
-        val groups = policy.groups.map { FoldGroup(it.id, it.apps.filterNot(::neverGrouped).toSet()) }
+        val music = TimeRulesRuntime.musicApps(app)
+        val groups = policy.groups.map { g -> FoldGroup(g.id, g.apps.filterNot { neverGrouped(it, music) }.toSet()) }
         // D10: the setup hold's time is setup, not use - the state moves, nothing counts.
         val count = !plan.first && !RestrictionsPause.holdActive()
         trimKeys(plan.to)
@@ -197,9 +198,8 @@ object AppGroupUsage {
      * is another app's when the kiosk is off. The VoIP call's own package is never in [closedNow] (held back).
      */
     fun afterApply(context: Context, closedNow: Set<String>, closedBefore: Set<String>?) {
-        closedBefore ?: return
-        if (closedNow == closedBefore) return
-        val target = cutTarget(closedNow, closedBefore, onScreen(context), voipPackage = null) ?: return
+        if (closedNow == closedBefore || closedNow.isEmpty()) return
+        val target = cutAfterApply(closedNow, closedBefore, onScreen(context)) ?: return
         Log.i(LOG_TAG, "A group closed: Home over $target")
         com.kidslauncher.mdm.lock.HomeFront.bring(context, "app group")
     }

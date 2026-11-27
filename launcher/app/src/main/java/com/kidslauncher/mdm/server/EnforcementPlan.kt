@@ -240,7 +240,7 @@ fun computeEnforcementPlan(
     val groupClosed = if (overrideActive) {
         emptySet()
     } else {
-        groupClosedApps.filterTo(mutableSetOf()) { it !in neverRestrict && it !in alarmApps && !com.kidslauncher.mdm.timerules.neverGrouped(it) }
+        groupClosedApps.filterTo(mutableSetOf()) { it !in neverRestrict && it !in alarmApps && !com.kidslauncher.mdm.timerules.neverGrouped(it) && it != PLAY_STORE }
     }
     // D8: a closed group's apps stay closed under a rule or bedtime that allows them, and under the used-up budget.
     val usableNow = lockUsableApps - groupClosed
