@@ -108,6 +108,22 @@ class BuildChainTest {
         assertTrue(music.containsMatchIn("contracts/shipped/bridge-aidl/me/vibb/bridge/X.aidl"))
     }
 
+    /** Design 140 §3: the min server script starts both apps' builds, its self-test runs in both always-run changes
+     * jobs, and each release build passes its value to Gradle. */
+    @Test
+    fun `the min server script runs in both workflows`() {
+        assertTrue(workflowFilter("launcher.yml").containsMatchIn("scripts/min-server.sh"))
+        assertTrue(workflowFilter("music.yml").containsMatchIn("scripts/min-server.sh"))
+        for ((workflow, app) in listOf("launcher.yml" to "launcher", "music.yml" to "music")) {
+            val text = repo(".github/workflows/$workflow").readText()
+            val changes = text.substringAfter("  $app-changes:").substringBefore("\n  $app-build:")
+            assertTrue("$workflow's changes job runs the self-test", "run: scripts/min-server.sh --selftest" in changes)
+            val build = text.substringAfter("  $app-release-build:").substringBefore("\n  $app-release-sign:")
+            assertTrue("$workflow's release build", "../scripts/min-server.sh $app" in build)
+            assertTrue("$workflow's release build", "-PminServer=" in build)
+        }
+    }
+
     /** Design 133 §6.2: no file of a contract root has a copy in the module's own source sets, where it would shadow
      * the contract (a leftover or re-added copy). The music app's ContractFilesTest checks its own module. */
     @Test

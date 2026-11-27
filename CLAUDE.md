@@ -80,6 +80,9 @@ contract gets a README row (the server's test checks). The policy JSON shape sta
   "latest", so `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
 - `music-vX.Y.Z` (or `-rc.N`) on a `main` commit -> `vibb-music.apk` + `.sha256`, signed with the launcher's key,
   versionCode as the launcher's, never "latest".
+- Each launcher and music APK names the oldest server it needs (`assets/vibb/min_server`, `scripts/min-server.sh`,
+  design 140): tag `server-vX.Y.Z` on the same commit as, or after, every app tag built while Cargo said `X.Y.Z`
+  (`server-release.yml` refuses it otherwise; `docs/notes/ci.md`, "Server releases").
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests, the tarballs
   (aarch64, x86_64) and the multi-arch image `ghcr.io/<owner>/handy-server`, never GitHub's "latest" (the image's
   `latest` tag goes to the highest `server-v*`). Signed with minisign in the `release-server` environment - no

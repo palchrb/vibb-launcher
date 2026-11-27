@@ -291,6 +291,36 @@ fn the_build_filter_matches_every_contract() {
     }
 }
 
+/// Design 140 §2.1, §3: the min server script starts the server's build, its self-test runs in the always-run changes
+/// job, and the server release's first job checks the tag with it before anything is built.
+#[test]
+fn the_min_server_script_runs_in_both_server_workflows() {
+    let ci = include_str!("../../../.github/workflows/server-ci.yml");
+    let line = ci
+        .lines()
+        .find(|l| l.contains("grep -qE '^(server/"))
+        .expect("server-changes' build filter");
+    let pattern = line
+        .split("grep -qE '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .unwrap();
+    assert!(regex::Regex::new(pattern)
+        .unwrap()
+        .is_match("scripts/min-server.sh"));
+    let changes = block(ci, "  server-changes:", "  server-build:");
+    assert!(changes.contains("run: scripts/min-server.sh --selftest"));
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    let test_job = block(release, "  server-release-test:", "      - name: Install Rust");
+    let guard = test_job
+        .find("../scripts/min-server.sh --check-server-tag")
+        .expect("the tag guard");
+    let first_other_step = test_job
+        .find("- name: Refuse tags whose commit is not on master/main")
+        .unwrap();
+    assert!(guard < first_other_step, "the guard is the first step");
+}
+
 /// Security review M2: data/ and what the server writes are the service user's alone, on a new
 /// install and after an update.
 #[test]

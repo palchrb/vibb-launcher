@@ -13,6 +13,8 @@ signing). The scripts themselves: `scripts/README.md`.
 - `launcher.yml` also on `.github/actions/build-tsnet/`, `music/gradle/`, music's manifest and `music.yml`, and
   `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg`, `scripts/fake-portal.py` (the changes job runs both
   `--selftest`s always) and `scripts/material-symbols.sh`.
+- `scripts/min-server.sh` (design 140) starts all three build jobs; the changes jobs of `launcher.yml`, `music.yml`
+  and `server-ci.yml` run its `--selftest` always (`BuildChainTest`, `tests::deploy_scripts`).
 - `music.yml` also on `server/testdata/spotify/`, `server/testdata/storytel/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
   (with the launcher's `splash_vibb_breathe.xml` it draws from), `scripts/music-icon.py` (with the launcher's
@@ -58,8 +60,27 @@ with the `aapt2FromMavenOverride`: an AGP bump needs its entry by hand (resolve 
   allow `music-v*` tags too; the same `RELEASE_CERT_SHA256` check); the scheme's first tag is `music-v0.5.0-rc.4`,
   50004; the server reads the music app's version from its code by it. Deploy a server with the music catalog row
   (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
+- **The server a release needs** (design 140): every build writes `assets/vibb/min_server` (Gradle:
+  `write<Variant>MinServer`, `check<Variant>HasMinServer` fails an APK without it; contract
+  `contracts/music/min_server.json`). A tag build's "Which server this build needs" step runs
+  `scripts/min-server.sh launcher|music` and passes `-PminServer`: `server/Cargo.toml`'s version `V`, or `V` with one
+  more patch when the server's code the app talks to (the script's `counted_paths`) changed since `server-vV`; a
+  shallow clone or no `server-v*` tag fails. The case goes to a `::notice::` and the job summary, the value into the
+  release body ("Needs Vibb server X.Y.Z or newer.", "(not yet tagged)" when `server-vV` doesn't exist yet). A
+  server older than the value holds the release (`docs/notes/server/play-and-updates.md`, "A release that needs a
+  newer server"). A local build without `-PminServer` takes Cargo's version as it is.
 
 ## Server releases
+
+**The tagging rule** (design 140 §2.1): a `server-vV` tag goes on the same commit as, or a commit after, every
+`launcher-v*`/`music-v*` tag built while `server/Cargo.toml` said `V` - unless nothing that app talks to differs
+between the two. A launcher tagged before its server's tag named `V` "not yet tagged" and trusts that `server-vV`
+carries its server code. `server-release.yml`'s first step (`scripts/min-server.sh --check-server-tag`, a dry run
+too) refuses the tag otherwise: tag the server on that app tag's commit or later, or bump to the next version. It
+reads every app tag whose commit says `V`, so a rerun of a server release after an app tag on a later commit with a
+counted change is refused too (that app tag named `V`+1 and needs nothing, but git can't tell the two apart): bump
+the server instead. The older tags from before the rule (`launcher-v0.43.0-rc.3`/`rc.4` for `server-v0.93.0`) fail
+it; only a new tag runs it.
 
 `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests, then the aarch64 and
 x86_64 tarballs and their `.sha256`, never "latest". Since 0.24.0 the tarballs and `update.sh` are signed with

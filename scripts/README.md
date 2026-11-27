@@ -9,6 +9,10 @@ One entry per script (moved here from the root `CLAUDE.md` on 2026-11-27). `§N`
 - `dev-rebuild.sh` - pull, build + install the debug launcher, run the server.
 - `release-version.sh` - a `launcher-v`/`music-v` tag -> versionName, versionCode, prerelease: both apps' release
   workflows use it; `--selftest`, run by both workflows' always-run changes job and before every tag build.
+- `min-server.sh` - the oldest server a launcher or music tag build needs (design 140 §2): `server/Cargo.toml`'s
+  version, plus one patch when the server's code that app talks to changed since that version's tag; both release
+  builds pass it to Gradle as `-PminServer`. `--check-server-tag` is `server-release.yml`'s guard (§2.1); `--selftest`
+  in a throwaway git repo, run by the always-run changes jobs of `launcher.yml`, `music.yml` and `server-ci.yml`.
 - `push-all.sh` - push the current branch.
 - `smoke-test.sh` - adb/emulator-console smoke test of lock and calls, remote-capable; §5b.
 - `emulator-roaming.sh` - an emulator with a Norwegian SIM put on another country's network, real roaming for

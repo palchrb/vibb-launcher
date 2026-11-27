@@ -75,6 +75,7 @@ Prose written before 2026-11-25 names `server/testdata/<file>` (and the apps' co
 | `integrations/map_links/contract.json` | 110 | by hand | server `integrations::map_links::tests`; launcher `MapLinksContractTest` |
 | `integrations/wifi_lookup/contract.json` | 125 step 2, 125b, 137 | by hand | server `integrations::wifi_lookup::tests`; launcher `WifiLookupContractTest` |
 | `music/bridge_contract.json` | 21 §2 | by hand | launcher `MusicPlanTest`; music `BridgeTest` |
+| `music/min_server.json` | 140 | by hand (`launcher_first`/`music_first` once, the first tags that carry the entry) | launcher and music: the build writes `entry` (`writeReleaseMinServer`; `checkReleaseHasMinServer` fails a release without it), `MinServerContractTest`; server `apk::tests`, `catalog_holds::tests` |
 | `music/music_icons.json` | 21 | by hand; `scripts/material-symbols.sh` generates `music_icons.rs` and `MusicGlyphs.kt` from it | server `tests::music`; music `SourceScanTest` |
 | `music/music_library.json` | 21 §1.3 | `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` (`tests::music::music_library_snapshot`) | server `tests::music`; launcher `MusicPlanTest`; music `ContractFilesTest` and others; `scripts/fake-spotify.py` |
 | `music/music_listing.json` | 21b §4.2 | `MUSIC_LISTING_SNAPSHOT_WRITE=1` (`tests::music_sweep::music_listing_snapshot`) | server `tests::music_sweep`; launcher `MusicPlanTest`; music `ContractFilesTest` |
