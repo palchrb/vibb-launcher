@@ -6808,3 +6808,112 @@ WAV, mostly zeros; AES output has about 0.4 %).
 | 6 | Step 5 with "Download on mobile data" on and the emulator on cellular only (`adb shell svc wifi disable`) | the books come back over mobile data (the parent's rule, §16 ASK 1); with the switch off they wait for Wi-Fi and the report's `waiting` says `wifi` |
 
 On the **Jelly Star** after the release: `seal level` logged once (TEE expected), and a 10-hour book played and sought.
+
+## 6ca. The gate of 2026-11-27 (branch `gate-1127`)
+
+Gate A, on **Android 14 only** (`compat34`, Google APIs, port 5556, `-wipe-data`) with the owner's OK for the day;
+gate B ran Android 16 (§6cb, branch `gate-1127b`). `main` at `e9875c082`: the debug launcher and the debug music app
+(`assembleDebug`, `-PwarningsAsErrors=true`), and a debug server from the same tree (`--features emulator_keys`,
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` of that launcher, admin `127.0.0.1:3140`, phones `10.0.2.2:3141`). The PWA set up
+by a small private script (sign-in with TOTP, the phone, its Foreldre-PIN, a typed code), not by clicks.
+
+### Row 3: §6bz Storytel sealed books (design 117) on Android 14
+
+The music app alone on a wiped image (not managed), the debug feed as in §6i part A, `fake-storytel.py --books
+111:20,222:5` (entry 5). Spans pulled with `run-as ... tar c no_backup/media`, each `*.exo` checked for its share of
+zero bytes and a `RIFF` start; `exoplayer_internal.db`'s content metadata parsed for `vibb_seal`. For row 4 the debug
+music build of `98476b4f9^1` (main just before the merge of `music-117-seal`).
+
+| # | Android 14 (`compat34`) |
+|---|---|
+| 1 | **Pass.** Both books downloaded (`have 2, want 2`); all 5 spans 0.39 % zero bytes, none starts with `RIFF` (the last span of each book included: 4 271 404 and 5 000 044 bytes); each book's index row holds a 78-byte `vibb_seal` (`VBSL`) beside `exo_len`, keys `sealed:7ac843e9f5d4:111`/`:222`; `report.json` `audio_bytes` 25 000 088 = the two plain sizes. `BookKeys` logs **`seal level 0`** once per process: the emulator's Keystore is software (as §6bm read the image's chain, "Software only"); the TEE's `1` is the Jelly Star's to confirm, as the section says |
+| 2 | **Pass** (what the emulator can show). Played 111 from the tile, seeked to the middle (3:51) and to the last minute (6:50): playing from each, no `Playback failed` or playback exception; then from 0:06 with the screen off (`Asleep`): 5:03 after 5 minutes, through the end of 111 into 222, `STOPPED` at 222's end after ~9.5 minutes; no new `asset`/`cdn` line on the fake while playing; both positions `done`. "No gap or noise" is not audible here (`-no-audio`, silent books) |
+| 3 | **Pass.** Fresh data (`pm clear`), `--drop-at 40`: both first transfers cut (`dropped at 40 %`, 8 000 017 and 2 000 017 bytes); 2 minutes later new mints (`FAKE-SIG-3`/`-4`) and `206 Range bytes=8000017-` / `bytes=2000017-`, never a 200 from 0; 7 spans, all 0.38-0.40 % zero bytes, no `RIFF`, 25 000 088 bytes in all |
+| 4 | **Pass.** The pre-117 build: both books plain (every span 100 % zero bytes, the first of each book `RIFF`), 111's bookmark at 2:05; this build installed over it, the sync at the update: `Sealed books: dropped 2 plain, 0 lost`, two new mints and two `200` from 0, all 5 spans 0.39 %, no `RIFF`, rows `sealed:...`; the bookmark of 111 still 125 747 ms |
+| 5 | **Pass, with the row's tap step unreachable.** 111's bookmark at 5:04; `DebugSealReceiver` ("the current key deleted; the process ends"): WorkManager restarts the process at once for its unfinished work and the sync at that start runs 0.4-2.5 s after the kill - `Sealed books: dropped 0 plain, 2 lost` - before the app could be opened, so the tile never offered a lost book (with the fake down, and again in airplane mode: the Storytel tile is gone, nothing to tap; no `ExoPlayerImpl` retry or `Playback failed` line in any try). Two mints under a new key (`seal_kek_id` `d96575da` -> `f8db7327`, later `18a181e5`), the old canary gone after the next clean sync (one `seal_canary_*` left); 111 then played from 5:06 |
+| 6 | **Pass.** Wi-Fi off (`svc wifi disable`, the default network `CELLULAR`, `wifi_on 0`). The switch off (`download_mobile_data: false`): the key lost, `dropped 0 plain, 2 lost`, no mint in 40 s, `report.json` `waiting: wifi`. The switch on: two mints and two `200`s at once over mobile data, `have 2`; 111 from its bookmark (5:22) |
+
+Not on the emulator, as the section says: the TEE's `seal level 1` and a 10-hour book on the Jelly Star.
+
+### Row 1: the glance after repeated plug-ins on Android 14 with the merged build (PLAN 1i, `glance-replug`)
+
+"Row 5 again" (§6bl) on `compat34` from `-wipe-data`: §4's adb lines, enrolled with a typed code on the server above,
+Barne-PIN 2580 from the PWA (`AndroidLock: apply: managed=true kidPin=true secure=true face=true`), the setup flow
+finished (`mLockTaskModeState=LOCKED`), the glance Android's face. The night's Android 14 face rows were the first
+round's (`4b593eb73`); these are main's merged code (the budget per power change, the plug-in's wake rule;
+`re-front #1 of the power change` exists only there). Logs `AndroidLock`, `PinLock`; `dumpsys window` for
+`mKeyguardOccluded`; `dumpsys activity broadcasts history` for our `ACTION_POWER_CONNECTED` delivery.
+
+**The blocked start on this image:** `am start -a android.intent.action.SET_WALLPAPER` opens the chooser
+(`android/com.android.internal.app.ResolverActivity`: the image has two pickers), not `BlockedAppActivity` - a first
+pass with it was set aside. The rows ran with `am start -n com.android.wallpaper.livepicker/.LiveWallpaperActivity`:
+Android answers with `BlockedAppActivity` (`onActivityRestartAttempt: ...BlockedAppActivity`), as the section means.
+
+| # | Android 14 (`compat34`), main `e9875c082` |
+|---|---|
+| 5b | **Pass.** Three cycles 4 s apart on one screen-on: `re-front #1 of the power change (the glance paused)` each time, ~200 ms after the pause, `mKeyguardOccluded=true` after every cycle |
+| 5c | **Pass** at 0.05, 0.08 and 0.12 s. `re-front #1`, `#2` (the screen-on's cap), then the start and the plug-in: our delivery `scheduled +489ms`/`+488ms`/`+482ms` (the deferral, at 0.05 s too on 14), the pause's check met the cap, the look's `power changed` ~1.6 s after the pause and `re-front #1 of the power change (the glance stopped)`, occluded |
+| 5d | **Pass.** `re-front #1`, `#2`, the third: paused, stopped, no re-front - Android's lock screen until a screen cycle, no loop |
+| 5e | **Pass.** Screen off 3 s, the wake, the start, 0.6 s, the plug-in: `The lock left the front just after a screen-on: probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed` after it |
+| 5e' | **As designed.** `sleep 0.25`, twice: the stamp (`scheduled +500ms`) 777 and 752 ms after that single press's wake - read as the plug-in's wake: the SOS mark first, then `power changed` and `re-front #1 of the power change (the glance stopped)` 1.5 s later. The edge the note names, as on 16 |
+| D2 | **Pass**, two tries. Dark 4 s, then the plug-in, `KEYCODE_WAKEUP` and the start in one line. Try 1: our delivery `+14ms`, before the pause - the budget took the loss at once (`re-front #1 of the power change (the glance stopped)`). Try 2: `+122ms`, scheduled 2 ms before the pause's log line (the receiver ran after it) - `probably Emergency SOS` / `yields ... sos`, then the look cleared the plug-in's own mark (`power changed`, `re-front #1 of the power change`), occluded ~1 s later, as 16's D2 |
+| D3 | **Pass**, four tries (sleep-wake 30, 100 and 290 ms with the press 0.5 s after the plug-in's wake; 100 ms with 2 s): `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed`, no re-front after it |
+
+Nothing failed. The Jelly Star's own wake on USB and Unihertz's `ChargingDialog` stay the owner's plug test after the
+next rc.
+
+### Row 2: design 139 step 0's probe on Android 14
+
+Design 139 (`docs/design/139-app-groups.md` on branch `app-groups-design`) §8 row 1 / §9 step 0, on 14 only (gate B:
+16). The probe is a throwaway local branch `probe-139` (`ffd5fbe2c`, plus an uncommitted deprecation `@Suppress`; not pushed): main
+plus `<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions"/>` and
+a debug-only receiver `UsageProbeReceiver` that logs the access (`unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS)`) and every
+`queryEvents(since, now)` event under `UsageProbe`. Installed over the enrolled phone of row 1 (`adb install -r`, still
+Device Owner), a pause started from the PWA (`/start-pause`, the phone unlocked once: "Open until ...", the kiosk
+`NONE`). Test apps: Google Clock and Chrome. Times below are the events' own (`HH:mm:ss.SSS`).
+
+**The access.**
+- `dumpsys package`: `PACKAGE_USAGE_STATS` requested, `granted=false`; `cmd appops get ... GET_USAGE_STATS`: "No
+  operations" before the grant.
+- `am start -a android.settings.USAGE_ACCESS_SETTINGS -d package:me.vibb.launcher.debug` opens **the app's own page**
+  (`Settings$AppUsageAccessSettingsActivity`: "Vibb One (debug)", switch "Permit usage access"). Without `package:`:
+  `Settings$UsageAccessSettingsActivity`, "Usage access", Vibb One listed "Not allowed". (14 names it "Usage access",
+  not "App usage data".)
+- The switch was enabled, not greyed (restricted settings are 15+; nothing on 14). On: `GET_USAGE_STATS: allow`, the
+  probe's `access mode=0` (`MODE_ALLOWED`), and `queryEvents` returns every app's events.
+- `unsafeCheckOpNoThrow` is deprecated at the launcher's compileSdk 36: with `-PwarningsAsErrors=true` the probe failed
+  to compile until it had `@Suppress("DEPRECATION")` - `UsageAccess` needs the same (precedent:
+  `PlatformRefusals.exemptFromSuspension`).
+
+**The events** (the kinds §4.1 names; `CONFIGURATION_CHANGE`, `USER_INTERACTION`, standby buckets and services left out):
+
+| Case | What `queryEvents` gave on 14 |
+|---|---|
+| An ordinary open and close (Clock from Home, then Home) | Home `PAUSED`, Clock `RESUMED` 46 ms later, Home `STOPPED`; Home pressed: Clock `PAUSED`, Home `RESUMED` 1 ms later, Clock `STOPPED` 0.4 s later |
+| A same-class relaunch (Clock in front, `am start -n ...DeskClock -f 0x10008000`, NEW_TASK + CLEAR_TASK) | Clock `PAUSED`, Clock `RESUMED` 1 ms later (the new instance), Clock `STOPPED` 0.5 s later (the old one) - the §4.1 rule (a RESUMED after the last PAUSED: the STOPPED is ignored) holds. CLEAR_TOP or MULTIPLE_TASK onto the top instance: no event; night mode on and off: only `CONFIG` (Clock handles it without a relaunch) |
+| `kill -9` of the front app, Vibb One below (`adb root`) | Clock `STOPPED` and Vibb One `RESUMED` in the same ms, **no `PAUSED`**: the STOPPED is ignored by §4.1, our RESUMED turns Clock off - correct |
+| `am crash` of the front app, Vibb One below | Clock `STOPPED`, Vibb One `RESUMED` 5 ms later, no `PAUSED` - the same as kill -9, correct |
+| **`kill -9` of the front app with another app's task below** (Chrome, then Clock over it) | Clock `STOPPED` and **Chrome** `RESUMED` in the same ms, no `PAUSED`. By §4.1 the STOPPED is ignored (Clock's last event was a RESUMED) and the RESUMED is not ours, so **Clock stays on** until a screen-off, keyguard or our own RESUMED |
+| **`am crash` with another app below** | Clock `PAUSED`, Chrome `RESUMED` 1 ms later, Clock `STOPPED` **10.6 s later**: on-paused (counting) for those 10 s |
+| Split screen (`WMShell splitscreen moveToSideStage <Clock's task> 0` beside Chrome) | Clock `RESUMED`; Chrome no event - **both RESUMED at once** (multi-resume), no `PAUSED` for the unfocused one; taps moving the focus between them: no event. Home from split: both `PAUSED`, Vibb One `RESUMED`, both `STOPPED` |
+| PiP (`am start --windowingMode 2` of Chrome; kiosk off) | Chrome's activities `PAUSED` (and the one left `STOPPED`) - the visible PiP activity's last event `PAUSED`: on-paused |
+| **PiP across screen off and on** | Screen off: `SCREEN_NON_INTERACTIVE`, `KEYGUARD_SHOWN`, the PiP activity **`STOPPED`**, our glance `RESUMED`/`PAUSED`/`STOPPED`. Screen on: `SCREEN_INTERACTIVE`, the glance `RESUMED` - nothing for Chrome while the keyguard is up. After the unlock: `KEYGUARD_HIDDEN`, then the PiP activity **`PAUSED`** 22 ms later (the PiP window visible again) - **yes, an event marks it visible again**: a `PAUSED`, which §4.1 reads as on-paused |
+| A suspended package, kiosk off (`pm suspend` of the front Clock) | Android itself finishes it (`wm_finish_activity ... suspended-package`): Clock `PAUSED`, the task below (`HomeActivity`) `RESUMED` in the same ms, Clock `STOPPED` 0.4 s later; the process lives on. The PiP Chrome suspended: finished the same way, its activity `STOPPED` (off) |
+
+**What it settles for §4.1 and §8 row 1 (Android 14):**
+- Relaunch and PiP: the fold's rows hold as written (the relaunch's late `STOPPED` is ignored; PiP comes back as a
+  `PAUSED` after `KEYGUARD_HIDDEN`).
+- Kill and crash **with Vibb One below** are covered by our own `RESUMED`.
+- **Gap (Medium, design):** kill -9 of the front app with **another app below** leaves it "on" indefinitely (a
+  `STOPPED` with no `PAUSED` since its `RESUMED`, which §4.1 ignores, and someone else's `RESUMED`). With the kiosk on
+  the task below is usually Vibb One; with several pinned apps' tasks, or the kiosk off, it isn't. A narrow rule that
+  fits every case seen: a `STOPPED` of a package that is **on** with no `PAUSED` since its last `RESUMED`, arriving
+  with (same ms) another package's `RESUMED`, turns it off - the relaunch always has its `PAUSED` first. Not "any other
+  RESUMED turns everything off": split screen keeps both RESUMED with no PAUSED.
+- **Small (Low):** `am crash` with another app below counts ~10 s on-paused until the late `STOPPED`.
+- Split screen on 14 gives no `PAUSED` at all (both `RESUMED`), not the on-paused state §4.1 assumed; the union still
+  counts each app, so nothing changes in the fold.
+- A suspended package's front activity is finished by Android with the next task resumed (Home when Vibb One is
+  below), so D7's "Home comes forward" needs our start only when another app's task is below.
+
+Gate B's §6cb has the same probe on 16 (and the restricted-settings check, 15+).
