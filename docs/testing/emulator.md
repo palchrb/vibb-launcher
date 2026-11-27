@@ -3637,9 +3637,9 @@ from the hold's end (`spanFrom = max(from, holdEnd)`).
 - **Row 9, the pause's end with X over Z:** the group code's cut didn't fire (X wasn't in `carry` yet, as above), Z
   showed 1.5 s, and Home came from the relock's own `bringAfterUnlock` (`server/WindowRelock.kt:700`). Z is an allowed
   app; nothing is wrong, but the cut alone wouldn't cover this.
-- `am kill` leaves the app's GET_USAGE_STATS app-op as is, but an adb-installed test app's was `default` again after a
-  while (re-set before each `Dump`); and with the image's first boot the emulator was killed once (memory, while gate A
-  built) and adb went offline at the first enrolment - a second wipe was clean.
+- Environment: the adb-installed test apps' own GET_USAGE_STATS app-op was back at `default` after a while (set again
+  before each `Dump`); the first boot's emulator was killed once (memory, while gate A built) and adb went offline at
+  its enrolment - a second wipe was clean.
 
 ### Summary
 
