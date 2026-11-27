@@ -31,6 +31,7 @@ import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.lock.HomeFront
+import com.kidslauncher.mdm.lock.HomeRootStop
 import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
@@ -280,6 +281,8 @@ class HomeActivity : UIObjectActivity() {
         // Design 16c: the content only when the lock allows it - the night ground otherwise; the
         // lock's edges swap them.
         PinLockRuntime.addModeListener(modeListener)
+        // Design 141: the kiosk's end stops lock task from Home, the root (lock.HomeRootStop).
+        HomeRootStop.register(this)
         gate()
     }
 
@@ -658,6 +661,9 @@ class HomeActivity : UIObjectActivity() {
                 // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
                 // 10) - never stopped from here; nor while not decided with a kid PIN (16c).
                 stopLockTask()
+                // Design 141 §3.4: a Home brought at the kiosk's end stopped it from the root; the pass that follows
+                // empties the list the kiosk's end left for it.
+                PinLockRuntime.requestChromePass(this)
             }
         } catch (e: Exception) {
             android.util.Log.w("HomeActivity", "Lock task change failed - retried at the next resume", e)
@@ -734,6 +740,8 @@ class HomeActivity : UIObjectActivity() {
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
         apps.removeObserver(appsObserver)
         PinLockRuntime.removeModeListener(modeListener)
+        // Design 141 (QA M3): a relaunch keeps the record and its token, and the new instance registers again.
+        if (!isChangingConfigurations) HomeRootStop.unregister(this)
         night?.stop()
         closeOverlays()
         super.onDestroy()

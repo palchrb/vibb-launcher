@@ -322,6 +322,8 @@ object PinLockRuntime {
         if (interactive(app)) LockTaskChrome.screenChanged(on = true, processStartElapsed - ALARM_SCREEN_SETTLE_MS)
         // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
+        // Design 141 §3.3: our resumed activity, for the kiosk end's retry.
+        (app as? android.app.Application)?.let(HomeRootStop::init)
         decide(app)
         // Design 132 (QA L5): the own lock's stored keys go once, before the first apply.
         try {
@@ -587,6 +589,10 @@ object PinLockRuntime {
             chromePassLanded()
         }
     }
+
+    /** A chrome pass on [chromeExecutor], then the [chromeListeners] (design 141: Home's root stop at the kiosk's end, and
+     * the pass that follows a bring of Home, [HomeRootStop.step]). Any thread. */
+    fun requestChromePass(context: Context) = refreshChrome(context)
 
     /** Tells the [chromeListeners] on the main thread that a chrome pass landed: [refreshChrome]'s, or a policy's
      * (`LockTaskChrome.applyPlan` - the lock's entry check follows a kiosk or face change at once, E7 M2). Any thread. */

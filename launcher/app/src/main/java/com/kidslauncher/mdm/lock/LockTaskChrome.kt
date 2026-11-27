@@ -429,14 +429,14 @@ object LockTaskChrome {
             when (write) {
                 ChromeWrite.STATUS_BAR -> writeStatusBar(dpm, admin, setting.statusBarDisabled)
                 ChromeWrite.CREATE_WINDOWS -> writeCreateWindows(dpm, admin, setting.createWindowsBlocked)
-                ChromeWrite.LOCK_TASK -> if (writeLockTask(dpm, admin, setting, kioskOn)) healFlip = null
+                ChromeWrite.LOCK_TASK -> if (writeLockTask(context, dpm, admin, setting, kioskOn)) healFlip = null
             }
         }
         return false
     }
 
     /** Whether the features were written and verified (a heal's flip is gone then). */
-    private fun writeLockTask(dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, kioskOn: Boolean): Boolean {
+    private fun writeLockTask(context: Context, dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, kioskOn: Boolean): Boolean {
         val mdm = LauncherPreferences.mdm()
         val packages = setting.packages
         if (packages == null) {
@@ -451,6 +451,13 @@ object LockTaskChrome {
             // - Android's screen-pinning request, in the middle of a pause (§6af, the second race).
             val wasOn = mdm.kioskEnabled()
             mdm.kioskEnabled(false)
+            // Design 141 §3.1: Home, the lock-task root, stops lock task first - from the root that clears every other
+            // locked task, a leftover BlockedAppActivity task (LAUNCHABLE_PRIV, which the emptying never removes)
+            // included, so the emptying finds nothing locked and Home isn't restarted. After the switch: Home, resumed
+            // by the clear of the task in front, must read it off. Only while LOCKED (HomeRootStop.stop).
+            val stopAnswer = HomeRootStop.stop(context)
+            // §3.4: no Home in this process with the screen on - Home is brought and the list waits for its root stop.
+            if (HomeRootStop.step(context, stopAnswer) != UnpinStep.EMPTY) return false
             try {
                 dpm.setLockTaskPackages(admin, emptyArray())
             } catch (e: Exception) {
@@ -465,6 +472,8 @@ object LockTaskChrome {
                     }
                 }
             }
+            // §3.3: lock task still on 1 s later and not ours - one retry, then a log line.
+            HomeRootStop.afterUnpin(context, stopAnswer)
         } else if (!applyLockTaskFeaturesVerified(dpm, admin, setting.features)) {
             // Order matters (the boot-deadlock incident in CLAUDE.md): setLockTaskFeatures, which
             // carries the keyguard bit, must be verified *before* setLockTaskPackages ever pins
@@ -476,6 +485,8 @@ object LockTaskChrome {
             try {
                 dpm.setLockTaskPackages(admin, packages.toTypedArray())
                 mdm.kioskEnabled(kioskOn)
+                // Design 141: a kiosk-on pass ends the kiosk-off spell (one bring of Home, the logs once per spell).
+                if (kioskOn) HomeRootStop.kioskOn()
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to pin lock-task packages", e)
             }

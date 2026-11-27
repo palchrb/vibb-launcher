@@ -135,4 +135,33 @@ class HomeFrontTest {
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         assertEquals(emptyList<String>(), sources.filter { code(it).contains("animate = false") }.map { it.name })
     }
+
+    /** Design 141: the kiosk's end stops lock task from Home, the root, after the block and the switch and before the
+     * list is emptied - only there; the list is written in LockTaskChrome alone. */
+    @Test
+    fun `the kiosk's end - block, switch, Home's root stop, then the empty list`() {
+        val chrome = code(file("java/com/kidslauncher/mdm/lock/LockTaskChrome.kt"))
+        val unpin = chrome.substringAfter("private fun writeLockTask(").substringAfter("if (packages == null) {").substringBefore("} else if")
+        val order = listOf("liftAppBlock(dpm, admin)", "mdm.kioskEnabled(false)", "HomeRootStop.stop(context)", "HomeRootStop.step(context", "dpm.setLockTaskPackages(admin, emptyArray())", "HomeRootStop.afterUnpin(context")
+        val at = order.map { unpin.indexOf(it) }
+        assertTrue("$order: $at", at.all { it >= 0 } && at == at.sorted())
+        val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
+        assertEquals(listOf("LockTaskChrome.kt"), sources.filter { code(it).contains("HomeRootStop.stop(") }.map { it.name })
+        assertEquals(1, Regex("HomeRootStop\\.stop\\(").findAll(chrome).count())
+        assertEquals(listOf("LockTaskChrome.kt"), sources.filter { code(it).contains("setLockTaskPackages") }.map { it.name })
+    }
+
+    @Test
+    fun `Home registers in onCreate and unregisters only when not changing configurations (design 141 QA M3)`() {
+        val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
+        val onCreate = home.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
+        assertTrue(onCreate.contains("HomeRootStop.register(this)"))
+        val onDestroy = home.substringAfter("override fun onDestroy() {").substringBefore("\n    }\n")
+        assertTrue(onDestroy, onDestroy.contains("if (!isChangingConfigurations) HomeRootStop.unregister(this)"))
+        assertEquals(1, Regex("HomeRootStop\\.unregister\\(").findAll(home).count())
+        // Its own stop at a resume asks for the pass that empties the list (§3.4).
+        val reconcile = home.substringAfter("private fun reconcileKioskMode() {").substringBefore("\n    }\n")
+        assertTrue(reconcile, reconcile.indexOf("stopLockTask()") in 0 until reconcile.indexOf("PinLockRuntime.requestChromePass(this)"))
+    }
 }
+
