@@ -29,11 +29,14 @@ private const val LOG_TAG = "HomeRootStop"
  *   record and its token; the new instance registers again), and only while it is the registered one.
  * - The stuck check ([afterUnpin], §3.3): 1 s after a pass that found lock task LOCKED, lock task still on and not ours
  *   ([lockTaskStuck]) gets one retry from our resumed activity - after a launch in the gap before the posted stop
- *   (AOSP: it joined lock task and became the new root) its stop ends lock task -, then one log line if still stuck.
+ *   (AOSP: it joined lock task and became the new root) its stop ends lock task -, then one log line if still stuck. The
+ *   retry, as Home's stop, runs once per kiosk-off spell ([KioskEndSpell]): from a task that is no longer the root a stop
+ *   clears that task.
  *   Nothing on the phone can end it then; the parent's remedy is a restart (Q1: log only).
  * - No Home in this process ([step], §3.4): with the screen on Home is brought (typed HOME, restarted in its root task -
  *   our package is still listed) and the list waits for its root stop (`HomeActivity.reconcileKioskMode`, which then asks
- *   for a chrome pass); a pass [KIOSK_END_HOME_WAIT_MS] later empties it regardless. One bring per kiosk-off spell.
+ *   for a chrome pass - only while that Home is awaited, [homeStopped]); a pass [KIOSK_END_HOME_WAIT_MS] later empties
+ *   it regardless. One bring per kiosk-off spell.
  */
 object HomeRootStop {
 
@@ -47,17 +50,10 @@ object HomeRootStop {
     @Volatile
     private var resumed: WeakReference<Activity>? = null
 
-    /** Guards [log]. */
+    /** Guards [log] and [spell]. */
     private val logLock = Any()
     private val log = KioskEndLogOnce()
-
-    /** §3.4: when Home was brought in this kiosk-off spell (elapsed ms), `null` = not brought. */
-    @Volatile
-    private var broughtAtMs: Long? = null
-
-    /** The last pass's answer, for the stuck line. */
-    @Volatile
-    private var lastAnswer: HomeRootStopAnswer? = null
+    private val spell = KioskEndSpell()
 
     /** A stuck check is pending (one at a time). Main thread. */
     private var checkPending = false
@@ -101,12 +97,26 @@ object HomeRootStop {
     /** Design 141 §3.1 step 3: Home's stop, from the pass's own thread. Never throws. */
     fun stop(context: Context): HomeRootStopAnswer {
         val activity = home?.get()
-        val answer = homeRootStopAnswer(activity != null, lockTaskState(context), PinLockRuntime.chromeLocked) {
+        val asked = synchronized(logLock) { spell.homeAsked }
+        val answer = homeRootStopAnswer(activity != null, lockTaskState(context), PinLockRuntime.chromeLocked, asked) {
             stopFrom(activity)
         }
-        lastAnswer = answer
-        if (synchronized(logLock) { log.answer(answer) }) Log.i(LOG_TAG, "The kiosk's end: Home's stop $answer")
+        val logIt = synchronized(logLock) {
+            if (answer == HomeRootStopAnswer.ASKED) spell.asked()
+            log.answer(answer)
+        }
+        if (logIt) Log.i(LOG_TAG, "The kiosk's end: Home's stop $answer")
         return answer
+    }
+
+    /**
+     * Home stopped lock task itself (`HomeActivity.reconcileKioskMode`, main thread): Home's stop counts as asked for this
+     * spell (code QA M1 - never again from a task that may no longer be the root). Returns whether a brought Home was
+     * awaited (§3.4) - only then does Home ask for the pass that empties the list.
+     */
+    fun homeStopped(): Boolean = synchronized(logLock) {
+        spell.asked()
+        spell.awaitingHome
     }
 
     /**
@@ -115,15 +125,23 @@ object HomeRootStop {
      */
     fun step(context: Context, answer: HomeRootStopAnswer): UnpinStep {
         val now = SystemClock.elapsedRealtime()
-        val brought = broughtAtMs
-        val step = unpinStep(
-            answer,
-            interactive = interactive(context),
-            broughtThisSpell = brought != null,
-            timerDue = brought != null && now - brought >= KIOSK_END_HOME_WAIT_MS,
-        )
+        val interactive = interactive(context)
+        val step = synchronized(logLock) {
+            val brought = spell.broughtAtMs
+            unpinStep(
+                answer,
+                interactive = interactive,
+                broughtThisSpell = brought != null,
+                timerDue = brought != null && now - brought >= KIOSK_END_HOME_WAIT_MS,
+            ).also { step ->
+                when (step) {
+                    UnpinStep.BRING_HOME -> spell.brought(now)
+                    UnpinStep.EMPTY -> spell.emptied()
+                    UnpinStep.WAIT_FOR_HOME -> Unit
+                }
+            }
+        }
         if (step == UnpinStep.BRING_HOME) {
-            broughtAtMs = now
             val app = context.applicationContext
             Log.i(LOG_TAG, "The kiosk's end: no Home in this process - Home brought, the list waits for its stop")
             HomeFront.bring(app, "kiosk end")
@@ -139,18 +157,21 @@ object HomeRootStop {
         main.post {
             if (checkPending) return@post
             checkPending = true
-            main.postDelayed({ check(app, retry = null) }, KIOSK_END_STUCK_CHECK_MS)
+            main.postDelayed({ check(app, answer, afterRetry = false) }, KIOSK_END_STUCK_CHECK_MS)
         }
     }
 
     /** A kiosk-on pass (the pin): the next kiosk-off spell brings Home and logs again. */
     fun kioskOn() {
-        broughtAtMs = null
-        synchronized(logLock) { log.kioskOn() }
+        synchronized(logLock) {
+            spell.kioskOn()
+            log.kioskOn()
+        }
     }
 
-    /** Main thread. [retry]: `null` on the first check, else the retry's answer. */
-    private fun check(app: Context, retry: HomeRootStopAnswer?) {
+    /** Main thread. [scheduledBy]: the answer of the pass that scheduled the check (code QA L3); [afterRetry]: this is
+     * the check after the retry. */
+    private fun check(app: Context, scheduledBy: HomeRootStopAnswer, afterRetry: Boolean) {
         val stuck = lockTaskStuck(
             lockTaskState(app),
             kioskOn = LockTaskChrome.kioskOn,
@@ -159,19 +180,22 @@ object HomeRootStop {
         )
         if (!stuck) {
             checkPending = false
-            if (retry != null) Log.i(LOG_TAG, "The kiosk's end: lock task ended after the retry ($retry)")
+            if (afterRetry) Log.i(LOG_TAG, "The kiosk's end: lock task ended after the retry")
             return
         }
-        if (retry == null) {
+        // One retry per kiosk-off spell (code QA L1), so its line is once per spell too.
+        if (!afterRetry && synchronized(logLock) { spell.takeRetry() }) {
             // NO_HOME here: none of our activities is resumed.
             val answer = stopFrom(resumed?.get())
+            synchronized(logLock) { spell.retried(answer) }
             Log.i(LOG_TAG, "The kiosk's end: lock task still on, retry from our resumed activity $answer")
-            main.postDelayed({ check(app, answer) }, KIOSK_END_STUCK_CHECK_MS)
+            main.postDelayed({ check(app, scheduledBy, afterRetry = true) }, KIOSK_END_STUCK_CHECK_MS)
             return
         }
         checkPending = false
-        if (synchronized(logLock) { log.stuck() }) {
-            Log.w(LOG_TAG, "Lock task still on after the kiosk's end (Home's stop: $lastAnswer, retry: $retry)")
+        val (logIt, retry) = synchronized(logLock) { log.stuck() to spell.retryAnswer }
+        if (logIt) {
+            Log.w(LOG_TAG, "Lock task still on after the kiosk's end (Home's stop: $scheduledBy, retry: ${retry ?: "none"})")
         }
     }
 

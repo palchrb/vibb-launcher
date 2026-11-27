@@ -184,6 +184,11 @@ enum class HomeRootStopAnswer {
     /** Home's `stopLockTask()` went through. */
     ASKED,
 
+    /** Home's stop answered ASKED (or Home stopped lock task itself) earlier in this kiosk-off spell: not again (code QA
+     * M1) - from a task that is no longer the root AOSP's `clearLockedTask` clears Home's own task (its `mLockTaskUid` is
+     * never reset), and a root that joined in the gap would stay. LOCKED now is the stuck check's retry's job. */
+    ASKED_BEFORE,
+
     /** Home's task was never locked (`SecurityException`, "Invalid uid") - the stuck state of §1. */
     REFUSED,
 
@@ -194,17 +199,20 @@ enum class HomeRootStopAnswer {
 /**
  * Design 141 §3.2: whether Home stops lock task at the kiosk's end, and what came of it. [stop] (Home's
  * `stopLockTask()`, mapped to [HomeRootStopAnswer.ASKED], [HomeRootStopAnswer.REFUSED] or [HomeRootStopAnswer.FAILED])
- * runs only when lock task is LOCKED, Vibb's chrome isn't and a Home is registered. NOT_LOCKED is read first: the boot
- * cover's process and a process start's pass have no Home and nothing locked (§4) - no bring for them.
+ * runs only when lock task is LOCKED, Vibb's chrome isn't, Home hasn't stopped it already in this kiosk-off spell
+ * ([askedThisSpell], [KioskEndSpell.homeAsked]) and a Home is registered. NOT_LOCKED is read first: the boot cover's
+ * process and a process start's pass have no Home and nothing locked (§4) - no bring for them.
  */
 fun homeRootStopAnswer(
     registered: Boolean,
     lockTaskState: LockTaskState,
     chromeLocked: Boolean,
+    askedThisSpell: Boolean,
     stop: () -> HomeRootStopAnswer,
 ): HomeRootStopAnswer = when {
     lockTaskState != LockTaskState.LOCKED -> HomeRootStopAnswer.NOT_LOCKED
     chromeLocked -> HomeRootStopAnswer.LOCKED_CHROME
+    askedThisSpell -> HomeRootStopAnswer.ASKED_BEFORE
     !registered -> HomeRootStopAnswer.NO_HOME
     else -> stop()
 }
@@ -253,9 +261,9 @@ fun unpinStep(answer: HomeRootStopAnswer, interactive: Boolean, broughtThisSpell
 }
 
 /**
- * Design 141 §3.2's log: one line per answer, with fixed words; [HomeRootStopAnswer.REFUSED] and
- * [HomeRootStopAnswer.NO_HOME] (the passes repeat while stuck) and the stuck line at most once per kiosk-off spell, which
- * a kiosk-on pass ends ([kioskOn]). NOT_LOCKED is never logged: a phone with the kiosk off and nothing locked logs
+ * Design 141 §3.2's log: one line per answer, with fixed words; [HomeRootStopAnswer.REFUSED],
+ * [HomeRootStopAnswer.NO_HOME] and [HomeRootStopAnswer.ASKED_BEFORE] (the passes repeat while stuck) and the stuck line at
+ * most once per kiosk-off spell, which a kiosk-on pass ends ([kioskOn]). NOT_LOCKED is never logged: a phone with the kiosk off and nothing locked logs
  * nothing new. Not thread-safe on its own; [HomeRootStop] holds it under its own monitor.
  */
 class KioskEndLogOnce {
@@ -265,7 +273,7 @@ class KioskEndLogOnce {
     /** Whether to log [answer] now. */
     fun answer(answer: HomeRootStopAnswer): Boolean = when (answer) {
         HomeRootStopAnswer.NOT_LOCKED -> false
-        HomeRootStopAnswer.REFUSED, HomeRootStopAnswer.NO_HOME -> logged.add(answer)
+        HomeRootStopAnswer.REFUSED, HomeRootStopAnswer.NO_HOME, HomeRootStopAnswer.ASKED_BEFORE -> logged.add(answer)
         else -> true
     }
 
@@ -276,5 +284,62 @@ class KioskEndLogOnce {
     fun kioskOn() {
         logged.clear()
         stuckLogged = false
+    }
+}
+
+/**
+ * Design 141's state of one kiosk-off spell (from a kiosk-on pass to the next): whether Home's stop went through, the
+ * bring of §3.4 and whether the list was emptied since, and the stuck check's one retry. Pure; [HomeRootStop] holds it
+ * under its own monitor.
+ */
+class KioskEndSpell {
+    /** Home's stop went through in this spell (its answer ASKED, or Home's own stop at a resume): never again (code QA M1). */
+    var homeAsked = false
+        private set
+
+    /** When Home was brought (§3.4, elapsed ms), `null` = not brought in this spell. */
+    var broughtAtMs: Long? = null
+        private set
+
+    private var emptiedSinceBring = false
+    private var retried = false
+
+    /** The retry's answer in this spell, `null` = no retry yet. */
+    var retryAnswer: HomeRootStopAnswer? = null
+        private set
+
+    /** A brought Home is awaited: brought in this spell and the list not emptied since. Only then does Home's own stop at
+     * a resume ask for the pass that empties it (code QA M1: else that pass is a second unpin with no use). */
+    val awaitingHome: Boolean get() = broughtAtMs != null && !emptiedSinceBring
+
+    /** Home's stop went through (the pass's ASKED, or Home's own stop). */
+    fun asked() {
+        homeAsked = true
+    }
+
+    fun brought(atMs: Long) {
+        broughtAtMs = atMs
+        emptiedSinceBring = false
+    }
+
+    /** A pass emptied the list. */
+    fun emptied() {
+        emptiedSinceBring = true
+    }
+
+    /** Whether the stuck check may retry now - once per spell (code QA L1). */
+    fun takeRetry(): Boolean = !retried.also { retried = true }
+
+    fun retried(answer: HomeRootStopAnswer) {
+        retryAnswer = answer
+    }
+
+    /** A kiosk-on pass: a new spell. */
+    fun kioskOn() {
+        homeAsked = false
+        broughtAtMs = null
+        emptiedSinceBring = false
+        retried = false
+        retryAnswer = null
     }
 }

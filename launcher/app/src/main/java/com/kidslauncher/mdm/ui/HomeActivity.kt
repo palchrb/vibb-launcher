@@ -661,9 +661,10 @@ class HomeActivity : UIObjectActivity() {
                 // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
                 // 10) - never stopped from here; nor while not decided with a kid PIN (16c).
                 stopLockTask()
-                // Design 141 §3.4: a Home brought at the kiosk's end stopped it from the root; the pass that follows
-                // empties the list the kiosk's end left for it.
-                PinLockRuntime.requestChromePass(this)
+                // Design 141: Home's stop counts for the kiosk's end (never again this spell - from a task no longer the
+                // root it would clear Home's own). §3.4: a Home brought at the kiosk's end stopped it from the root; only
+                // then does a pass follow, to empty the list the kiosk's end left for it (code QA M1).
+                if (HomeRootStop.homeStopped()) PinLockRuntime.requestChromePass(this)
             }
         } catch (e: Exception) {
             android.util.Log.w("HomeActivity", "Lock task change failed - retried at the next resume", e)
