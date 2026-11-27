@@ -6553,7 +6553,7 @@ nothing).
 
 Not run: k (above); d and e on `0a00aa512`; Android 17; the device row (the Jelly Star).
 
-**After the run (2026-11-26):** finding 1 (row o: the off gap wiped by the power record's `clear()`) is fixed on `wifi-link-confirm` (a5a9406e6: the gap in its own DE prefs file `power_boot_gap`); rows o and p are not rerun - they are owed on 14 and 16, and on the Jelly Star (a reboot at home, then a Locate with GPS silent).
+**After the run (2026-11-26):** finding 1 (row o: the off gap wiped by the power record's `clear()`) is fixed on `wifi-link-confirm` (a5a9406e6: the gap in its own DE prefs file `power_boot_gap`); rows o and p are not rerun - they are owed on 14 and 16, and on the Jelly Star (a reboot at home, then a Locate with GPS silent). Run on 14 and 16 in §6by (2026-11-26/27); the Jelly Star's stays owed.
 
 ## 6bt. Phase D: Android's PIN lock is the only lock (design 132 §11, D7) - run 2026-11-26 (branch `gate-phase-d`)
 
@@ -6623,7 +6623,7 @@ Findings (no product code changed here):
    the database instead, not looked into; once on `jelly36` adb went offline for good after a Koble til enrolment from a
    loaded snapshot (the next snapshot load brought it back; not seen on a fresh boot).
 
-### 6bt-r. The fixes' rows (branch `phase-d-fixes`) - written, not run
+### 6bt-r. The fixes' rows (branch `phase-d-fixes`) - run 2026-11-26/27 (§6by)
 
 Fixed on `phase-d-fixes`: finding 1 (`KidInsets.apply` keeps the handle's room when no insets reach the page), 2 (the
 boot cover asks once and again only when its window has the focus back - code QA M1/L1), 4 (no "not the Child PIN"
@@ -6633,13 +6633,13 @@ command stream's open nudge for a due command, at most one a minute per phone). 
 | # | Row | 14 (`compat34`) | 16 (`jelly36`) |
 |---|---|---|---|
 | R1 | G1's glance in both navigation modes: `uiautomator dump` - `lock_glance_emergency`'s bottom at or above `lock_glance_handle`'s top (14 3-button: Nødsamtale up to 734 over the handle `[746,782]`); a swipe up from the handle's upper half opens Android's pad, never "Call 112?"; Nødsamtale's tap still asks "Call 112?" | x | x |
-| R2 (code QA M1) | G4 on a **cold first boot** (`-wipe-data` snapshot not loaded: `adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows exactly one ask after it ("a window (Android's pad) is over the cover - no re-ask" once, no "again N" while the pad is up); the PIN opens Home | x | x |
+| R2 (code QA M1) | G4 on a **cold first boot** (`-wipe-data` snapshot not loaded: `adb emu kill`, a cold boot, so SystemUI's keyguard is late), both navigation modes: while SystemUI is late (no pad yet) `adb shell dumpsys window \| grep mCurrentFocus` names the boot cover (`BootCoverActivity`) and the log has the re-asks ("no answer, again N"); once the pad is up `mCurrentFocus` names SystemUI's `NotificationShade` and `logcat -s` the cover's tag shows no 3-6 s re-ask while it is up ("Android's pad is over the cover - no re-ask"), only the 30 s one of `rc5-gate-fixes` ("again N, the pad unanswered 30 s", each followed by "no re-ask"; the pad not hidden or redrawn); the PIN opens Home | x | x |
 | R3 | G4 with the pad cancelled (Back on the pad): "Trykk for å låse opp" under the mark, no ask until a tap; a tap asks once | x | x |
-| R4 | G2's Koble til half: with `refused: no_token` the Lock page shows "Vibb One kan ikke endre Androids PIN" alone - no "Telefonens PIN er ikke barne-PIN-en", no Attention row for it | x | - |
+| R4 | G2's Koble til half (Android's PIN set **before** `dpm set-device-owner`: the launcher sets its reset token at every apply, so a PIN set after the Device Owner leaves the token active; then Koble til, `The reset token at enrolment: not active yet`): with `refused: no_token` the Lock page shows "Vibb One kan ikke endre Androids PIN" alone - no "Telefonens PIN er ikke barne-PIN-en", no Attention row for it | x | - |
 | R5 | G11: between the save and the phone's next report "Telefonen har ingen PIN" with "Lagre barne-PIN på nytt." behind the (i), never "Velg en barne-PIN under." | x | - |
 | R6 | Side note 6: after a snapshot load with a waiting `set_kid_pin` and the 2 s network drop, the row goes out within seconds of the stream's reconnect (the server log `command stream opened`, the phone's `Command stream nudge received`), no parent save | x | - |
 
-## 6bx. Zones shared by the family, picked per phone (design 135, branch `family-zones`) - written, not run
+## 6bx. Zones shared by the family, picked per phone (design 135, branch `family-zones`) - run 2026-11-26/27 (§6by)
 
 `docs/design/135-family-zones.md` §11: **server only**, so the gate checks that the phones see nothing change and that
 the per-phone pick, the shared edit and each parent's push work end to end. On **Android 14 and 16** only (the
@@ -6653,7 +6653,7 @@ on a copy of `data/kidphone.db` (never the live file while it runs).
 | # | Step | Expect |
 |---|---|---|
 | 1 | **Before the update**, a server with phase D's 0181 and not 0182: on Telefon 1 "Hjem" (typed centre, 150 m) and "Skole"; on Telefon 2 "Hjem" with the same numbers. Both Regularly; a fix inside Hjem on both, twice 2 min apart. Drar off on Telefon 1's Hjem; Telefon 1's weather zone Hjem. Note both phones' geofence dump and `SELECT id, latitude, longitude, radius_m FROM device_zones` | "Here now" on both phones' Hjem; two fences on Telefon 1, one on Telefon 2 |
-| 2 | **Update the server** to this branch (0182 runs; a `data/backups/pre-migrate-181-*.db` made) | `/zones` lists Hjem "150 m · Telefon 1, Telefon 2" and Skole "· Telefon 1"; "Here now" still on both; no new inbox row; at the next sync `ZoneWatch` logs no re-registration and the geofence dump equals step 1's; the policy's `location_policy.zones` (`GET /api/devices/policy` with the phone's token, or `ZoneWatch`'s fingerprint line) has the same ids and circles; Telefon 1's Lock Screen & PINs › Weather still says Hjem; `zone_alerts` has a Drar-off row for A and B on Telefon 1's Hjem |
+| 2 | **Update the server** to this branch (0182 runs; a `data/backups/pre-migrate-0181-0184.db` made) | `/zones` lists Hjem "150 m · Telefon 1, Telefon 2" and Skole "· Telefon 1"; "Here now" still on both; no new inbox row; at the next sync `ZoneWatch` logs no re-registration and the geofence dump equals step 1's; the policy's `location_policy.zones` (`GET /api/devices/policy` with the phone's token, or `ZoneWatch`'s fingerprint line) has the same ids and circles; Telefon 1's Lock Screen & PINs › Weather still says Hjem; `zone_alerts` has a Drar-off row for A and B on Telefon 1's Hjem |
 | 3 | **Pick per phone**: on Telefon 2's Zones page switch Skole on | the page comes back at Skole's cell with "Saved."; after the nudge Telefon 2 holds one more fence; a fix inside Skole twice raises nothing (a silent first side); a fix 1 km away and its confirm raise "Telefon 2 left Skole" for Telefon 2 only |
 | 4 | **Edit a shared zone**: open Hjem from `/zones`, the place's (i) shows "The zone is shared…"; move it 300 m (tap the map) and Save | both phones re-register one fence with the new circle (`ZoneWatch` fence lines, the dump); no event on either; a crossing on each phone afterwards raises its own event |
 | 5 | **Alerts per parent**: parent B turns Kommer off for Telefon 2's Hjem on Telefon 2's Zones page | parent A's page still shows Kommer on; an arrival on Telefon 2 shows in both inboxes and queues one `push_deliveries` row, for A's subscription only |
@@ -6664,3 +6664,80 @@ on a copy of `data/kidphone.db` (never the live file while it runs).
 
 What can't be seen here: a real phone's Wi-Fi zone link relearning after the moved zone in step 4 (design 125 D12, at
 least 2 days) - the Jelly Star's, later.
+
+## 6by. The night gate after the post-release chain (branch `gate-night-1126`) - run 2026-11-26/27
+
+On **Android 14 and 16** with the owner's OK for the night (the 17 images don't run), 22:20-00:35 UTC. `main` at
+`28d4d29e3`: the debug launcher (`assembleDebug`) and a debug server 0.94.1 (`--features emulator_keys`,
+`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM`) from the same tree; for §6bx step 1 also a server from `3232933ca` (phase D and
+its fixes, migrations up to 0181, not 0182). Servers on `127.0.0.1` (the emulator reaches them as `10.0.2.2`, no
+relay): one per image for §6bt-r (14: `:3170`, 16: `:3172`), one shared by both phones for §6bx and §6bw (`:3180`).
+Android 14 on `compat34` (Google APIs, `-wipe-data`), Android 16 on `jelly36` (Google Play, `-wipe-data`; its first
+`dpm set-device-owner` answered "already some accounts" for about a minute, as the note in the SMS engine's section says, then took). Each phone:
+§4's adb lines, "Blokker USB-feilsøking" off and Foreldre-PIN 246813 in the PWA before Koble til with a typed code,
+the setup flow finished, Barne-PIN 1357 where a row needs it; snapshots `gn-do` (Device Owner, not enrolled), `gn-enr`
+(enrolled, no Barne-PIN), `gn-base` (Barne-PIN set) with a copy of the server data (§3, "Faster gates"). Logs and
+screenshots in the session's `scratchpad/gn/` (not committed).
+
+### §6bt-r R1-R6
+
+| # | Android 14 (`compat34`) | Android 16 (`jelly36`) |
+|---|---|---|
+| R1 | **Pass**, both modes. Gestures: `lock_glance_emergency` `[136,698][343,770]` over `lock_glance_handle` `[159,782][321,818]` (the bar `[0,818][480,854]`); 3-button: `[136,662][343,734]` over `[159,746][321,782]` (the bar `[0,782]`). A swipe from the handle's upper half: `NotificationShade`, "Enter your PIN"; Emergency call's tap: "Call 112?" | **Pass**, both modes. Gestures `[136,734][343,806]` over `[159,818][321,854]`; 3-button as 14. The swipe: "Enter PIN"; the tap: "Call 112?" |
+| R2 | **Pass** (the row's text corrected), both modes, a cold boot each (`emu kill`, `-no-snapshot-load`). Gestures: `mCurrentFocus` the boot cover for 3-6 s, then `NotificationShade`; the ask `(relaunched, automatic 1 of 3; keyguard up, no focus)`, "Boot cover relaunched with Android's pad up - no ask", then "Android's pad is over the cover - no re-ask" and no 3-6 s re-ask; every 30 s one "again N, the pad unanswered 30 s", each followed by "no re-ask"; 1357 opens Home (`Boot cover leaves ... 5136 ms after the unlock`). 3-button the same (9.8 s) | **Pass** (the same correction), both modes. The cover's asks while System UI is late (`resumed`, `again 1-2 ... keyguard not up`, `again 3 ... keyguard up, no focus`), then "no re-ask" and the 30 s re-asks; 1357 opens Home 9.2 s (3-button) and 18.5 s (gestures) after the unlock |
+| R3 | **Pass** (gestures, `adb reboot`). Back on the pad: "the focus back, the relaunch's pad gone - the line, no ask"; "Tap to unlock" under the rings (the phone in English), no ask in 20 s; a tap: one ask (`tapped`), the pad, one "no re-ask" | **Pass.** Back: "Android's PIN pad cancelled"; the same line and tap |
+| R4 | **Pass** (the row's setup corrected). A PIN set after the Device Owner left the token active (`The reset token at enrolment: active`, the row then `pin set`): the launcher sets its token at every apply. With `locksettings set-pin 1111` before `dpm set-device-owner` (a fresh `-wipe-data`): `not active yet`, the Barne-PIN's row `refused: no_token`; the Lock page: "Vibb One kan ikke endre Androids PIN" with "Lås opp telefonen én gang først." behind its (i), no "Telefonens PIN er ikke barne-PIN-en", no Attention row. One unlock with 1111 and a nudge: a second row `pin set`, the line gone | - |
+| R5 | **Pass.** From `gn-enr`: the Barne-PIN saved before the phone fetched it, its row deleted and `kid_pin_sealed` set NULL, the server restarted (`legacy Child PINs without a copy: 1 device_ids=[1]`); with the newest report still `no_pin`: "Telefonen har ingen PIN" with "Lagre barne-PIN på nytt.", no "Velg en barne-PIN under."; after the next report (`no_android_pin`) the same, and Attention "Låsen er av på telefonen" | - |
+| R6 | **Pass.** From an idle snapshot (Barne-PIN 1357 set): the emulator paused, a new Barne-PIN 2468 saved (the row waits), the snapshot loaded and resumed, Wi-Fi off 2 s: the stream came back after its own back-off (23 s), `Command stream connected` and `Command stream nudge received, syncing early` in the same ms, `Sync for [sse]`, `PIN command: pin set (rev 2)` 2 s later; the server `command stream opened`; no parent save. (A first try from `gn-enr` didn't test the nudge: that snapshot's own queued `[setup]` sync fetched the row before the stream opened) | - |
+
+### §6bx rows 1-9
+
+One server, both phones: Telefon 1 on `compat34` (14), Telefon 2 on `jelly36` (16); two parents (A, and B added under
+Konto › Foreldre), each with a push subscription to a made-up endpoint under `.push.apple.com` that doesn't resolve (no
+push leaves the machine; the queue's rows are what the rows read). Fixes by the launcher's satellite feed
+(`PlacesDebugReceiver --es gps`) and a Locate; the policy read from the phone's cached policy (`run-as`), fences from
+`dumpsys location`.
+
+| # | Result |
+|---|---|
+| 1 | **Pass.** The `3232933ca` server (0181): Hjem and Skole on Telefon 1, Hjem (the same numbers) on Telefon 2; Drar off on Telefon 1's Hjem; Telefon 1's weather zone Hjem; two fixes in Hjem on each, 2 min apart: "Her nå" on both Hjem; two fences on Telefon 1, one on Telefon 2 |
+| 2 | **Pass** (the backup's name in the row corrected). The new server on the same data: `migrations pending - the database before them is in data/backups/pre-migrate-0181-0184.db`, `_sqlx_migrations` 184; `/zones`: "Hjem 150 m · Telefon 1, Telefon 2", "Skole 150 m · Telefon 1"; no new inbox row; at the next sync no `Fences:` line, the dumps as step 1, the policy's zones ids 1, 2 and 3 with the same circles; Telefon 1's weather zone still Hjem (`weather_family_zone_id` 1); `zone_alerts` leave off on link 1 for both parents |
+| 3 | **Pass.** Skole switched on for Telefon 2: back at `#zone-2` with "Lagret."; `Fences: 1 removed, 2 of 2 added`, two fences; two fixes in Skole: nothing for Skole (they also confirmed Telefon 2 out of Hjem: "Telefon 2 dro fra Hjem", as the geometry says); two fixes 1 km away: "Telefon 2 dro fra Skole" for Telefon 2 only |
+| 4 | **Pass.** `/zones/1`'s (i): "Sonen er felles. Endringer gjelder alle telefonene som bruker den."; Hjem moved 300 m north: on each phone `Fences: 2 removed, 2 of 2 added` (the phone re-registers its set), the dump with the new circle; no event; a fix outside, then two inside the new circle: "Telefon 1 kom til Hjem" and "Telefon 2 kom til Hjem", each its own |
+| 5 | **Pass.** Parent B switched Kommer off for Telefon 2's Hjem: B's `zone_alerts` row (arrive 0); A's page still on. Telefon 2 left and came back: both events in both inboxes; the left one queued for A's and B's subscriptions, the arrival for A's alone |
+| 6 | **Pass.** Fotball (no phone) made; Telefon 2's page read twice; the first switched Fotball on, the second (read before it) switched Kommer for Hjem off: Fotball stays linked (three fences), the Kommer change saved |
+| 7 | **Pass.** Hjem off for Telefon 1: its fence gone, the policy without it, the weather still Hjem; on again: a new link id (6) in the policy, the side pending and then confirmed silently; Delete Hjem: both phones' Hjem fences gone, Telefon 1's weather "Ingen" |
+| 8 | **Pass.** Ten zones on Telefon 1, an eleventh switched on: `?refused=full#zone-13`, "10 soner er det meste", still ten links, no `Fences:` line on the phone |
+| 9 | **Pass.** Hjem made again for both phones, both on the made-up `Net-A` (psk) with a fix in Hjem: one Bekreft row (naming the phone whose report showed it); Bekreft: "Lagret." in the group, both phones nudged (`Command stream nudge received`), the policies' Hjem with `networks` ids 1 and 2 (one row per link); Hjem off and on for Telefon 2: its new link (18) carries the router (id 3); Fjern: gone from both policies. Bekreft again (ids 4, 5), then Telefon 1 on Net-A with the feed 3 km north twice 90 s apart: `zone link struck by=confirmed`, both rows `blocked_at` set, both policies without the router, Telefon 2 nudged, the group "Sett et annet sted" with its (i) |
+
+### §6bw rows o and p
+
+On the §6bx server and phones (Hjem 59.9139, 10.7522, 150 m), with a fresh made-up router `Net-C`
+(`00:00:5e:00:70:01`, psk) confirmed for Hjem - a router with no rows of its own, so the single-router fix stands at the
+zone's centre (`at=zone acc=152`); Net-A's own rows had moved with the strike of §6bx row 9. GPS silent as §6bw's run
+(on 14 the `network` test provider off; the shell's `mock_location` allowed for the test providers).
+
+| Row | Android 14 (`compat34`) | Android 16 (`jelly36`) |
+|---|---|---|
+| o | **Pass for the reboot; the 15-min half not measured** (finding 1). A router fix at home, then `svc power reboot` (`phone_off` 00:12:42, `phone_on` 00:12:48): `power_boot_gap.xml` `boot_off_gap_v1` `2:5585`; Net-C alone, GPS silent, Locate: `router fix fix at=zone acc=152`, `wifi fix check=link step=USE`, a `vibb_wifi` `link` fix. Then `svc power shutdown` (`phone_off` 00:15:27), a cold boot at 00:30:49: `router fix continuity`, `result=none`, but with `power_boot_gap.xml` empty | **Pass.** The reboot: `2:6137`, `router fix fix at=zone acc=152`, a `link` fix. The shutdown (`phone_off` 00:15:32), 15 min, a cold boot (`phone_on` 00:30:50): `boot_off_gap_v1` `3:918073` (15.3 min, over the 10 min), `router fix continuity` |
+| p | **Not run.** No placed cell: a cell-only Locate (GPS silent, one unknown AP, not connected) gave `router fix unconfirmed`, `result=none`; the phone's own cell row needs three teaches 30 min apart (`CELL_OCCASIONS`), and the gate stopped after the first | **Not run**, the same |
+
+### Findings (no product code changed here)
+
+1. **Low, to look at (14 only) - a `phone_on` while the emulator was off, and no gap after the cold boot** (row o's
+   second half on `compat34`): `svc power shutdown` at 00:15:27 gave its `phone_off` and the emulator process ended at
+   00:15:34, yet the server stored a `phone_on` for Telefon 1 at 00:16:02 (received 00:16:29), and another at the real
+   cold boot (00:30:51); after that boot `power_boot_gap.xml` was empty, so the gate saw an unknown gap - `continuity`,
+   the expected outcome, but not by the measured 15 min as on 16. Repro: `compat34`, a router fix at home, `adb shell
+   svc power shutdown`, a cold boot 15 min later, then `run-as me.vibb.launcher.debug cat
+   /data/user_de/0/me.vibb.launcher.debug/shared_prefs/power_boot_gap.xml` and the server's `parent_events`
+   (`phone_off`/`phone_on`). Environment first (the Google APIs image's shutdown path), not seen on 16.
+2. **Words (no code)** - after `refused: no_token` the send row's own note still repeats the line above it ("Vibb One
+   kan ikke endre Androids PIN før barnet har låst opp telefonen én gang. Send den så igjen."; §6bt finding 4's second
+   half), for the owner.
+
+**Rows corrected** (no code): §6bt-r R2 (the 30 s re-ask with the pad up, `rc5-gate-fixes`), R4 (the PIN before the
+Device Owner); §6bx row 2 (the backup's name).
+
+Not run: §6bw p (above) and o's measured 15-min gap on 14 (finding 1); Android 17; the Jelly Star's device rows
+(§6bw's, §6bx's relearning).
