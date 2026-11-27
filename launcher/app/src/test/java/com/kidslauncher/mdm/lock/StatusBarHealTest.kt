@@ -279,7 +279,7 @@ class StatusBarHealTest {
         for (other in listOf("setLockTaskPackages", "setStatusBarDisabled", "UserRestriction")) assertFalse(other, flip.contains(other))
         val apply = body(chrome, "apply")
         assertTrue(apply.indexOf("LockTaskDebug.adjust(context, computed)") in 0 until apply.indexOf("if (heal != null) return writeHealFlip("))
-        assertTrue(apply.contains("if (writeLockTask(dpm, admin, setting, kioskOn)) healFlip = null"))
+        assertTrue(apply.contains("if (writeLockTask(context, dpm, admin, setting, kioskOn)) healFlip = null"))
         assertTrue(body(chrome, "applyFallback").contains("healBase(dpm.getLockTaskFeatures(admin), healFlip)"))
         assertTrue(body(chrome, "healStatusBar").contains("synchronized(this)"))
         assertTrue(body(chrome, "endStatusBarHeal").contains("if (healFlip != null) refresh(context)"))
