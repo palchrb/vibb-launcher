@@ -30,6 +30,15 @@ val versionNameOverride = providers.gradleProperty("versionName").orNull
 // Design 133: the repo's one contracts/ folder (read below as source directories, never copied).
 val contracts = rootProject.layout.projectDirectory.dir("../contracts")
 
+// Design 140 §2.2: the oldest Vibb server this build needs (contracts/music/min_server.json), written into the APK as
+// assets/vibb/min_server. A tag build passes -PminServer from scripts/min-server.sh (which adds a patch when the
+// server's code moved since that version's tag); any other build takes server/Cargo.toml's version as it is.
+val minServer: Provider<String> = providers.gradleProperty("minServer").orElse(
+    providers.fileContents(rootProject.layout.projectDirectory.file("../server/Cargo.toml")).asText.map { text ->
+        Regex("""(?m)^version = "([^"]*)"""").find(text)?.groupValues?.get(1) ?: ""
+    }
+)
+
 android {
     namespace = "me.vibb.music"
     compileSdk = 36
@@ -211,10 +220,68 @@ abstract class CheckNoGoogleServices : DefaultTask() {
     }
 }
 
+/**
+ * Design 140 §2.2: writes the oldest server this build needs as vibb/min_server under a generated assets directory
+ * (APK entry assets/vibb/min_server, contracts/music/min_server.json): the value and one newline. A value that isn't
+ * X.Y.Z (the contract's value_format, MinServerContractTest) fails the build.
+ */
+abstract class WriteMinServer : DefaultTask() {
+    @get:Input
+    abstract val value: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun write() {
+        val v = value.get()
+        if (!Regex("""^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$""").matches(v)) {
+            throw GradleException("min server '$v' is not X.Y.Z (-PminServer or server/Cargo.toml's version; design 140)")
+        }
+        val file = outputDir.get().asFile.resolve("vibb/min_server")
+        file.parentFile.mkdirs()
+        file.writeText("$v\n")
+    }
+}
+
+/** Design 140 §2.2: every APK of the variant holds assets/vibb/min_server with exactly the value written - a server
+ * refuses a release of ours without it (checkReleaseHasMinServer is a dependency of assembleRelease). */
+abstract class CheckHasMinServer : DefaultTask() {
+    @get:InputDirectory
+    abstract val apkDir: DirectoryProperty
+
+    @get:Input
+    abstract val expected: Property<String>
+
+    @TaskAction
+    fun check() {
+        val apks = apkDir.get().asFile.listFiles { f -> f.name.endsWith(".apk") }.orEmpty()
+        if (apks.isEmpty()) throw GradleException("No APK in ${apkDir.get().asFile}")
+        for (apk in apks) {
+            ZipFile(apk).use { zip ->
+                val entry = zip.getEntry("assets/vibb/min_server")
+                    ?: throw GradleException("${apk.name} lacks assets/vibb/min_server (design 140)")
+                val text = zip.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) }
+                if (text != "${expected.get()}\n") {
+                    throw GradleException("${apk.name}'s assets/vibb/min_server is '$text', not '${expected.get()}' (design 140)")
+                }
+            }
+        }
+        logger.lifecycle("${name}: min server ${expected.get()} in ${apks.map { it.name }}")
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         val cap = variant.name.replaceFirstChar { it.uppercase() }
         val release = variant.buildType == "release"
+        val writeMinServer = tasks.register<WriteMinServer>("write${cap}MinServer") { value.set(minServer) }
+        variant.sources.assets?.addGeneratedSourceDirectory(writeMinServer, WriteMinServer::outputDir)
+        val minServerCheck = tasks.register<CheckHasMinServer>("check${cap}HasMinServer") {
+            apkDir.set(variant.artifacts.get(SingleArtifact.APK))
+            expected.set(minServer)
+        }
+        tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(minServerCheck) }
         if (release) {
             val guard = tasks.register<CheckNoGoogleServices>("check${cap}HasNoGoogleServices") {
                 rootComponent.set(variant.runtimeConfiguration.incoming.resolutionResult.rootComponent)

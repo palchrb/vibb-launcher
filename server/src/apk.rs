@@ -61,6 +61,66 @@ pub struct ApkIdentity {
     /// would run as one user ID with other apps of its key and share their permissions, so its
     /// own list doesn't say what it can do (`catalog_holds::judged_permissions`).
     pub shared_user_id: bool,
+    /// The oldest Vibb server the build needs (design 140, [MIN_SERVER_ENTRY]): read for every APK,
+    /// used only for ours (`catalog_holds::needs_server`, the setup QR's check).
+    pub min_server: MinServer,
+}
+
+/// Design 140 §1: the file every build of ours carries, the oldest server it needs as `X.Y.Z` and
+/// one newline (`contracts/music/min_server.json`). Inside the signed APK: the server doesn't
+/// verify the signature, but a phone refuses a forged file, so a lowered value only travels with
+/// an APK no phone installs and a raised one only holds a release.
+pub const MIN_SERVER_ENTRY: &str = "assets/vibb/min_server";
+/// The longest [MIN_SERVER_ENTRY] read: more is [MinServer::Unreadable].
+const MIN_SERVER_MAX_BYTES: u64 = 32;
+
+/// What [MIN_SERVER_ENTRY] says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MinServer {
+    /// No such entry: a build from before design 140, or not ours.
+    #[default]
+    Absent,
+    /// There, but more than [MIN_SERVER_MAX_BYTES] or not exactly `X.Y.Z` with at most one
+    /// trailing newline.
+    Unreadable,
+    Version((u64, u64, u64)),
+}
+
+/// [MIN_SERVER_ENTRY]'s bytes as [MinServer]: `X.Y.Z`, each part 1 to 4 ASCII digits without a
+/// leading zero (but `0`), and at most one `\n` after it; anything else is unreadable.
+pub fn parse_min_server(bytes: &[u8]) -> MinServer {
+    if bytes.len() as u64 > MIN_SERVER_MAX_BYTES {
+        return MinServer::Unreadable;
+    }
+    let text = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+    let mut parts = text.split(|b| *b == b'.');
+    let mut next = || -> Option<u64> {
+        let part = parts.next()?;
+        let digits = !part.is_empty() && part.len() <= 4 && part.iter().all(u8::is_ascii_digit);
+        if !digits || (part.len() > 1 && part[0] == b'0') {
+            return None;
+        }
+        std::str::from_utf8(part).ok()?.parse().ok()
+    };
+    match (next(), next(), next(), parts.next()) {
+        (Some(x), Some(y), Some(z), None) => MinServer::Version((x, y, z)),
+        _ => MinServer::Unreadable,
+    }
+}
+
+/// [MIN_SERVER_ENTRY] read from `archive`, through at most [MIN_SERVER_MAX_BYTES] + 1 bytes.
+fn read_min_server<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> MinServer {
+    match archive.by_name(MIN_SERVER_ENTRY) {
+        Ok(entry) => {
+            let mut bytes = Vec::new();
+            match entry.take(MIN_SERVER_MAX_BYTES + 1).read_to_end(&mut bytes) {
+                Ok(_) => parse_min_server(&bytes),
+                Err(_) => MinServer::Unreadable,
+            }
+        }
+        Err(zip::result::ZipError::FileNotFound) => MinServer::Absent,
+        Err(_) => MinServer::Unreadable,
+    }
 }
 
 /// Reads the facts; a file that isn't a zip at all is an error, a part that can't be read is
@@ -85,6 +145,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
             read_manifest(&bytes)
         })
         .unwrap_or_default();
+    let min_server = read_min_server(&mut archive);
     Ok(ApkIdentity {
         package: manifest.package,
         version_code: manifest.version_code,
@@ -94,6 +155,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         permissions: manifest.permissions,
         split_target: manifest.split_target,
         shared_user_id: manifest.shared_user_id,
+        min_server,
     })
 }
 
@@ -876,6 +938,7 @@ pub(crate) mod tests {
                 permissions: Some(Vec::new()),
                 split_target: Some(36),
                 shared_user_id: false,
+                min_server: MinServer::Absent,
             }
         );
         assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
@@ -907,6 +970,7 @@ pub(crate) mod tests {
                 permissions: Some(Vec::new()),
                 split_target: Some(36),
                 shared_user_id: false,
+                min_server: MinServer::Absent,
             }
         );
     }
@@ -1505,6 +1569,83 @@ pub(crate) mod tests {
             at += 8 + len;
         }
         found
+    }
+
+    /// A test APK (design 140): `apk`'s entries with [MIN_SERVER_ENTRY] holding `text` (none for
+    /// `None`, an earlier one dropped), and `apk`'s signing block - so the signer reads as before.
+    pub(crate) fn with_min_server(apk: &[u8], text: Option<&[u8]>) -> Vec<u8> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(apk)).unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for i in 0..archive.len() {
+            let entry = archive.by_index_raw(i).unwrap();
+            if entry.name() != MIN_SERVER_ENTRY {
+                zip.raw_copy_file(entry).unwrap();
+            }
+        }
+        if let Some(text) = text {
+            let stored = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file(MIN_SERVER_ENTRY, stored).unwrap();
+            std::io::Write::write_all(&mut zip, text).unwrap();
+        }
+        let unsigned = zip.finish().unwrap().into_inner();
+        with_signing_pairs(&unsigned, &signing_pairs(apk))
+    }
+
+    /// Design 140 §4.1: [MIN_SERVER_ENTRY] read from an APK the test writes, the signer kept;
+    /// the contract's rows (`contracts/music/min_server.json`) through [parse_min_server].
+    #[test]
+    fn the_min_server_entry_is_read() {
+        let base = std::fs::read("testdata/apk/launcher-key4.apk").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let read = |text: Option<&[u8]>| {
+            let path = dir.path().join("min.apk");
+            std::fs::write(&path, with_min_server(&base, text)).unwrap();
+            read_identity(&path).unwrap()
+        };
+        let plain = read_identity(Path::new("testdata/apk/launcher-key4.apk")).unwrap();
+        assert_eq!(plain.min_server, MinServer::Absent);
+        let with = read(Some(b"0.95.0\n"));
+        assert_eq!(with.min_server, MinServer::Version((0, 95, 0)));
+        assert_eq!(with.signer_sha256, plain.signer_sha256);
+        assert_eq!(with.package, plain.package);
+        assert_eq!(read(None).min_server, MinServer::Absent);
+        assert_eq!(
+            read(Some(b"0.95.0")).min_server,
+            MinServer::Version((0, 95, 0))
+        );
+        for bad in [
+            &b"00.1.0"[..],
+            b"0.95",
+            b"",
+            &[b'1'; 33][..],
+            b"0.95.0\n                         x",
+        ] {
+            assert_eq!(read(Some(bad)).min_server, MinServer::Unreadable, "{bad:?}");
+        }
+        // 33 bytes is one too many even when the first 32 would read; 32 is read whole.
+        let mut long = b"0.95.0\n".to_vec();
+        long.resize(33, b' ');
+        assert_eq!(parse_min_server(&long), MinServer::Unreadable);
+
+        let contract: serde_json::Value =
+            serde_json::from_str(crate::contracts::contract!("music/min_server.json")).unwrap();
+        assert_eq!(contract["entry"], MIN_SERVER_ENTRY);
+        assert_eq!(contract["max_bytes"], MIN_SERVER_MAX_BYTES);
+        let rows = contract["files"].as_array().unwrap();
+        assert!(rows.len() >= 10);
+        for row in rows {
+            let text = row["text"].as_str().unwrap();
+            let want = match row["version"].as_array() {
+                Some(v) => MinServer::Version((
+                    v[0].as_u64().unwrap(),
+                    v[1].as_u64().unwrap(),
+                    v[2].as_u64().unwrap(),
+                )),
+                None => MinServer::Unreadable,
+            };
+            assert_eq!(parse_min_server(text.as_bytes()), want, "{text:?}");
+        }
     }
 
     /// Where an APK's signing block starts, where its central directory starts, and where the

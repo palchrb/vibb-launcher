@@ -58,6 +58,7 @@ mod locations;
 mod lock_glance;
 mod lock_now;
 mod logins;
+mod min_server;
 mod mmsc_hosts;
 mod mobile_network;
 pub(crate) mod music;
@@ -246,6 +247,7 @@ impl TestApp {
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
             config: std::sync::Arc::new(config),
+            server_version: crate::server_version(),
             data_dir: std::sync::Arc::new(dir.path().join("data")),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             photo_original_dir: std::sync::Arc::new(dir.path().join("contact_photo_originals")),

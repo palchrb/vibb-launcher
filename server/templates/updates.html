@@ -47,6 +47,10 @@
             {% else if let Some(version) = newer_version %}
             <div class="row" data-row="latest"><span class="row-label tone-green">{{ self.tp("settings.updates.version_out", [("version", version.as_str())]) }}</span></div>
             {% endif %}
+            {#- Design 140 §4.3: a release of ours waits for this server to be updated - the Version row says how. -#}
+            {% for line in held_for_server %}
+            <div class="row" data-row="held-for-server"><span class="row-label tone-orange">{{ line }}</span></div>
+            {% endfor %}
             {% if server_clock_off %}
             <details class="info cell" data-row="server-clock">
                 <summary class="row">

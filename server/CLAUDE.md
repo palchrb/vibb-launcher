@@ -89,7 +89,7 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 Every migration follows the one before it: sqlx applies them in number order, and `migrations_from_73_in_order` checks
 every file from 0073 on. The pairs a server must get in that order (the hazard above): 0070 before 0071 before 0072,
 0073 before 0074, 0078 before 0079, 0122 before 0123, 0181 before 0182. What a file adds is its name and its header comment; the tables in
-`docs/notes/server/data-model.md` name the migration of the columns they list. The next free number is 0187 (the
+`docs/notes/server/data-model.md` name the migration of the columns they list. The next free number is 0188 (the
 recent ones: data-model.md, "Recent migrations").
 
 ## Where the rest is
@@ -107,7 +107,7 @@ comment that cites a heading of "server/CLAUDE.md" finds it in one of these.
 - `docs/notes/server/hardening-and-pins.md` - Hardening; The Child PIN; Parent PIN; Windows that lock again, unseen boots; The lock's glance page; Android's lock screen (design 59; phase D, design 132: the only lock)
 - `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time Rules (a switch per rule, 0115); Bedtime (design 66); A rule turned on now (design 93, 0142)
 - `docs/notes/server/launcher-ui.md` - Launcher UI, contact photos, airplane mode; Wallpapers; App names and icons; The launcher is "Vibb One"; Lock screen weather (design 75: Lock Screen & PINs › Weather, the routes, `weather.rs`, `weather_cache.rs`, MET's rules)
-- `docs/notes/server/play-and-updates.md` - SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37); F-Droid source; Update holds and the per-app wait (design 90: `catalog_holds.rs`, the permissions in `apk.rs`, the held release, Approve/Keep/Update Now)
+- `docs/notes/server/play-and-updates.md` - SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37); F-Droid source; Update holds and the per-app wait (design 90: `catalog_holds.rs`, the permissions in `apk.rs`, the held release, Approve/Keep/Update Now); A release that needs a newer server (design 140: `assets/vibb/min_server`, the `server` hold, its release at start)
 - `docs/notes/server/dns.md` - How phones get their filter; A custom DNS server for the Web Filter
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
 - `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push; Zone events (design 64); Requests for more time (design r13); Push wording (2026-10-25); App update notices (2026-10-25); Adding the app to the Home Screen again; The first opening offers notifications (2026-11-01); Push never lost silently (2026-11-04: the sync route and re-subscribe on open, the kept browser, every deletion traced, gone rows warned)

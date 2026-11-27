@@ -2651,12 +2651,13 @@ pub(crate) async fn render_apps(
         }
         let page = (row.checked && !row.is_launcher && display::valid_package_name(&package))
             .then(|| crate::handlers::app_page::page_url(id, &package, "", page_from, ""));
+        // Design 140 §4.3: a release of ours held for the server shows here too - the launcher's row included.
         let waits = row
             .tracked_app_id
-            .filter(|_| row.checked && !row.is_launcher)
             .and_then(|tid| held.get(&tid))
-            .map(|version| {
-                crate::i18n::t_params(lang, "apps.update.held_title", &[("version", version)])
+            .filter(|(_, server)| row.checked && (!row.is_launcher || server.is_some()))
+            .map(|(version, server)| {
+                crate::handlers::tracked_apps::held_line(lang, version, server.as_deref())
             });
         let logo = if row.is_launcher {
             Some(crate::app_logos::VIBB_MARK.to_string())

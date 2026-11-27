@@ -439,6 +439,7 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
         permissions: None,
         split_target: None,
         shared_user_id: false,
+        min_server: crate::apk::MinServer::Absent,
     };
     let refused = crate::handlers::tracked_apps::check_pins(
         &pinned,

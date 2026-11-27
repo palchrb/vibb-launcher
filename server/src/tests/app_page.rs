@@ -621,3 +621,50 @@ async fn a_held_update_waits_on_the_page() {
         Some("update"),
     );
 }
+
+/// Design 140 §4.3: an update held for the server - the orange line on the list and the page, its (i) on the page, no
+/// Approve or Keep.
+#[tokio::test]
+async fn an_update_held_for_the_server_has_no_answer() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, element) = phone(&app).await;
+    sqlx::query(
+        "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, sha256, reason, \
+         held_at, min_server) VALUES (?, 'v7.25.0', 4, '/nowhere/v7.apk', 'cc', 'server', '2026-11-27 10:00:00', \
+         '9.0.0')",
+    )
+    .bind(element)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let list = app
+        .get_page(&format!("/devices/{id}/apps"), &cookie)
+        .await
+        .text();
+    let row = &list[list.find(&format!("id=\"app-{ELEMENT}\"")).unwrap()..];
+    assert!(
+        row[..row.find("</a>").unwrap()].contains(
+            "<span class=\"row-sub tone-orange\" data-update-held>7.25.0 waits for server 9.0.0</span>"
+        ),
+        "{row}"
+    );
+    let html = app.get_page(&page_of(id, ELEMENT), &cookie).await.text();
+    let head = section(&html, "app-head");
+    assert!(head.contains("data-update=\"held-server\""), "{head}");
+    assert!(
+        head.contains("<span class=\"tone-orange\">7.25.0 waits for server 9.0.0</span>"),
+        "{head}"
+    );
+    assert!(
+        head.contains("The phones stay on 7.24.1 until this server runs 9.0.0 or newer"),
+        "{head}"
+    );
+    assert!(!head.contains("/held/approve"), "{head}");
+    assert!(!head.contains("/held/decline"), "{head}");
+    let nb = app
+        .get_page(&format!("{}?lang=nb", page_of(id, ELEMENT)), &cookie)
+        .await
+        .text();
+    assert!(nb.contains("7.25.0 venter på server 9.0.0"), "{nb}");
+}

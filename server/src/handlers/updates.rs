@@ -35,6 +35,9 @@ struct UpdatesTemplate {
     other_repo: Option<String>,
     /// This server's clock is off against GitHub's (`clock_skew::server_clock_off`): an orange line.
     server_clock_off: bool,
+    /// Design 140 §4.3: a release of ours held until this server is updated - an orange line each,
+    /// worded ("Vibb One 0.44.0 waits for server 0.96.0").
+    held_for_server: Vec<String>,
 }
 crate::i18n::words!(UpdatesTemplate);
 
@@ -44,6 +47,7 @@ pub(crate) fn page(
     image_script_notice: bool,
     app: system_update::AppUpdateData,
     repo: &str,
+    held_for_server: Vec<String>,
     lang: Lang,
 ) -> Html<String> {
     let newer_version = app
@@ -62,6 +66,7 @@ pub(crate) fn page(
             other_repo: (repo != crate::config::DEFAULT_SERVER_RELEASE_REPO)
                 .then(|| repo.to_string()),
             server_clock_off: crate::clock_skew::server_clock_off(),
+            held_for_server,
         }
         .render()
         .unwrap(),
@@ -82,7 +87,15 @@ pub async fn show_updates_page(
             .fetch_one(&state.db)
             .await
             .map_or(true, |count| count == 0);
-    page(docker, notice, app, &state.config.server_release_repo, lang)
+    let held = crate::handlers::tracked_apps::server_hold_lines(&state, lang).await;
+    page(
+        docker,
+        notice,
+        app,
+        &state.config.server_release_repo,
+        held,
+        lang,
+    )
 }
 
 /// The key of Software Updates' line that update-image.sh must be replaced once.

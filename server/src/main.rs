@@ -140,6 +140,10 @@ pub struct AppState {
     /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
     /// `config::ForkConfig`.
     pub config: std::sync::Arc<config::ForkConfig>,
+    /// This server's own version ([APP_VERSION] by Software Updates' parser,
+    /// [server_version]): the releases of ours that name a newer one are held (design 140). A
+    /// field so a test can run another.
+    pub server_version: (u64, u64, u64),
     /// `data/` (a temp dir in tests): the backups, their schedule and a restore's marker
     /// (`handlers::backups`), so a test can drive them without touching the working directory.
     pub data_dir: std::sync::Arc<std::path::PathBuf>,
@@ -256,6 +260,12 @@ pub struct AppState {
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+
+/// [APP_VERSION] as Software Updates reads a version (design 140 §4.1); `server_version_is_x_y_z`
+/// pins that it reads.
+pub fn server_version() -> (u64, u64, u64) {
+    handlers::system_update::parse_version(APP_VERSION).unwrap_or_default()
+}
 
 /// The log filter: `rust_log` (RUST_LOG) or `info`, with reqwest never logging below `info`
 /// (design 26b QA L10, code QA L2): the Storytel login's URL carries the e-mail and the encrypted
@@ -552,6 +562,7 @@ async fn main() {
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
+        server_version: server_version(),
         data_dir: std::sync::Arc::new(std::path::PathBuf::from("data")),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         photo_original_dir: std::sync::Arc::new(std::path::PathBuf::from(
@@ -676,6 +687,8 @@ async fn main() {
     let catalog_state = state.clone();
     tokio::task::spawn(async move {
         handlers::tracked_apps::backfill_release_hashes(catalog_state.clone()).await;
+        // Design 140: a release of ours held for an older server goes out once this one is new enough.
+        handlers::tracked_apps::release_server_holds(&catalog_state).await;
         handlers::tracked_apps::run_scheduled_tracked_app_sync(catalog_state).await;
     });
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));

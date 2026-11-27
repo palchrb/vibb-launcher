@@ -54,8 +54,10 @@ jobs:
           # 129's scripts: the GrapheneOS boot keys (scripts/grapheneos-boot-keys.py and its sample; its output
           # src/attestation/grapheneos_boot_keys.json is compiled in), the phone key's contract vectors
           # (scripts/device-key-vectors.py, which wrote contracts/core/device_key.json) and the emulator profile's
-          # vectors (scripts/emulator-attestation-vectors.py, design 129b §7: server/testdata/attestation/emulator/).
-          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|launcher/app/build\.gradle\.kts$|launcher/app/src/main/java/com/kidslauncher/mdm/calendar/CalendarStore\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/)' <<<"$files"; then
+          # vectors (scripts/emulator-attestation-vectors.py, design 129b §7: server/testdata/attestation/emulator/);
+          # and the min server script (scripts/min-server.sh, design 140: server-release.yml's tag guard runs it,
+          # tests::deploy_scripts reads it).
+          if grep -qE '^(server/|contracts/|\.github/workflows/server-ci\.yml$|launcher/app/src/main/java/com/kidslauncher/mdm/ui/home/HomeModel\.kt$|launcher/app/build\.gradle\.kts$|launcher/app/src/main/java/com/kidslauncher/mdm/calendar/CalendarStore\.kt$|scripts/mmsc-hosts(\.py|-sample\.xml)$|scripts/wifi-lookup-fixtures\.py$|scripts/grapheneos-boot-keys(\.py|-sample/.*)$|scripts/(device-key|emulator-attestation)-vectors\.py$|scripts/emulator-attestation-captures/|scripts/min-server\.sh$)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -74,6 +76,10 @@ jobs:
       # Cheap and always run: scripts/mmsc-hosts.py (design 83 §3) made server/testdata/mmsc_hosts.txt; a hand edit
       # of the list, or a converter that no longer gives the sample's lines, fails here. No network.
       run: python3 -I scripts/mmsc-hosts.py --selftest
+    - name: The min server script's self-test
+      # Cheap and always run (design 140 §2.1): server-release.yml's first step runs its --check-server-tag guard;
+      # bash and git in a throwaway repo, no network.
+      run: scripts/min-server.sh --selftest
     - name: The Apple Wi-Fi lookup's fixtures self-test
       # Cheap and always run: scripts/wifi-lookup-fixtures.py (design 125 step 2) wrote
       # server/testdata/wifi_lookup/server.json (the golden request, fake Apple answers, health rows); a hand edit of

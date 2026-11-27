@@ -508,6 +508,7 @@ fn the_updates_page_says_how_to_update() {
             false,
             app_data(Some(latest), newer),
             "someone/vibb-launcher",
+            Vec::new(),
             crate::i18n::Lang::En,
         )
         .0
@@ -553,6 +554,7 @@ fn the_updates_page_says_how_to_update() {
         true,
         app_data(Some("v0.24.0"), true),
         crate::config::DEFAULT_SERVER_RELEASE_REPO,
+        Vec::new(),
         crate::i18n::Lang::En,
     )
     .0;

@@ -6,7 +6,8 @@ name: Launcher
 #   wrapper and verification metadata, music.yml and music's manifest (BuildChainTest and MusicPlanTest read
 #   them; security review L9), scripts/material-symbols.sh (TimeLockModelTest reads it), the fake portal
 #   (scripts/fake-portal.py) or the weather symbols' converter
-#   (scripts/yr-symbols.py and its vendored 11.svg; both --selftests run in the always-run changes job): build
+#   (scripts/yr-symbols.py and its vendored 11.svg; both --selftests run in the always-run changes job) or the
+#   min server script (scripts/min-server.sh, design 140; its --selftest runs there too): build
 #   and test (debug, unsigned release, lint, unit tests) and upload the debug APK as a workflow artifact.
 #   Nothing is published, no secrets.
 # - A tag launcher-vX.Y.Z (release) or launcher-vX.Y.Z-rc.N (release candidate) on a commit that
@@ -72,7 +73,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|contracts/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/AndroidManifest\.xml$|scripts/yr-symbols(\.py|-11\.svg)$|scripts/fake-portal\.py$|scripts/material-symbols\.sh$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|contracts/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/AndroidManifest\.xml$|scripts/yr-symbols(\.py|-11\.svg)$|scripts/fake-portal\.py$|scripts/material-symbols\.sh$|scripts/min-server\.sh$)'; then
           changed=true
         else
           changed=false
@@ -90,6 +91,10 @@ jobs:
       # Cheap and always run: scripts/fake-portal.py (design 102 §9 step 2) serves the emulator checks E1-E13 of the
       # Wi-Fi sign-in window; its modes answer as the design says. Python's standard library, loopback only.
       run: python3 -I scripts/fake-portal.py --selftest
+    - name: The min server script's self-test
+      # Cheap and always run (design 140 §3): scripts/min-server.sh picks the oldest server a tag build needs, in a
+      # throwaway git repo; bash and git, no network.
+      run: scripts/min-server.sh --selftest
 
   launcher-build:
     needs: launcher-changes
@@ -154,6 +159,8 @@ jobs:
     outputs:
       version-name: ${{ steps.version.outputs.name }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      min-server: ${{ steps.min-server.outputs.min-server }}
+      min-server-case: ${{ steps.min-server.outputs.min-server-case }}
     steps:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
@@ -194,6 +201,22 @@ jobs:
         version=$(../scripts/release-version.sh "$GITHUB_REF_NAME")
         echo "$version" >> "$GITHUB_OUTPUT"
         echo "$version"
+    - name: Which server this build needs
+      id: min-server
+      # Design 140 §2: scripts/min-server.sh, from server/Cargo.toml's version and the server-v* tags (fetch-depth 0
+      # brings them; a shallow clone or no tags fail). Written into the APK as assets/vibb/min_server: a server older
+      # than it holds this release back; the release body names it.
+      run: |
+        set -euo pipefail
+        ../scripts/min-server.sh --selftest
+        min=$(../scripts/min-server.sh launcher 2>"$RUNNER_TEMP/min-server-case.txt") \
+          || { cat "$RUNNER_TEMP/min-server-case.txt" >&2; exit 1; }
+        # Only the script's own "case N: why" line (a git warning on stderr stays out of the notice).
+        why=$(grep -E '^case [0-9]+: ' "$RUNNER_TEMP/min-server-case.txt" | tail -n 1)
+        echo "min-server=$min" >> "$GITHUB_OUTPUT"
+        echo "min-server-case=${why%%:*}" >> "$GITHUB_OUTPUT"
+        echo "::notice::min server $min: ${why#*: }"
+        echo "Needs Vibb server $min or newer (${why})" >> "$GITHUB_STEP_SUMMARY"
     - name: set up JDK 17
       uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
@@ -211,7 +234,8 @@ jobs:
       run: |
         chmod +x gradlew
         ./gradlew assembleRelease testReleaseUnitTest -PrequireTsnet=true \
-          -PversionName="${{ steps.version.outputs.name }}" -PversionCode="${{ steps.version.outputs.code }}"
+          -PversionName="${{ steps.version.outputs.name }}" -PversionCode="${{ steps.version.outputs.code }}" \
+          -PminServer="${{ steps.min-server.outputs.min-server }}"
     - name: Upload unsigned APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
@@ -333,6 +357,8 @@ jobs:
         # A release candidate must never become releases/latest - the phones' self-update and
         # the provisioning QR both follow that URL.
         makeLatest: ${{ needs.launcher-release-build.outputs.prerelease == 'true' && 'false' || 'true' }}
+        # Design 140 §3: GitHub puts the body before the generated notes.
+        body: "Needs Vibb server ${{ needs.launcher-release-build.outputs.min-server }} or newer${{ needs.launcher-release-build.outputs.min-server-case == 'case 2' && ' (not yet tagged)' || '' }}."
         generateReleaseNotes: true
         generateReleaseNotesPreviousTag: ${{ steps.prev.outputs.tag }}
         artifacts: "kids-launcher-mdm.apk,kids-launcher-mdm.apk.sha256"
