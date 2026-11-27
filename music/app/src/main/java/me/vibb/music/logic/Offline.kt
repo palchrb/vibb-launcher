@@ -1,6 +1,8 @@
 package me.vibb.music.logic
 
+import me.vibb.music.data.DownloadRow
 import me.vibb.music.model.Entry
+import me.vibb.music.model.Source
 
 /*
  * What stays on the phone (design 21 §4.5, 21b §6), ported from palchrb/vibb `pi/vibb/content.py`
@@ -238,3 +240,20 @@ fun extrasFloor(wantsStorytel: Boolean, loginOk: Boolean): Long =
  */
 fun orphanResources(resourceKeys: Set<String>, rowCacheKeys: Set<String>, heldCacheKeys: Set<String>): Set<String> =
     resourceKeys.filterTo(linkedSetOf()) { itemOfResource(it, rowCacheKeys) == null && itemOfResource(it, heldCacheKeys) == null }
+
+/**
+ * The cache keys of the items the player holds now ([held]): their rows' ([rows]), and the library's for those without
+ * one ([entryOf]) - for a Storytel entry its sealed key as well (design 117 §4.1, QA L4), so the sweep and every
+ * removal spare a held book whose row the lost path dropped.
+ */
+fun heldCacheKeys(held: Set<ItemRef>, rows: List<DownloadRow>, entryOf: (Long) -> Entry?): Set<String> {
+    val keys = mutableSetOf<String>()
+    for (ref in held) {
+        rows.firstOrNull { it.entryId == ref.entryId && it.itemKey == ref.itemKey }?.let { keys += it.cacheKey }
+        entryOf(ref.entryId)?.let { e ->
+            keys += itemCacheKey(e.key, ref.itemKey)
+            if (e.source == Source.STORYTEL) keys += sealedCacheKey(e.key, ref.itemKey)
+        }
+    }
+    return keys
+}

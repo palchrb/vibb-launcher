@@ -13,12 +13,15 @@ import me.vibb.music.logic.RETRY_FIRST_MS
 import me.vibb.music.logic.RETRY_PERMANENT_MS
 import me.vibb.music.logic.STORYTEL_FREE_FLOOR
 import me.vibb.music.logic.Waiting
+import me.vibb.music.logic.SealRecord
 import me.vibb.music.logic.reportWaiting
+import me.vibb.music.media.SealWorld
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.storytel.Mint
 import me.vibb.music.storytel.StorytelSession
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -84,7 +87,17 @@ class StorytelDownloadTest {
         override fun nowMs() = now
         override fun freeBytes() = free
         override fun cachedBytes(cacheKey: String, hls: Boolean) = cached[cacheKey] ?: 0L
+        /** Design 117 §5: what the seal's preparation answers; [events] the seals and mints in order. */
+        var seal = SealReady.READY
+        val events = mutableListOf<String>()
+
+        override suspend fun prepareSeal(cacheKey: String): SealReady {
+            events += "seal $cacheKey"
+            return seal
+        }
+
         override suspend fun mint(cid: String): Mint {
+            events += "mint $cid"
             minted += cid
             return mints[cid]?.removeFirstOrNull()
                 ?: Mint.Url("http://10.0.2.2:8730/cdn/$cid.wav?consumableId=$cid&token=FAKE-SIG-${++signatures}")
@@ -142,7 +155,7 @@ class StorytelDownloadTest {
             val row = io.rows.getValue(7L to k)
             assertTrue(row.done)
             assertEquals("storytel:book:$k", row.url)
-            assertEquals("e7:$k", row.cacheKey)
+            assertEquals("design 117: sealed", "sealed:e7:$k", row.cacheKey)
         }
         assertTrue("no minted URL in a row", io.rows.values.none { it.url.contains("token=") || it.failedUrl?.contains("token=") == true })
         assertTrue(io.errors.isEmpty())
@@ -258,7 +271,7 @@ class StorytelDownloadTest {
     fun `http_416 drops the partial and fetches once from 0 with a freshly minted URL (L7)`() {
         val io = Io(fetches = mutableMapOf("111" to ArrayDeque(listOf("http_416"))))
         io.run(wanted(keys = listOf("111")))
-        assertEquals(listOf("e7:111"), io.removed)
+        assertEquals(listOf("sealed:e7:111"), io.removed)
         assertEquals("two mints", listOf("111", "111"), io.minted)
         assertEquals(listOf("FAKE-SIG-1", "FAKE-SIG-2"), io.fetched.map { it.second.substringAfter("token=") })
         assertTrue(io.rows.getValue(7L to "111").done)
@@ -291,12 +304,12 @@ class StorytelDownloadTest {
         // each attempt further on; it must not back off towards 6 h while it progresses.
         val e = series()
         val io = Io(fetches = mutableMapOf("111" to ArrayDeque(listOf("network", "network", "network", "network"))))
-        io.cached["e7:111"] = 40_000_000L
+        io.cached["sealed:e7:111"] = 40_000_000L
         io.run(wanted(keys = listOf("111")))
         var row = io.rows.getValue(7L to "111")
         assertEquals(1, row.attempts)
         assertEquals("the partial's size at the failure", 40_000_000L, row.bytes)
-        io.cached["e7:111"] = 90_000_000L
+        io.cached["sealed:e7:111"] = 90_000_000L
         io.run(wanted(keys = listOf("111")))
         row = io.rows.getValue(7L to "111")
         assertEquals("it grew: the first failure again", 1, row.attempts)
@@ -323,20 +336,20 @@ class StorytelDownloadTest {
         // qa-26b-merge-code Low 2: any growth reset the count, so a trickle kept a book (and its mint) at 2 min.
         val e = series()
         val io = Io(fetches = mutableMapOf("111" to ArrayDeque(List(6) { "network" })))
-        io.cached["e7:111"] = 40_000_000L
+        io.cached["sealed:e7:111"] = 40_000_000L
         io.run(wanted(keys = listOf("111")))
         for (step in 1..3) {
-            io.cached["e7:111"] = 40_000_000L + step * 10_000L
+            io.cached["sealed:e7:111"] = 40_000_000L + step * 10_000L
             io.run(wanted(keys = listOf("111")))
         }
         var row = io.rows.getValue(7L to "111")
         assertEquals("three 10 KB drips: counted up", 4, row.attempts)
         assertEquals(now + 8 * RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(e)), listed(e)), io.rows.values.toList(), now).nextRetryAt)
         // a real resume (past 1 MiB, and past 1 % of the 40 MB partial) starts the count again
-        io.cached["e7:111"] = 40_030_000L + 400_001L
+        io.cached["sealed:e7:111"] = 40_030_000L + 400_001L
         io.run(wanted(keys = listOf("111")))
         assertEquals("400 KB on 40 MB is under 1 MiB", 5, io.rows.getValue(7L to "111").attempts)
-        io.cached["e7:111"] = 40_430_001L + (1L shl 20)
+        io.cached["sealed:e7:111"] = 40_430_001L + (1L shl 20)
         io.run(wanted(keys = listOf("111")))
         row = io.rows.getValue(7L to "111")
         assertEquals(1, row.attempts)
@@ -347,6 +360,70 @@ class StorytelDownloadTest {
         assertFalse("2 MB on a 300 MB partial is under 1 %", grewEnough(300_000_000L, 302_000_000L))
         assertTrue(grewEnough(300_000_000L, 303_000_000L))
         assertFalse("a dropped partial (smaller) never counts as growth", grewEnough(90_000_000L, 0))
+    }
+
+    // Design 117 §5: sealed books
+
+    @Test
+    fun `117 the seal is prepared before the mint - a Keystore that can't seal records network and mints nothing`() {
+        val io = Io()
+        io.run(wanted(keys = listOf("111")))
+        assertEquals(listOf("seal sealed:e7:111", "mint 111"), io.events)
+        val down = Io().apply { seal = SealReady.TRANSIENT }
+        down.run(wanted())
+        assertTrue("nothing minted at Storytel", down.minted.isEmpty())
+        assertEquals("every book fails the same cheap way, the run goes on", books.associate { (7L to it) to "network" }, down.errors)
+        val row = down.rows.getValue(7L to "111")
+        assertFalse(row.done)
+        assertEquals("sealed:e7:111", row.cacheKey)
+        assertEquals("mayRetry's usual wait", now + RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(series())), listed()), down.rows.values.toList(), now).nextRetryAt)
+    }
+
+    @Test
+    fun `117 a plain partial from before is dropped and the book starts over sealed`() {
+        val io = Io()
+        io.rows[7L to "111"] = DownloadRow(7, "111", "e7:111", "storytel:book:111", false, false, 40_000_000, null, "storytel:book:111", "network", now, 2)
+        io.run(wanted(keys = listOf("111")))
+        assertEquals(listOf("e7:111"), io.removed)
+        val row = io.rows.getValue(7L to "111")
+        assertTrue(row.done)
+        assertEquals("sealed:e7:111", row.cacheKey)
+    }
+
+    @Test
+    fun `117 a resume keeps the record, a 416 makes a new one with a new nonce`() {
+        val world = SealWorld()
+        val key = "sealed:e7:111"
+        val inner = Io(fetches = mutableMapOf("111" to ArrayDeque(listOf("network", "http_416"))))
+        val records = mutableListOf<ByteArray>()
+        val sealing = object : DownloadIo by inner {
+            override suspend fun prepareSeal(cacheKey: String): SealReady {
+                world.keys.prepare(cacheKey)
+                return SealReady.READY
+            }
+
+            override suspend fun removeCopy(cacheKey: String, hls: Boolean) {
+                inner.removeCopy(cacheKey, hls)
+                world.cache.removeCopy(cacheKey)
+            }
+
+            override suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?> {
+                world.keys.prepare(cacheKey(w)) // as Downloads.fetch does
+                records += world.cache.records.getValue(key).copyOf()
+                world.cache.spans[key] = (world.cache.spans[key] ?: 0) + 1_000_000 // a part written before any failure
+                return inner.fetch(w, url)
+            }
+
+            fun cacheKey(w: WantedDownload) = cacheKeyOf(w)
+        }
+        runBlocking { DownloadRun(sealing).fetchOne(wanted(keys = listOf("111")).single()) }
+        runBlocking { DownloadRun(sealing).fetchOne(wanted(keys = listOf("111")).single()) }
+        assertEquals("the first attempt, the resume, the refetch after the 416", 3, records.size)
+        assertArrayEquals("a resume keeps its record", records[0], records[1])
+        assertFalse("the 416 starts over under a new record", records[1].contentEquals(records[2]))
+        assertFalse(SealRecord.decode(records[1])!!.nonce.contentEquals(SealRecord.decode(records[2])!!.nonce))
+        assertEquals(listOf(key), world.cache.removed)
+        assertTrue(inner.rows.getValue(7L to "111").done)
     }
 
     @Test

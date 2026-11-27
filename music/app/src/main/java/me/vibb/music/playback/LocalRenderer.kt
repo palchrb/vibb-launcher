@@ -135,7 +135,7 @@ internal class LocalRenderer(
         override fun onPlayerError(error: PlaybackException) {
             // the real cause: Media3's own line says "UnknownHostException (no network)" for any name failure
             Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))
-            emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error)))
+            emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error), MediaCache.sealLost(error)))
         }
 
         override fun onEvents(player: Player, events: Player.Events) = emit(RendererEvent.StateChanged)

@@ -36,7 +36,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   copy, the extras' eviction, the orphan sweep, a new queue's stale bytes).
 - `media/` - the one `SimpleCache` (no evictor; item keys, an HLS key factory), the guarded OkHttp clients, and design
   30's wrappers: `ThroughSink` (the player's cache sink), `StreamGate` (the player's upstream asks the streaming
-  switch), `LengthGuard` (a changed source at a resume is a synthetic 416).
+  switch), `LengthGuard` (a changed source at a resume is a synthetic 416); design 117's sealed books: `BookKeys` (the
+  Keystore key, the per-book data keys, the check) and `SealStreams` (the sealing sink and source, the plain sinks'
+  guard), their pure rules in `logic/Seal.kt`.
 - `playback/` - `PlaybackService` (MediaSessionService; FGS only from a tap or a media command - a media button
   puts it in the foreground at once and it lets go by `logic/ForegroundHold.kt`: Media3's notification once it plays,
   else silent and stopped, compat-fix-1; every resumption refusal is a `ResumptionRefused`; its notification
@@ -117,7 +119,11 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `SourceChangedException`, never retried by the player's `SourceChangedPolicy`; the job refetches from 0, the player
   drops the row and loads the queue again with the item uncached and without a cache key - never `replaceItem`,
   which Media3 turns into an in-place update of the same cache-backed source). The HLS rendition is pinned to the download's
-  (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos, Storytel and Spotify never write through.
+  (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos, Storytel and Spotify never write through. **A Storytel book
+  is sealed** (design 117, `docs/notes/music/storytel.md` "Sealed books"): its own `sealed:` cache key, written only
+  through `SealDataSink` and read only through `SealDataSource` (the `storytel*` factories); every plain factory passes
+  an explicit sink (`ThroughSink`, `NoWriteSink`, `PlainCacheSink`) that refuses a sealed key or a Storytel source id -
+  never Media3's default plain `CacheDataSink`.
 - Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
   hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
   `clear_state` at a queue's natural end (partial positions only). Above depth 0 the bookmarked item is never

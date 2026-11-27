@@ -1,0 +1,50 @@
+{
+  "note": "Design 117 \u00a713: throwaway values derived from fake phrases, never a real key. Made once with Python's cryptography (OpenSSL), independent of the app's code. Plaintext byte p = (p * 7 + 3) mod 256; the IV of the block holding p is nonce || be64(p / 16).",
+  "data_key_phrase": "FAKE-SEAL-KEY-1",
+  "data_key_hex": "7ff203b1387c3ec8ae4bf0ac8bebf1b93b122ad2f60be1e81e27b9a0defdea88",
+  "kek_phrase": "FAKE-SEAL-KEK-1",
+  "kek_hex": "8b7bc07f59b29f9e0591a7763fd11a4c7a8db2c21646fe6760869fa1505b3474",
+  "nonce_ascii": "NONCE-01",
+  "wrap_iv_ascii": "FAKE-WRAP-IV",
+  "key_id_hex": "01020304",
+  "cache_key": "sealed:e7:111",
+  "record_hex": "5642534c0101010203044e4f4e43452d303146414b452d575241502d49561c0b0e805bbc5684d5df528cf1600e37b7f906c72148a6c1ba5de9863e2005111b88ce30aa4df375eee332680cf93efa",
+  "cases": [
+    {
+      "name": "start",
+      "offset": 0,
+      "length": 48,
+      "sealed_hex": "e22ad6ba2c864bb6266cf607028b40b8577c5336ce08699f5820e433f106bfaa06d3728a99b5c3623bfd2d0ee138d04f"
+    },
+    {
+      "name": "last_of_block",
+      "offset": 15,
+      "length": 34,
+      "sealed_hex": "b8577c5336ce08699f5820e433f106bfaa06d3728a99b5c3623bfd2d0ee138d04ff3"
+    },
+    {
+      "name": "block",
+      "offset": 16,
+      "length": 32,
+      "sealed_hex": "577c5336ce08699f5820e433f106bfaa06d3728a99b5c3623bfd2d0ee138d04f"
+    },
+    {
+      "name": "mid_block",
+      "offset": 17,
+      "length": 40,
+      "sealed_hex": "7c5336ce08699f5820e433f106bfaa06d3728a99b5c3623bfd2d0ee138d04ff3dc77bb54f3394927"
+    },
+    {
+      "name": "before_split",
+      "offset": 5242879,
+      "length": 33,
+      "sealed_hex": "7fd06e9ddaea0f04adf87e55ea8d38225a6829e421c6a376e70522f84f56387c03"
+    },
+    {
+      "name": "self_check",
+      "offset": 68719476715,
+      "length": 48,
+      "sealed_hex": "6d3b59df9db62de646333563fac4b9b56eb8c68c7737dfa7cb5c75103e402e82e2e81cb349d85f0df0edfd3fd8bae27a"
+    }
+  ]
+}
