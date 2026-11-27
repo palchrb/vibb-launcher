@@ -39,8 +39,26 @@ object ScreenTimeTracker {
 
     private val budgetRunsOut = Runnable { appContext?.let { TimeRulesRuntime.recheck(it) } }
 
+    /** Design 139 §4.1 "The timer": a group's time runs out - fold again; [afterFold] re-checks when one closed. */
+    private val groupRunsOut = Runnable { appContext?.let { AppGroupUsage.fold(it, live = true) } }
+
+    /** Design 139 §4.1: the one fold outside the gate, [SETTLE_MS] + 0.5 s after the screen goes off, so the span up to
+     * it is in the ledger while the screen is dark. */
+    private val screenOffFold = Runnable { appContext?.let { AppGroupUsage.fold(it, live = false) } }
+
+    /** The group gate at the last [update] (screen interactive, keyguard down). */
+    private var groupGateWas = false
+
+    /** The policy had a group at the last [update] (`null` before the first). */
+    private var groupsWere: Boolean? = null
+
+    /** The closed groups' apps at the last fold: a change re-checks (the plan, the cut). */
+    private var groupsClosedWas: Set<String>? = null
+
     fun init(app: Application) {
         appContext = app.applicationContext
+        AppGroupUsage.onFolded = { afterFold(it) }
+        UsageAccess.watch(app)
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 if (activity.javaClass.name in FREE_SCREENS) resumedFree += activity
@@ -76,6 +94,44 @@ object ScreenTimeTracker {
         setupHold = com.kidslauncher.mdm.server.RestrictionsPause.holdActive(),
     )
 
+    /** Design 139 §4.1 "When it runs": the screen interactive and the keyguard down - its own gate, before
+     * [appInUse]'s, since our free screens stop screen time, not the groups'. */
+    private fun groupGate(context: Context): Boolean =
+        context.getSystemService(PowerManager::class.java)?.isInteractive == true &&
+            context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false
+
+    private fun hasGroups(): Boolean =
+        KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.groups?.isNotEmpty() == true
+
+    /** Design 139: after each fold (main thread) - a group closed or opened re-checks the lock and the plan; otherwise
+     * the group timer is armed again under the gate, and the anchor's notice follows. */
+    private fun afterFold(context: Context) {
+        handler.removeCallbacks(groupRunsOut)
+        try {
+            val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.takeIf { it.groups.isNotEmpty() }
+            val states = policy?.let {
+                groupStates(it, TimeRulesRuntime.ledger(context, it), UsageAccess.granted(context), AppGroupUsage.readFailed,
+                    com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive())
+            }.orEmpty()
+            val closed = groupClosedApps(states)
+            val changed = groupsClosedWas != null && closed != groupsClosedWas
+            groupsClosedWas = closed
+            if (changed) {
+                TimeRulesRuntime.recheck(context)
+                return
+            }
+            if (!groupGate(context) || com.kidslauncher.mdm.server.RestrictionsPause.holdActive()) return
+            groupRunsOutDelayMs(states)?.let { handler.postDelayed(groupRunsOut, it) }
+            try {
+                com.kidslauncher.mdm.server.AnchorNotice.refreshGroups(context, states, AppGroupUsage.onScreen(context))
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Group notice refresh failed: ${e.javaClass.simpleName}")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "After the group fold: ${e.javaClass.simpleName}")
+        }
+    }
+
     /** Folds the running stretch into the ledger and decides whether to keep counting. */
     fun update(context: Context) {
         appContext = context.applicationContext
@@ -85,7 +141,24 @@ object ScreenTimeTracker {
             val now = SystemClock.elapsedRealtime()
             countingSinceElapsed?.let { TimeRulesRuntime.accrueScreenTime(context, it) }
             countingSinceElapsed = null
-            if (!appInUse(context)) return
+            // Design 139 §4.1: the groups' fold, under its own gate; at the screen off one last fold a moment later.
+            val groups = hasGroups()
+            val gate = groups && groupGate(context)
+            if (gate) {
+                AppGroupUsage.fold(context, live = true)
+            } else {
+                handler.removeCallbacks(groupRunsOut)
+                if (groupGateWas && groups) handler.postDelayed(screenOffFold, SETTLE_MS + 500L)
+                // The policy lost its last group (or a new process): the point goes, once.
+                if (!groups && groupsWere != false) AppGroupUsage.fold(context, live = false)
+            }
+            groupGateWas = gate
+            groupsWere = groups
+            if (!appInUse(context)) {
+                // The checkpoint keeps folding for the groups while screen time doesn't count (our free screens).
+                if (gate) handler.postDelayed(checkpoint, CHECKPOINT_MS)
+                return
+            }
             countingSinceElapsed = now
             val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)
             if (policy == null) {

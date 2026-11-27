@@ -100,6 +100,10 @@ data class EnforcementPlan(
     /** The packages outside the controllable set the plan may restrict ([ANDROID_AUTO], [otherHomes]): `apply()` visits
      * them too, so a restriction the plan drops (a pause, the parent's allow) is undone. */
     val extraPackages: Set<String> = emptySet(),
+    /** Design 139 §4.2 (QA L6): the apps suspended by a closed app group and nothing else - Home and the app list keep
+     * them, dimmed (§4.3). An app also suspended by anything else (a rule's lock, the allowlist, SMS) is hidden as
+     * before. */
+    val groupOnly: Set<String> = emptySet(),
 )
 
 /**
@@ -224,8 +228,22 @@ fun computeEnforcementPlan(
     allowAndroidAuto: Boolean = false,
     /** Design 131 D11: the zones or the Wi-Fi places watch the phone (the location policy's Regularly). */
     locationWatched: Boolean = false,
+    /** Design 139 §4.2: the apps of the closed app groups (the live VoIP call's own package already left out, D7).
+     * Suspended (never hidden), out of the kiosk's pinned list and out of [lockUsableApps] (D8: stricter wins). Never
+     * one of [EnforcementPlan.neverRestrict], an alarm app or ours. Empty under the override and the pause. */
+    groupClosedApps: Set<String> = emptySet(),
+    /** Design 139 §4.2: the policy has an app group - the date/time lock and `DISALLOW_CREATE_WINDOWS`, as a budget. */
+    groupsSet: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
+    // Design 139 D8: what a closed group may suspend - never what is spared from every restriction, an alarm app or ours.
+    val groupClosed = if (overrideActive) {
+        emptySet()
+    } else {
+        groupClosedApps.filterTo(mutableSetOf()) { it !in neverRestrict && it !in alarmApps && !com.kidslauncher.mdm.timerules.neverGrouped(it) }
+    }
+    // D8: a closed group's apps stay closed under a rule or bedtime that allows them, and under the used-up budget.
+    val usableNow = lockUsableApps - groupClosed
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
@@ -261,11 +279,13 @@ fun computeEnforcementPlan(
     // allowed is hidden above, lock or not); the allowed ones are pinned during the lock too (below).
     // Design 69 §4.4: the calendar sync apps, while allowed, keep syncing through a lock (not neverRestrict, which
     // would also spare them the hide of an app that isn't allowed).
-    if (locked) {
-        controllable.filterTo(suspend) {
-            it !in neverRestrict && it !in alarmApps && it !in lockUsableApps && !(it in CALENDAR_SYNC_APPS && it in allowed)
-        }
-    }
+    fun lockSuspends(pkg: String, usable: Set<String>) =
+        pkg !in neverRestrict && pkg !in alarmApps && pkg !in usable && !(pkg in CALENDAR_SYNC_APPS && pkg in allowed)
+    if (locked) controllable.filterTo(suspend) { lockSuspends(it, usableNow) }
+    // Design 139 §4.2: what suspends with nothing but a closed group (QA L6), for Home's dimmed tiles - the lock counted
+    // with the usable apps it would leave without the groups.
+    val withoutGroups = hide + if (locked) controllable.filter { lockSuspends(it, lockUsableApps) } else emptyList()
+    controllable.filterTo(suspend) { it in groupClosed }
     // The Play Store follows its own rule, whatever the allowlist or the lock's usable apps say.
     suspend.remove(PLAY_STORE)
     val playSuspended = playStoreSuspended(appsManaged, locked, playState) || (locked && !playState.updateWindow)
@@ -277,7 +297,7 @@ fun computeEnforcementPlan(
     val homes = otherHomes(homeCandidates, ownPackage, controllable.toSet(), neverRestrict + lockTaskHelpers) - setOfNotNull(auto)
     if (appsManaged && recentsPackage != null) suspend += homes
     // Design 105 §2.1: during a rule the clocks a parent didn't tick leave the list; the chrome pins them while LOCKED or dark.
-    val clocksOut = if (locked && ruleLocked) allowed.filter { it in alarmApps && it !in lockUsableApps }.toSet() else emptySet()
+    val clocksOut = if (locked && ruleLocked) allowed.filter { it in alarmApps && it !in usableNow }.toSet() else emptySet()
 
     val kiosk = if (appsManaged && kioskDesired) {
         // During the lock: our package and the lock's usable apps, plus an allowlisted system
@@ -285,11 +305,11 @@ fun computeEnforcementPlan(
         // the rule allows no calls, plus the allowed alarm apps (bug 2026-11-02): an unpinned clock's ringing
         // screen is refused by lock task, so the alarm rang with no way to Stop it.
         val pinned = if (locked) {
-            setOf(ownPackage) + allowed.filter { it in lockUsableApps } +
+            setOf(ownPackage) + allowed.filter { it in usableNow } +
                 allowed.filter { it == systemDialer && !callsBlockedByRule } + allowed.filter { it in alarmApps && it !in clocksOut }
         } else {
             allowed + ownPackage + setOfNotNull(roleApp)
-        }
+        } - groupClosed
         val withoutDialer = if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
         // The block bit has no emergency exemption: the resolved system helpers (emergency
         // dialer, Telecom, permission dialogs, pickers, emergency alerts) are pinned with it - also
@@ -322,17 +342,20 @@ fun computeEnforcementPlan(
         // Also while calls are managed: the callback window compares call-log times with the wall
         // clock (QA step 2 #4). Not lifted by an override then.
         // Design 77 D16: the held messages' 24 hours run on the wall clock too.
-        lockDateTime = appsManaged || callState.managed || smsMode != ChannelMode.UNMANAGED || timeRulesSet,
+        // Design 139 §4.2: the fold reads wall-clock usage events, so a group locks the clock too.
+        lockDateTime = appsManaged || callState.managed || smsMode != ChannelMode.UNMANAGED || timeRulesSet || groupsSet,
         restrictSms = restrictSms,
         suspendSmsApps = suspendSmsApps,
         denyCallPermissions = callState.managed,
-        restrictCreateWindows = budgetSet && !overrideActive,
+        // Design 139 §4.2: a closed app's overlay can't stay on screen (a visible cost on a phone with groups, §12).
+        restrictCreateWindows = (budgetSet || groupsSet) && !overrideActive,
         lockSavedNetworks = (allowlist != null || callState.managed || smsMode != ChannelMode.UNMANAGED || timeRulesSet || locationWatched) &&
             !overrideActive,
         restrictTethering = appsManaged,
         permittedAccessibility = allowed.sorted().takeIf { allowlist != null },
         permittedInputMethods = allowed.sorted().takeIf { appsManaged },
         extraPackages = (homes + setOfNotNull(auto)) - controllable.toSet(),
+        groupOnly = suspend.filterTo(mutableSetOf()) { it in groupClosed && it !in withoutGroups && it !in hide },
     )
 }
 

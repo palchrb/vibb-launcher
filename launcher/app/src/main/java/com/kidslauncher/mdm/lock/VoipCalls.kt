@@ -213,6 +213,12 @@ object VoipCalls {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Lock chrome refresh failed", e)
             }
+            // Design 139 D7: the call's own app was held back from its closed group - the call's end cuts it.
+            try {
+                com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(app)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Re-check after the call failed: ${e.javaClass.simpleName}")
+            }
         }
         if (oldPhase != phase) {
             ScreenTimeTracker.update(app)

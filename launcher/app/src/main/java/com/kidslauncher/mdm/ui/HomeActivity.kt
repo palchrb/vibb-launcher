@@ -965,6 +965,7 @@ class HomeActivity : UIObjectActivity() {
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
                 messagesLook = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook(),
+                dimmed = com.kidslauncher.mdm.timerules.AppGroupTiles.dimmedSet(this),
             ),
             data.infos,
             data.icons,

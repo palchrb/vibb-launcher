@@ -229,7 +229,9 @@ class TimeLeftNoticeTest {
         // Q-5: from the budget the tracker computed, never a snapshot of its own.
         assertTrue(update, update.contains("AnchorNotice.refresh(context, budget, policy, ledger.day, com.kidslauncher.mdm.server.TrustedClock.nowMs())"))
         assertFalse(update, update.contains("refreshNow") || update.contains("snapshot("))
-        assertFalse(update.substringBefore("if (!appInUse(context)) return").contains("AnchorNotice"))
+        // Design 139: the groups' fold before it notices nothing itself (its own refresh runs after the fold).
+        assertTrue(update.contains("if (!appInUse(context)) {"))
+        assertFalse(update.substringBefore("if (!appInUse(context)) {").contains("AnchorNotice"))
         val sync = source("server/MdmSyncWorker.kt")
         assertTrue(sync.indexOf("PowerEvents.upload(context, api)") < sync.indexOf("TimeRequests.upload(context, api)"))
     }

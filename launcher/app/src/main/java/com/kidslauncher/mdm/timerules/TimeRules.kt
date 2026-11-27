@@ -213,6 +213,12 @@ data class TimeLock(
     /** Kalender (our day view, its event pages and "Ny avtale") stays usable: every active rule allows it. Never
      * under the used-up budget alone. */
     val calendarUsable: Boolean = false,
+    /** Design 139 §4.2: the apps the closed app groups suspend now (the live VoIP call's own package held back, D7),
+     * whatever the lock: no lock reason of their own, out of [usableApps] (D8). */
+    val groupClosed: Set<String> = emptySet(),
+    /** Design 139 QA L6: [usableApps] before the closed groups were taken out (`null`: the same) - the plan's lock
+     * input, so an app the lock alone would leave usable counts as closed by its group alone (dimmed, not hidden). */
+    val usableBeforeGroups: Set<String>? = null,
 ) {
     val locked: Boolean get() = reason != LockReason.NONE
     val callsBlocked: Boolean get() = locked && !callsAllowed
@@ -283,7 +289,8 @@ fun nextBoundary(policy: TimePolicy?, now: Instant, zone: ZoneId, extraInstants:
                     candidates += span.end.atZone(zone).toInstant()
                 }
             }
-            if (hasBudget(policy)) candidates += date.atStartOfDay(zone).toInstant()
+            // Design 139 §4.2: the day's reset opens the app groups too.
+            if (hasBudget(policy) || groupsLimit(policy)) candidates += date.atStartOfDay(zone).toInstant()
         }
     }
     return candidates.filter { it.isAfter(now) }.minOrNull()
@@ -327,7 +334,9 @@ fun decodeBootCallBlocks(json: String?): BootCallBlocks? {
 /** Identifies what a lock enforces (reason, rules, usable apps, calls) - a change of any of them
  * means the suspension must be re-applied, even when the reason stays the same. */
 fun TimeLock.key(): String =
-    if (!locked) "NONE" else "$reason|${rules.map { it.id }}|${usableApps.sorted()}|$callsAllowed" + if (calendarUsable) "|calendar" else ""
+    (if (!locked) "NONE" else "$reason|${rules.map { it.id }}|${usableApps.sorted()}|$callsAllowed" + if (calendarUsable) "|calendar" else "") +
+        // Design 139: a group closing or opening re-applies the plan, whatever the lock.
+        if (groupClosed.isEmpty()) "" else "|groups${groupClosed.sorted()}"
 
 /** Whether Kalender may be used under [lock] (PLAN 2026-11-02): no time lock, or one whose every rule allows it. */
 fun calendarUsableUnder(lock: TimeLock): Boolean = !lock.locked || lock.calendarUsable

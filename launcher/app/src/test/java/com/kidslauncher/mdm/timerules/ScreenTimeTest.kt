@@ -248,4 +248,31 @@ class ScreenTimeTest {
         assertEquals(2, leftMinutes(remaining))
         assertEquals(1, leftMinutes(remaining - (checkpointDelayMs(remaining) - 200)))
     }
+
+    /** Design 139 §4.1: a new day clears the groups' counts but keeps the folded point (its carry runs on); a carried
+     * reset that is undone brings them back; the point persists with its boot count and offset. */
+    @Test
+    fun the_groups_counts_follow_the_day_and_the_point_runs_on() {
+        val zone = ZoneId.of("Europe/Oslo")
+        val point = FoldPoint(1_000L, 500L, 4, 500L, FoldCarry(listOf(OnPackage("org.example.game")), screenOn = true, keyguardHidden = true))
+        val day1 = java.time.LocalDate.of(2026, 11, 23)
+        val noon = day1.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        val ledger = ScreenTimeLedger(
+            day = day1.toString(), usedMs = 5, anchorWallMs = noon, anchorElapsedMs = 0, bootCount = 1,
+            groupUsedMs = mapOf(3L to 60_000L), groupExtraMinutes = mapOf(3L to 15), foldPoint = point,
+        )
+        val tomorrow = observe(ledger, Clocks(noon + 24 * 3_600_000L, 24 * 3_600_000L, 1, com.kidslauncher.mdm.server.ClockTrust.SERVER), zone).ledger
+        assertEquals(emptyMap<Long, Long>(), tomorrow.groupUsedMs)
+        assertEquals(emptyMap<Long, Int>(), tomorrow.groupExtraMinutes)
+        assertEquals(point, tomorrow.foldPoint)
+        // A reset on a carried time keeps the day; a checked time that says it is still that day brings it back.
+        val carried = observe(ledger, Clocks(noon + 24 * 3_600_000L, 1_000L, 2, com.kidslauncher.mdm.server.ClockTrust.CARRIED), zone).ledger
+        assertEquals(emptyMap<Long, Long>(), carried.groupUsedMs)
+        val back = observe(carried, Clocks(noon + 60_000L, 61_000L, 2, com.kidslauncher.mdm.server.ClockTrust.SERVER), zone).ledger
+        assertEquals(mapOf(3L to 60_000L), back.groupUsedMs)
+        assertEquals(mapOf(3L to 15), back.groupExtraMinutes)
+        // The point is in the stored record.
+        val json = com.kidslauncher.mdm.server.ServerJson.encodeToString(ScreenTimeLedger.serializer(), ledger)
+        assertEquals(ledger, com.kidslauncher.mdm.server.ServerJson.decodeFromString(ScreenTimeLedger.serializer(), json))
+    }
 }

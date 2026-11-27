@@ -36,7 +36,7 @@ sealed interface GridTile {
      * calendar is shown ([com.kidslauncher.mdm.calendar.CalendarStore.tileShown]). No badge, no long-press menu. */
     data object Day : GridTile
 
-    data class App(val app: GridApp, val badge: Int) : GridTile
+    data class App(val app: GridApp, val badge: Int, val dimmed: Boolean = false) : GridTile
 
     /** The kid's own settings (wallpaper, Wi-Fi, Bluetooth, brightness), always last. It has no
      * long-press menu - only [App] tiles do (QA 08 #10). */
@@ -65,13 +65,15 @@ fun homeGrid(
     showDay: Boolean = false,
     messages: Int? = null,
     messagesLook: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook(),
+    /** Design 139 §4.3: the apps closed by their app group alone - on Home, dimmed. */
+    dimmed: Set<String> = emptySet(),
 ): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
     if (messages != null) tiles += GridTile.Messages(messages, messagesLook)
     if (showDay) tiles += GridTile.Day
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
-        GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
+        GridTile.App(app, app.packageName?.let { badges[it] } ?: 0, dimmed = app.packageName in dimmed)
     }
     tiles += GridTile.Settings
     return tiles
@@ -260,7 +262,7 @@ enum class TileChange { SAME, BADGE, FULL }
  */
 fun tileChange(old: GridTile, new: GridTile, sameIcon: Boolean): TileChange = when {
     old == new && sameIcon -> TileChange.SAME
-    old is GridTile.App && new is GridTile.App && old.app == new.app && sameIcon -> TileChange.BADGE
+    old is GridTile.App && new is GridTile.App && old.app == new.app && old.dimmed == new.dimmed && sameIcon -> TileChange.BADGE
     else -> TileChange.FULL
 }
 

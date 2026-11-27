@@ -62,6 +62,7 @@ class AppsRecyclerAdapter(
         val appIcon = appsListDisplayed[i].getIcon(activity)
 
         viewHolder.img.setImageDrawable(appIcon.constantState?.newDrawable() ?: appIcon)
+        viewHolder.img.alpha = com.kidslauncher.mdm.timerules.AppGroupTiles.alpha(activity, (appsListDisplayed[i].getRawInfo() as? com.kidslauncher.mdm.apps.AppInfo)?.packageName)
 
         viewHolder.textView.text = appLabel
 
