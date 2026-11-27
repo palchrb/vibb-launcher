@@ -145,6 +145,8 @@ object CacheThrough {
                 if (ItemRef(row.entryId, row.itemKey) in PlayerHub.heldLocal) return@withLock
                 MediaCache.remove(context, row.cacheKey, row.hls)
                 dao.deleteDownload(row.entryId, row.itemKey)
+                // design 117, code QA L2: a pruned book's Unclassified count goes with it
+                if (isSealedKey(row.cacheKey)) BookKeys.get(context).forget(row.cacheKey)
             }
         }
     }
@@ -264,12 +266,16 @@ object CacheThrough {
         val dao = Store.get(context).db
         val keys = BookKeys.get(context)
         val rows = dao.downloads().filter { isSealedKey(it.cacheKey) }
-        val lost = keys.check(rows.map { it.cacheKey }).toSet()
+        val lost = keys.check(rows.map { it.cacheKey })
+        var dropped = 0
         for (row in rows.filter { it.cacheKey in lost }) {
+            // code QA L4: only while the record is still the one judged - a download may have made a new one since
+            if (!keys.stillLost(row.cacheKey, lost[row.cacheKey])) continue
             removeCopy(context, row.cacheKey, row.hls)
             dao.deleteDownload(row.entryId, row.itemKey)
             keys.forget(row.cacheKey)
+            dropped++
         }
-        lost.size
+        dropped
     }
 }

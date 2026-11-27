@@ -113,12 +113,12 @@ class BookKeysTest {
     }
 
     @Test
-    fun `prepare - no spans is a new record, spans and a readable record the same one, a Lost record over held spans Transient (QA M4)`() {
+    fun `prepare - a readable record is kept with or without spans, a Lost record over held spans Transient (QA M4)`() {
         val w = SealWorld()
         w.keys.prepare(a)
         val first = w.cache.records.getValue(a)
         w.keys.prepare(a)
-        assertFalse("no spans yet: every start-over gets a new key and nonce", first.contentEquals(w.cache.records.getValue(a)))
+        assertArrayEquals("code QA M2: no spans yet, but the record stays (a stopped writer may still commit under it)", first, w.cache.records.getValue(a))
         val second = w.cache.records.getValue(a)
         w.cache.spans[a] = 5_000_000
         w.keys.prepare(a)
@@ -177,5 +177,83 @@ class BookKeysTest {
             // Transient: nothing deleted
         }
         assertTrue(broken.check(listOf(a)).isEmpty())
+    }
+
+    @Test
+    fun `code QA M2 - a record goes only with its resource - an unreadable or absent one gets a new one, one mint per fresh download`() {
+        val w = SealWorld()
+        w.keys.prepare(a)
+        val wraps = w.keystore.wraps
+        w.keys.prepare(a) // the download's second prepare (Downloads.fetch after prepareSeal)
+        assertEquals("no second mint", wraps, w.keystore.wraps)
+        val kept = w.cache.records.getValue(a)
+        w.cache.records[a] = ByteArray(78) // unreadable
+        w.keys.prepare(a)
+        assertFalse(kept.contentEquals(w.cache.records.getValue(a)))
+        val again = w.cache.records.getValue(a)
+        w.cache.removeCopy(a) // a start-over (the 416): the resource goes, record and all
+        w.keys.prepare(a)
+        assertFalse(again.contentEquals(w.cache.records.getValue(a)))
+        // a new record starts its book's Unclassified count afresh (code QA L2)
+        w.prefs.put(BookKeys.failPref(b), "1,2")
+        w.keys.prepare(b)
+        assertNull(w.prefs.get(BookKeys.failPref(b)))
+    }
+
+    @Test
+    fun `code QA L1 - a clean check drops the canaries of ids with no alias, no record and not current`() {
+        val w = SealWorld()
+        w.keys.prepare(a)
+        w.prefs.put(BookKeys.canaryPref(9), "00".repeat(60)) // a canary left behind by a deleted key
+        assertTrue(w.keys.check(listOf(a)).isEmpty())
+        assertNull(w.prefs.get(BookKeys.canaryPref(9)))
+        assertNotNull("the current key's stays", w.prefs.get(BookKeys.canaryPref(1)))
+    }
+
+    @Test
+    fun `code QA L5 - a prefs write that isn't committed is Transient, and the next try makes a working key`() {
+        val w = SealWorld()
+        w.prefs.uncommittedAt = BookKeys.PREF_ID
+        try {
+            w.keys.prepare(a)
+            fail("an uncommitted id is Transient")
+        } catch (e: SealTransientException) {
+            assertNull(w.prefs.get(BookKeys.PREF_ID))
+        }
+        w.keys.prepare(a)
+        assertEquals("00000002", w.prefs.get(BookKeys.PREF_ID))
+        assertEquals(2, SealRecord.decode(w.cache.records[a])!!.keyId)
+        assertTrue(w.keys.check(listOf(a)).isEmpty())
+        assertEquals("the unused alias 1 goes at the clean check", listOf(kekAlias(1)), w.keystore.deleted)
+    }
+
+    @Test
+    fun `code QA L3 - the check unwraps each record once per process and never evicts the playing book's key`() {
+        val w = SealWorld()
+        val books = (1..8).map { "sealed:e7:$it" }
+        books.forEach { w.keys.prepare(it) }
+        val fresh = BookKeys(w.keystore, w.prefs, w.cache)
+        val playing = fresh.keyFor(books[0])
+        fresh.check(books)
+        val unwraps = w.keystore.unwraps
+        fresh.check(books)
+        assertEquals("the second check unwraps nothing", unwraps, w.keystore.unwraps)
+        assertTrue("the playing book's key stays in the memo", fresh.keyFor(books[0]) === playing)
+        assertEquals(unwraps, w.keystore.unwraps)
+    }
+
+    @Test
+    fun `code QA L4 - a book is dropped only while its record is the one judged Lost`() {
+        val w = SealWorld()
+        w.keys.prepare(a)
+        w.cache.spans[a] = 1
+        w.keystore.keys.clear()
+        val lost = BookKeys(w.keystore, w.prefs, w.cache, newId = { 7 }).check(listOf(a))
+        assertEquals(setOf(a), lost.keys)
+        assertTrue(w.keys.stillLost(a, lost[a]))
+        // meanwhile the download job started the book over: a new record - the sync must not drop it
+        w.cache.removeCopy(a)
+        BookKeys(w.keystore, w.prefs, w.cache, newId = { 7 }).prepare(a)
+        assertFalse(w.keys.stillLost(a, lost[a]))
     }
 }

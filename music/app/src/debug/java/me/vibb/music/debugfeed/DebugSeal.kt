@@ -14,7 +14,7 @@ import java.security.KeyStore
  *
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugSealReceiver
  *
- * docs/testing/emulator.md §6by.
+ * docs/testing/emulator.md §6bz.
  */
 class DebugSealReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

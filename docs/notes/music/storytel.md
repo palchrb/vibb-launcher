@@ -58,16 +58,25 @@ Moved from music/CLAUDE.md on 2026-11-01.
   made key, canary, id in that order; the prefs `music_seal` hold the id, the canaries and the Unclassified counters,
   never a key. **Lost only on definite signals** (§7, `sealFailure`): a key that reads null, permanently invalidated,
   `ERROR_KEY_DOES_NOT_EXIST` not transient, an unreadable record, a bad tag while the same key's canary unwraps, or an
-  unnamed fault 3 times over 24 h with a good canary; anything else is Transient and deletes nothing. The sync runs
+  unnamed fault 3 times over 24 h with a good canary; anything else is Transient and deletes nothing. A key that is
+  present but broken (its canary fails with a definite code that isn't "does not exist" - an OTA's corrupted key,
+  `keyBroken`) is replaced: a fresh alias, its canary wrapped and unwrapped, becomes current (a new alias destroys
+  nothing) and stands in as the canary, so the broken key's books count 3 over 24 h and then download again; with no
+  working fresh key nothing is counted (code QA M1). The check unwraps each record once per process (its own set, not
+  the 4-key memo) and drops a book only while its record is still the bytes it judged (code QA L3, L4). The sync runs
   `CacheThrough.dropPlainStorytel` (a plain copy from before 117 goes with its row - no migration, the user 2026-11-18)
   and `dropLostBooks` (`BookKeys.check`) before the plan; a lost book's row goes, the plan wants it again and it comes
   back by the parent's download rules (mobile data too when that switch is on; §16 ASK 1, yes), at its bookmark. The
-  download prepares the seal before the mint (`DownloadIo.prepareSeal`; Transient = `network`, nothing minted), a start
-  with no spans always gets a new data key and record, a Lost record over held spans is Transient (never one book under
-  two keys). On the player a lost key is `SealLostException`: not retried (`SourceChangedPolicy`), `RendererEvent.Error`'s
+  download prepares the seal before the mint (`DownloadIo.prepareSeal`; Transient = `network`, nothing minted). A
+  readable record is kept, spans or not (code QA M2: a stopped writer's uncommitted hole isn't a span yet and may still
+  commit under it); a record that is absent or Lost gets a new data key, and every start-over (the 416, the lost path)
+  removes the resource with its record, so it gets a new key too; a Lost record over held spans is Transient (never one
+  book under two keys). A new record and a pruned book clear the book's Unclassified count. On the player a lost key is `SealLostException`: not retried (`SourceChangedPolicy`), `RendererEvent.Error`'s
   `lost` -> "Ikke lastet ned" and a sync at once. The cipher checks itself against `seal_vectors.json`'s `self_check`
   case once per process (`SealSelfCheck`). The emulator's lost-key check deletes the key with the debug-only
-  `DebugSealReceiver` (`docs/testing/emulator.md` §6by). Not protected: code running as our app, root on a running
+  `DebugSealReceiver` (`docs/testing/emulator.md` §6bz). On an emulator updated from before 117, a queue the player
+  loaded before the update still names the book's plain key: it reads "Ikke lastet ned" until the queue is loaded again
+  (code QA L6; no real phone held a plain book). Not protected: code running as our app, root on a running
   phone, the audio while it plays.
 - **Storytel secrets** (design 26b §0, §6.1, design 58 §7.1): the JWT (a bearer for the family's whole account), its
   session and a minted URL (its `token=` is a bearer for the book) never reach a file, a log, Room, `renderer.json`,

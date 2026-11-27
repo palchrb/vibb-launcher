@@ -218,6 +218,16 @@ fun sealFailure(error: Throwable, canaryOk: Boolean, signal: (Throwable) -> Keys
     return if (keystoreLike) SealVerdict.TRANSIENT else SealVerdict.UNCLASSIFIED
 }
 
+/**
+ * Is a key present but broken (code QA M1, design §7's OTA case)? Its canary failed with a Keystore error that is
+ * neither "key does not exist" nor transient (`ERROR_KEY_CORRUPTED`, an invalid key blob). Such a key never heals, so
+ * a fresh alias is probed in its place; a transient code anywhere in the chain is never broken.
+ */
+fun keyBroken(error: Throwable, signal: (Throwable) -> KeystoreSignal?): Boolean {
+    val codes = generateSequence(error) { it.cause }.take(8).mapNotNull(signal).filterIsInstance<KeystoreSignal.Code>().toList()
+    return codes.any { !it.keyMissing && !it.transient } && codes.none { it.transient }
+}
+
 /** An Unclassified failure's count, kept in prefs as `seal_fail_<sealed key>` = "first_at,count" (§7). */
 data class FailCount(val firstAt: Long, val count: Int) {
     fun encode(): String = "$firstAt,$count"

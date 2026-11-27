@@ -24,6 +24,7 @@ import me.vibb.music.logic.isSealedKey
 import me.vibb.music.logic.kekAlias
 import me.vibb.music.logic.kekIdHex
 import me.vibb.music.logic.kekIdOf
+import me.vibb.music.logic.keyBroken
 import me.vibb.music.logic.sealFailure
 import me.vibb.music.logic.unclassifiedLost
 import me.vibb.music.sync.CacheThrough
@@ -81,8 +82,11 @@ interface KeyStoreSeam {
 interface SealPrefs {
     fun get(name: String): String?
 
-    /** null removes. */
-    fun put(name: String, value: String?)
+    /** null removes. Whether it reached the disk (`commit()`; code QA L5). */
+    fun put(name: String, value: String?): Boolean
+
+    /** Every name stored (the clean-up of orphan canaries, code QA L1). */
+    fun names(): Set<String>
 }
 
 /** The cache as the keys see it: the records in its index, its spans, and a removal that spares what the player holds. */
@@ -118,6 +122,15 @@ class BookKeys(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, BookKey>?): Boolean = size > MEMO_SIZE
     }
 
+    /**
+     * The records this process has unwrapped once (code QA L3): the check skips them without an unwrap and without
+     * touching the memo, so a library of many books never unwraps every book every sync nor evicts the playing book's key.
+     */
+    private val checked = HashSet<String>()
+
+    /** The Keystore keys whose canary unwrapped in this process: `prepare` asks a key's canary once (code QA M1). */
+    private val canaryGood = HashSet<Int>()
+
     @Volatile private var cipherChecked: Boolean? = null
     @Volatile private var keySeen = false
 
@@ -129,29 +142,33 @@ class BookKeys(
 
     /**
      * Ready sealed [cacheKey] for a download, before any byte is written (§4.3): the current key (made when there is
-     * none); no spans: a new data key and record; spans and a readable record: the resume; a Lost record: the spans go
-     * (never the player's) and the book starts over, unless spans remain. Throws [SealTransientException].
+     * none or it is broken); a readable record is kept, spans or not (code QA M2: a stopped writer's uncommitted hole
+     * isn't a span yet, and may still commit under that record); a record that is absent or Lost gets a new one, after
+     * the spans go (never the player's - if any stay, Transient). A start-over (the 416, the lost path) removes the
+     * resource, record and all, so it always gets a new key. Throws [SealTransientException].
      */
     fun prepare(cacheKey: String): Unit = synchronized(lock) {
         require(isSealedKey(cacheKey)) { "not a sealed key" }
         if (!cipherOk()) throw SealTransientException("the cipher's self-check failed")
         val kek = current(create = true)!!
-        if (!cache.hasSpans(cacheKey)) return newRecord(cacheKey, kek)
         val record = SealRecord.decode(cache.record(cacheKey))
         val verdict = if (record == null) {
             SealVerdict.LOST
         } else {
+            if (synchronized(memo) { memo[record.memoKey()] } != null) return
             try {
-                unwrap(cacheKey, record)
+                unwrap(cacheKey, record, memoize = true)
                 return
             } catch (e: Exception) {
-                judge(e, record.keyId, canaryOk(record.keyId))
+                verdictOf(e, record.keyId, HashMap())
             }
         }
         if (verdict != SealVerdict.LOST) throw SealTransientException("the book's record can't be read now")
-        cache.removeCopy(cacheKey)
-        // QA M4: never a new record over spans that stayed (the player holds them): one book under two keys is noise.
-        if (cache.hasSpans(cacheKey)) throw SealTransientException("a lost book's spans are held")
+        if (cache.hasSpans(cacheKey)) {
+            cache.removeCopy(cacheKey)
+            // QA M4: never a new record over spans that stayed (the player holds them): one book under two keys is noise.
+            if (cache.hasSpans(cacheKey)) throw SealTransientException("a lost book's spans are held")
+        }
         newRecord(cacheKey, kek)
     }
 
@@ -162,49 +179,53 @@ class BookKeys(
             ?: throw SealLostException("an unreadable seal record")
         synchronized(memo) { memo[record.memoKey()] }?.let { return it }
         return try {
-            unwrap(cacheKey, record)
+            unwrap(cacheKey, record, memoize = true)
         } catch (e: Exception) {
-            if (judge(e, record.keyId, canaryOk(record.keyId)) == SealVerdict.LOST) throw SealLostException("the book's key is lost", e)
+            val lost = e is KeyMissingException || sealFailure(e, canaryError(record.keyId) == null, keystore::signal) == SealVerdict.LOST
+            if (lost) throw SealLostException("the book's key is lost", e)
             throw SealTransientException("the book's key can't be read now", e)
         }
     }
 
     /**
      * The check at every sync (§7), before the plan: each sealed row's record parsed, unwrapped the first time per
-     * process or after a failure (a memo hit costs nothing). The Lost keys are returned (the caller drops their copies,
-     * rows and counters, [forget]). With every record read and no transient failure, the aliases no record names and
-     * that aren't current are deleted (§2.2).
+     * process or after a failure ([checked]). The Lost keys are returned with the record bytes they were judged on
+     * (null: none; the caller drops a book only while its record is still those bytes, [stillLost], code QA L4).
+     * With every record read and no failure, the aliases no record names and that aren't current go, and the canaries
+     * of ids with no alias (§2.2, code QA L1).
      */
-    fun check(rowKeys: Collection<String>): List<String> = synchronized(lock) {
-        if (!cipherOk()) return emptyList()
-        val lost = mutableListOf<String>()
+    fun check(rowKeys: Collection<String>): Map<String, ByteArray?> = synchronized(lock) {
+        if (!cipherOk()) return emptyMap()
+        val lost = LinkedHashMap<String, ByteArray?>()
         var clean = true
-        val canaries = HashMap<Int, Boolean>()
+        val canaries = HashMap<Int, Throwable?>()
         for (key in rowKeys.filter(::isSealedKey).distinct()) {
             val bytes = cache.record(key)
             if (bytes == null) {
                 // A sealed key with spans and no record can never be read; with none it is a book not begun.
-                if (cache.hasSpans(key)) lost += key
+                if (cache.hasSpans(key)) lost[key] = null
                 continue
             }
             val record = SealRecord.decode(bytes)
             if (record == null) {
-                lost += key
+                lost[key] = bytes
                 continue
             }
-            val hit = synchronized(memo) { memo[record.memoKey()] } != null
+            val memoKey = record.memoKey()
             try {
-                if (!hit) unwrap(key, record)
+                if (memoKey !in checked && synchronized(memo) { memo[memoKey] } == null) unwrap(key, record, memoize = false)
+                checked += memoKey
                 if (prefs.get(failPref(key)) != null) prefs.put(failPref(key), null)
             } catch (e: Exception) {
-                when (judge(e, record.keyId, canaries.getOrPut(record.keyId) { canaryOk(record.keyId) })) {
-                    SealVerdict.LOST -> lost += key
+                checked -= memoKey
+                when (verdictOf(e, record.keyId, canaries)) {
+                    SealVerdict.LOST -> lost[key] = bytes
                     SealVerdict.TRANSIENT -> clean = false
                     SealVerdict.UNCLASSIFIED -> {
                         clean = false
                         val now = nowMs()
                         val count = countFailure(FailCount.decode(prefs.get(failPref(key))), now)
-                        if (unclassifiedLost(count, now)) lost += key else prefs.put(failPref(key), count.encode())
+                        if (unclassifiedLost(count, now)) lost[key] = bytes else prefs.put(failPref(key), count.encode())
                     }
                 }
             }
@@ -213,41 +234,86 @@ class BookKeys(
         lost
     }
 
-    /** A Lost book's counter goes with it (§7). */
-    fun forget(cacheKey: String) = prefs.put(failPref(cacheKey), null)
+    /** Is [cacheKey]'s record still [judged], the bytes `check` found Lost (code QA L4)? A download may have replaced it since. */
+    fun stillLost(cacheKey: String, judged: ByteArray?): Boolean = cache.record(cacheKey).contentEquals(judged)
+
+    /** A Lost or pruned book's counter goes with it (§7, code QA L2). */
+    fun forget(cacheKey: String) {
+        prefs.put(failPref(cacheKey), null)
+    }
 
     private class KeyMissingException : Exception("the record's Keystore key reads null")
 
-    /** The class of a failed unwrap under key [keyId] (§7): a key that read null is Lost. */
-    private fun judge(e: Exception, keyId: Int, canaryOk: Boolean): SealVerdict =
-        if (e is KeyMissingException) SealVerdict.LOST else sealFailure(e, canaryOk, keystore::signal)
+    /** A key's canary isn't in the prefs, or unwrapped to something else. */
+    private class CanaryMissingException : Exception("no usable canary")
 
-    /** The record's data key, unwrapped under the key it names, into the memo. */
-    private fun unwrap(cacheKey: String, record: SealRecord): BookKey {
+    /**
+     * The class of a failed unwrap under key [keyId] (§7), [canaries] the canary results of this pass: a key that read
+     * null is Lost; under a key that is present but broken, or has no canary (code QA M1), a fresh key standing in for
+     * the canary ([standIn]) makes the book Unclassified (3 over 24 h), else Transient; anything else by [sealFailure].
+     */
+    private fun verdictOf(e: Exception, keyId: Int, canaries: HashMap<Int, Throwable?>): SealVerdict {
+        if (e is KeyMissingException) return SealVerdict.LOST
+        val canary = if (canaries.containsKey(keyId)) canaries[keyId] else canaryError(keyId).also { canaries[keyId] = it }
+        if (canary != null && (canary is CanaryMissingException || keyBroken(canary, keystore::signal))) {
+            return if (standIn(keyId)) SealVerdict.UNCLASSIFIED else SealVerdict.TRANSIENT
+        }
+        return sealFailure(e, canary == null, keystore::signal)
+    }
+
+    /**
+     * Code QA M1: does the Keystore work beside broken key [brokenId]? The current key's canary, when the current key is
+     * another; else a fresh alias whose canary wraps and unwraps, made current (a new alias destroys nothing).
+     */
+    private fun standIn(brokenId: Int): Boolean {
+        val current = currentId()
+        if (current != null && current != brokenId && canaryError(current) == null) return true
+        return try {
+            makeKey(current)
+            true
+        } catch (e: SealTransientException) {
+            false
+        }
+    }
+
+    /** The record's data key, unwrapped under the key it names; into the memo with [memoize] (the player's and the download's). */
+    private fun unwrap(cacheKey: String, record: SealRecord, memoize: Boolean): BookKey {
         val kek = keystore.getKey(kekAlias(record.keyId)) ?: throw KeyMissingException()
         val raw = keystore.unwrap(kek, record.wrapIv, record.aad(cacheKey), record.wrapped)
         try {
             val key = BookKey(raw, record.nonce)
-            synchronized(memo) { memo[record.memoKey()] = key }
+            if (memoize) synchronized(memo) { memo[record.memoKey()] = key }
             return key
         } finally {
             raw.fill(0)
         }
     }
 
-    /** Does key [id]'s canary unwrap now (§2.3)? Never throws. */
-    private fun canaryOk(id: Int): Boolean = runCatching {
-        val stored = hexBytes(prefs.get(canaryPref(id)) ?: return false)
-        if (stored.size <= GCM_IV) return false
-        val key = keystore.getKey(kekAlias(id)) ?: return false
-        keystore.unwrap(key, stored.copyOfRange(0, GCM_IV), canaryAad(id), stored.copyOfRange(GCM_IV, stored.size)).contentEquals(CANARY)
-    }.getOrDefault(false)
+    /** Key [id]'s canary now (§2.3): null when it unwraps, else why not. Never throws. */
+    private fun canaryError(id: Int): Throwable? {
+        val error: Throwable? = try {
+            val stored = prefs.get(canaryPref(id))?.let(::hexBytes)
+            val key = keystore.getKey(kekAlias(id))
+            when {
+                key == null -> KeyMissingException()
+                stored == null || stored.size <= GCM_IV -> CanaryMissingException()
+                keystore.unwrap(key, stored.copyOfRange(0, GCM_IV), canaryAad(id), stored.copyOfRange(GCM_IV, stored.size)).contentEquals(CANARY) -> null
+                else -> CanaryMissingException()
+            }
+        } catch (e: Exception) {
+            e
+        }
+        if (error == null) canaryGood += id else canaryGood -= id
+        return error
+    }
 
     private fun currentId(): Int? = prefs.get(PREF_ID)?.toLongOrNull(16)?.toInt()
 
     /**
      * The current Keystore key (§2.2): the stored id's, when `getKey` reads it. Null there makes a new one only with
-     * [create]; `getKey` throwing is Transient, never a new key.
+     * [create]; `getKey` throwing is Transient, never a new key. With [create] its canary is asked once per process: a
+     * key that is present but broken, or has no canary, is replaced by a new alias (code QA M1); any other canary
+     * failure is Transient.
      */
     private fun current(create: Boolean): Pair<Int, SecretKey>? {
         val id = currentId()
@@ -257,15 +323,22 @@ class BookKeys(
             } catch (e: Exception) {
                 throw SealTransientException("the current key can't be read now", e)
             }
-            if (key != null) return (id to key).also { seen(key) }
+            if (key != null) {
+                if (!create || id in canaryGood) return (id to key).also { seen(key) }
+                val canary = canaryError(id) ?: return (id to key).also { seen(key) }
+                if (canary !is CanaryMissingException && !keyBroken(canary, keystore::signal)) {
+                    throw SealTransientException("the current key's canary fails now", canary)
+                }
+            }
         }
         return if (create) makeKey(id) else null
     }
 
     /**
      * A new Keystore key under a new alias (§2.2): an id that reads null and that neither the stored id nor any record
-     * names; then the key, its canary and the id, in that order. A crash between leaves an unused alias that
-     * [dropOldKeys] removes. Never generated over an alias that might exist.
+     * names; then the key, its canary (wrapped and unwrapped again: the probe of code QA M1) and the id, in that order,
+     * each prefs write committed or Transient (code QA L5). A crash between leaves an unused alias that [dropOldKeys]
+     * removes. Never generated over an alias that might exist.
      */
     private fun makeKey(stored: Int?): Pair<Int, SecretKey> {
         try {
@@ -279,8 +352,10 @@ class BookKeys(
             if (id == null) throw SealTransientException("no free key id")
             val key = keystore.generate(kekAlias(id))
             val (iv, sealed) = keystore.wrap(key, canaryAad(id), CANARY)
-            prefs.put(canaryPref(id), hex(iv + sealed))
-            prefs.put(PREF_ID, kekIdHex(id))
+            if (!keystore.unwrap(key, iv, canaryAad(id), sealed).contentEquals(CANARY)) throw SealTransientException("a new key's canary failed")
+            if (!prefs.put(canaryPref(id), hex(iv + sealed))) throw SealTransientException("the canary wasn't stored")
+            if (!prefs.put(PREF_ID, kekIdHex(id))) throw SealTransientException("the key id wasn't stored")
+            canaryGood += id
             seen(key)
             return id to key
         } catch (e: SealTransientException) {
@@ -296,7 +371,10 @@ class BookKeys(
         runCatching { onKey(key) }
     }
 
-    /** A new data key and record for [cacheKey], overwriting any leftover (§4.3 step 2): every start-over gets new ones. */
+    /**
+     * A new data key and record for [cacheKey], overwriting any leftover (§4.3): a book with no record or a Lost one.
+     * A new record starts its book's Unclassified count afresh (code QA L2).
+     */
     private fun newRecord(cacheKey: String, kek: Pair<Int, SecretKey>) {
         val raw = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().encoded
         try {
@@ -314,21 +392,30 @@ class BookKeys(
                 throw SealTransientException("the record couldn't be stored", e)
             }
             synchronized(memo) { memo[record.memoKey()] = BookKey(raw, nonce) }
+            forget(cacheKey)
         } finally {
             raw.fill(0)
         }
     }
 
-    /** §2.2: the aliases no record names and that aren't current go, with their canaries. A failure waits for the next check. */
+    /**
+     * §2.2: the aliases no record names and that aren't current go, with their canaries; so do the canaries of ids
+     * that are neither current nor named and have no alias left (code QA L1). A failure waits for the next check.
+     */
     private fun dropOldKeys() {
         try {
             val named = cache.sealedKeys().mapNotNull { SealRecord.decode(cache.record(it))?.keyId }.toSet()
             val current = currentId()
-            for (alias in keystore.aliases()) {
-                val id = kekIdOf(alias) ?: continue
+            val aliases = keystore.aliases().mapNotNull(::kekIdOf).toSet()
+            for (id in aliases) {
                 if (id == current || id in named) continue
-                keystore.delete(alias)
+                keystore.delete(kekAlias(id))
                 prefs.put(canaryPref(id), null)
+            }
+            for (name in prefs.names()) {
+                if (!name.startsWith(CANARY_PREFIX)) continue
+                val id = kekIdOf(KEK_ALIAS_PREFIX + name.removePrefix(CANARY_PREFIX)) ?: continue
+                if (id != current && id !in named && id !in aliases) prefs.put(name, null)
             }
         } catch (e: Exception) {
             // the next clean check tries again
@@ -343,7 +430,9 @@ class BookKeys(
         private const val TAG = "BookKeys"
         private val random = SecureRandom()
 
-        fun canaryPref(id: Int) = "seal_canary_${kekIdHex(id)}"
+        private const val CANARY_PREFIX = "seal_canary_"
+
+        fun canaryPref(id: Int) = CANARY_PREFIX + kekIdHex(id)
 
         fun failPref(cacheKey: String) = "seal_fail_$cacheKey"
 
@@ -423,11 +512,13 @@ private class AppSealPrefs(context: Context) : SealPrefs {
 
     override fun get(name: String): String? = prefs.getString(name, null)
 
-    override fun put(name: String, value: String?) {
+    override fun put(name: String, value: String?): Boolean {
         val edit = prefs.edit()
         if (value == null) edit.remove(name) else edit.putString(name, value)
-        edit.commit()
+        return edit.commit()
     }
+
+    override fun names(): Set<String> = prefs.all.keys.toSet()
 }
 
 /** The record is the resource's `vibb_seal` content metadata, stored synchronously with the index (§3.1). */

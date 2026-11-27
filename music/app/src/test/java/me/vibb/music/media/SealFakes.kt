@@ -39,7 +39,16 @@ class FakeKeyStore : KeyStoreSeam {
     /** Throw this from `unwrap`, given the AAD (the canary's starts with "canary:"; null: unwrap). */
     var unwrapFails: (ByteArray) -> Exception? = { null }
 
+    /** Aliases whose key is present but broken (an OTA's corrupted key, code QA M1): every wrap and unwrap fails for good. */
+    val broken = mutableSetOf<String>()
+
+    private fun checkBroken(key: SecretKey) {
+        if (keys.entries.any { it.value === key && it.key in broken }) throw FakeKeystoreError(missing = false, transient = false)
+    }
+
     private var ivs = 0
+    var wraps = 0
+    var unwraps = 0
 
     override fun getKey(alias: String): SecretKey? {
         getKeyFails(alias)?.let { throw it }
@@ -54,6 +63,8 @@ class FakeKeyStore : KeyStoreSeam {
     }
 
     override fun wrap(key: SecretKey, aad: ByteArray, plain: ByteArray): Pair<ByteArray, ByteArray> {
+        checkBroken(key)
+        wraps++
         val iv = "FAKE-IV-%04d".format(++ivs).toByteArray()
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
@@ -62,7 +73,9 @@ class FakeKeyStore : KeyStoreSeam {
     }
 
     override fun unwrap(key: SecretKey, iv: ByteArray, aad: ByteArray, sealed: ByteArray): ByteArray {
+        unwraps++
         unwrapFails(aad)?.let { throw it }
+        checkBroken(key)
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
         c.updateAAD(aad)
@@ -85,12 +98,19 @@ class FakePrefs : SealPrefs {
     /** A put of a name starting with this throws (a crash at that point), once. */
     var crashAt: String? = null
 
+    /** A put of a name starting with this isn't committed (`commit()` false, code QA L5), once. */
+    var uncommittedAt: String? = null
+
     override fun get(name: String): String? = map[name]
 
-    override fun put(name: String, value: String?) {
+    override fun put(name: String, value: String?): Boolean {
         crashAt?.let { if (name.startsWith(it)) { crashAt = null; throw IllegalStateException("crash at $name") } }
+        uncommittedAt?.let { if (name.startsWith(it)) { uncommittedAt = null; return false } }
         if (value == null) map.remove(name) else map[name] = value
+        return true
     }
+
+    override fun names(): Set<String> = map.keys.toSet()
 }
 
 /** The cache's records and spans (bytes per key); [held] keys are spared by `removeCopy`, as the player's are. */

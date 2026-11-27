@@ -6665,9 +6665,9 @@ on a copy of `data/kidphone.db` (never the live file while it runs).
 What can't be seen here: a real phone's Wi-Fi zone link relearning after the moved zone in step 4 (design 125 D12, at
 least 2 days) - the Jelly Star's, later.
 
-## 6by. Storytel books sealed on the phone (design 117, branch `music-117-seal`) - written, not run
+## 6bz. Storytel books sealed on the phone (design 117, branch `music-117-seal`) - written, not run
 
-`docs/design/117-storytel-sealed-books.md` §14 (the design named this §6ba, which another section has since taken).
+`docs/design/117-storytel-sealed-books.md` §14 (the design named this §6ba, which another section had taken).
 **Music app only**; it waits for the owner's OK ("Emulator: ask first"). On **API 34 and API 37** (the Keystore varies
 by version; the images of 2026-11-16), the debug music build, unmanaged on the debug feed as in §6i part A, the fake
 with two books: `python3 -I scripts/fake-storytel.py --books 111:20,222:5` (entry 5, `--print-listing 5`, `storytel_base`
