@@ -55,7 +55,7 @@ findings, merge to `main`, full suite once.
   8b. **A launcher release names the oldest server it needs (the owner 2026-11-27: "Ja sett i gang", ahead of 9)**: an
      old server can hand a new launcher to the phones today (rc.7 was out while server 0.95.0 waited for signing). Each
      launcher release carries its min server (from `server/Cargo.toml` at the tag); an older server holds it back, one
-     orange line in the PWA, released by itself after the server update. Design 140 written 2026-11-27 (`min-server-design` 4e14d87a8: the value inside the signed APK as `assets/vibb/min_server` from `scripts/min-server.sh`; the server holds a too-new release in design 90's held slot; music the same; size M); design QA running; owner Q1 (the setup QR while the stable launcher needs a newer server) asked.
+     orange line in the PWA, released by itself after the server update. Design 140 written 2026-11-27 (`min-server-design` 4e14d87a8: the value inside the signed APK as `assets/vibb/min_server` from `scripts/min-server.sh`; the server holds a too-new release in design 90's held slot; music the same; size M); design QA running; owner Q1 DECIDED 2026-11-27: (a) no QR, one orange line to update the server.
   9. QR setup made robust.
   10. Privacy round 2 (measure the Jelly's system apps' traffic, then a design; debloat batch 1 being watched).
   11. Then the frozen two: "Husk!" notes on the glance, "Følg meg hjem".
