@@ -1,6 +1,8 @@
 # 139 - App groups with a shared daily limit, and apps outside the filter
 
-Status: design, **revision 4**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
+Status: design, **revision 5**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
+Revision 5 takes the design QA of revision 4 (daf759060; 2 High, 3 Medium, 6 Low), all in §4.1's fold (§17 maps each
+one).
 **Part A is decided by the owner** (2026-11-27; §12): Q1 (a), Q2 (b), Q3 (b), Q4 (b), Q5 (a), all as recommended.
 **Part B waits** (QB1, §13). **Step 0 is done** on emulators 14 and 16 (2026-11-27; `docs/testing/emulator.md`
 §6ca row 2 and §6cb row 2, on `main` since 81ed1a41a). Its findings are folded into §4.1 (the kill rule, PiP, split
@@ -171,10 +173,13 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
     day it is first seen, like a budget lift.
 - **D10 - Counted during a pause, not during setup.** Groups are lifted during the pause and the override, but their
   time still counts, so the parent sees it and the limit holds after. During design 114's setup hold
-  (`RestrictionsPause.holdActive()`) the fold and the timer are off: the hold's time is setup, not use.
+  (`RestrictionsPause.holdActive()`) the fold runs **for state only** and the timer is off: the hold's time is setup,
+  not use, and the hold ends with the apps' states known (§4.1, revision 5).
 - **D11 - Data minimal, one query path.** On every version the phone calls `queryEvents(begin, end)`, which returns
   every app's events [d57].
-  - They are read in memory for one fold and dropped, never stored or sent.
+  - They are read in memory for one fold and dropped, never stored or sent. What stays is the fold's state, on the
+    phone only: `carry` (the one or two packages on screen at the last folded point, persisted with it) and, in
+    memory, the keys of the last 10 min's events for a clock step (§4.1).
   - The report sends minutes per group, never per app and never which app.
   - The 35+ narrowed query (`UsageEventsQuery`, API 35 [sdk]) is not in v1. Note for later: it would have to ask for
     the device events Android reports under the package `android` (screen, keyguard, shutdown) and for PAUSED too.
@@ -185,50 +190,100 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
 
 **The fold is per package.** `groupScreenMs(events, from, to, carry, groups) -> (perGroupSpans, carryOut)` is pure.
 
-- `events` are `(timeMs, package, kind)`. The kinds come from the public constants (API 28/29 [sdk]):
+- `events` are `(timeMs, package, class, kind)`, **in the order `queryEvents` returns them** (revision 5, QA L5): time
+  order, and events of one ms in the order Android reported them. The fold never re-sorts them, and a list put
+  together from two reads is merged stably. A same-class relaunch's PAUSED and RESUMED can share a ms; swapped, they
+  would leave the app on-paused and its old STOPPED would then end it.
+- The kinds come from the public constants (API 28/29 [sdk]):
   - ACTIVITY_RESUMED, ACTIVITY_PAUSED, ACTIVITY_STOPPED;
   - SCREEN_INTERACTIVE, SCREEN_NON_INTERACTIVE;
   - KEYGUARD_SHOWN, KEYGUARD_HIDDEN;
   - DEVICE_SHUTDOWN, DEVICE_STARTUP.
 
-  `ACTIVITY_DESTROYED` (24) and `Event.getInstanceId` are [hidden] and never used. The class name isn't a key.
+  `ACTIVITY_DESTROYED` (24) and `Event.getInstanceId` are [hidden] and never used. The class name
+  (`Event.getClassName`, API 21 [sdk]) only matches a STOPPED to the PAUSED it ends (below). It can't tell two
+  instances of one class apart.
 - Each package is **off**, **on**, or **on-paused**:
   - RESUMED makes it on. Split screen keeps both apps RESUMED, with no PAUSED for the one without focus [probe].
-  - PAUSED makes it on-paused, still counting: a visible but paused window, such as picture-in-picture with the kiosk
-    off (lock task refuses PiP [d57]). **A PAUSED while the package is off also makes it on-paused**: that is how a
-    PiP window comes back after the unlock [probe].
-  - STOPPED makes it off **if it is on-paused**.
-  - **The kill rule (revision 4).** A STOPPED of a package that is **on** (no PAUSED since its last RESUMED) makes it
-    off **only when another package's RESUMED lies within `KILL_PAIR_MS` = 50 ms of it, before or after**. Otherwise
-    the STOPPED is ignored.
+  - PAUSED makes it on-paused, still counting, and remembers the PAUSED's class. On-paused is a visible but paused
+    window, such as picture-in-picture with the kiosk off (lock task refuses PiP [d57]). **A PAUSED while the package
+    is off also makes it on-paused**: that is how a PiP window comes back after the unlock [probe]. A PAUSED while it
+    is on-paused takes the new class.
+  - **A STOPPED of an on-paused package** makes it off **only when its class is the class of the PAUSED that made it
+    on-paused** (revision 5, QA M1). Any other STOPPED is ignored. The case, with the kiosk off: X's activity A is
+    RESUMED; A opens B (PAUSED A, RESUMED B); within ~0.5 s the kid goes Home and B enters PiP (RESUMED Home, PAUSED
+    B). A's STOPPED comes late, after B's PAUSED. Under revision 4 it turned X off while the PiP played; now it is
+    ignored, and B's own STOPPED (the PiP closed) ends X.
+  - **The kill rule.** A STOPPED of a package that is **on** (no PAUSED since its last RESUMED) makes it off **only
+    when another package's RESUMED is in the same ms (in either report order) or up to `KILL_PAIR_MS` = 50 ms after
+    it** (revision 5, QA L1). Otherwise the STOPPED is ignored.
     - A kill -9 or `am crash` of the front app gives exactly this: Android writes the dead app's STOPPED with no
-      PAUSED, and the app below is RESUMED 0-5 ms from it, whether it is Vibb One or another app [probe].
+      PAUSED, and the app below is RESUMED in the same ms or 1-5 ms after it, whether it is Vibb One or another app
+      [probe].
+    - Revision 4 also took a RESUMED up to 50 ms **before** the STOPPED. No recorded kill had one there, and it only
+      widened false pairs: in split screen, X's late STOPPED (a relaunch, or an activity left inside X) meeting the
+      other side's RESUMED.
     - A same-class relaunch gives PAUSED, RESUMED (the new instance), then the old instance's STOPPED 0.5-0.6 s later
       with no other package's RESUMED near it, so the app stays on (P1, R2, S1). So does moving from activity A to
       B inside one app.
+    - **A partner that must cold-start (QA L2, [assumed]).** When the app below has no process, its RESUMED may come
+      later than 50 ms, and the dead app would stay on (counted against the kid until its next event or the screen
+      off). Gate row 13 kills a group app over an app whose process is gone, on 14 and 16. If the partner comes later
+      than 50 ms there, the after-side becomes: **the first RESUMED of another package with no event of X between,
+      within 2 s**. The same-ms side and the rest of the rule stay.
   - Our own RESUMED is no longer a rule of its own (revision 3's "our RESUMED turns every on package off"): the kill
     rule ends the same cases, and an app in split screen beside Vibb One is no longer undercounted.
-- **Screen off, keyguard shown and device shutdown/startup** turn every package off at that event. Package events
-  after it move the states as usual, but nothing counts until the screen is interactive and the keyguard is hidden
-  again: on 16 the PiP window's PAUSED comes just before KEYGUARD_HIDDEN [probe]. A group's time is the union of its
-  packages' on and on-paused spans, so two of its apps side by side count once.
-- **The 50 ms at a read's edges:** `carry` keeps the RESUMEDs of the last 50 ms before `from`. A STOPPED of an on
-  package within 50 ms of `to` with no partner yet stays pending in `carry`, counted as on. The next fold settles it,
-  dated at the STOPPED, and doesn't take back the few ms already applied.
-- **Each recorded sequence under these rules** (14 = §6ca, 16 = §6cb):
+- **The device state is a state, not a wait** (revision 5, QA H2 and M2). `carry` holds two flags: the screen (on at
+  SCREEN_INTERACTIVE, off at SCREEN_NON_INTERACTIVE) and the keyguard (shown at KEYGUARD_SHOWN, hidden at
+  KEYGUARD_HIDDEN). **Time counts while the screen is on and the keyguard is hidden.**
+  - SCREEN_NON_INTERACTIVE and KEYGUARD_SHOWN also turn every package off at that event. Package events after it
+    move the states as usual and count from the moment the device state counts again: on 16 the PiP window's PAUSED
+    comes just before KEYGUARD_HIDDEN [probe].
+  - **A wake within Android's lock delay** (the screen times out and the kid wakes it before the keyguard locks)
+    gives SCREEN_NON_INTERACTIVE, SCREEN_INTERACTIVE and X's RESUMED, with no keyguard event. The keyguard is still
+    hidden in the state, so X counts from its RESUMED (QA M2). Revision 4's "nothing counts until KEYGUARD_HIDDEN"
+    read as a wait would have left it uncounted.
+  - **DEVICE_SHUTDOWN** turns every package off, the screen off and the keyguard shown. Android writes it at the next
+    start, stamped at the later of its last save and its stored events' end: a normal reboot ends at the shutdown, a
+    crash at the last save.
+  - **DEVICE_STARTUP changes nothing**, neither a package nor the device state (QA H2). Android stamps it when the
+    user's storage unlocks. With a Child PIN that is after KEYGUARD_HIDDEN and maybe after X's first RESUMED, so
+    revision 4's "turn every package off and wait" would let a reboot escape the count. After a reboot the state is
+    the shutdown's until SCREEN_INTERACTIVE and KEYGUARD_HIDDEN, as the recorded reboot runs (16: SCREEN_INTERACTIVE,
+    KEYGUARD_SHOWN, DEVICE_STARTUP [probe]). Gate row 14 records the order with a Child PIN on 14 and 16.
+  - **A boot-count change** (`Settings.Global.BOOT_COUNT`, API 24 [sdk], against the one persisted with the last
+    folded point) is a reset like the shutdown's. If the read holds a DEVICE_SHUTDOWN, that event does it. If it holds
+    none, the reset is at `from` (QA L3): after a crash the shutdown is stamped at Android's last save, which can lie
+    before `from`, and then the read never sees it and an app on at `from` would count the downtime. A read without a
+    DEVICE_SHUTDOWN holds nothing of the old boot (Android stamps the shutdown at or after every stored event of it),
+    so the reset at `from` drops nothing. This is QA L3's fix with one change: the shutdown's own time, when it is
+    read, keeps a normal reboot's last minute.
+  - **The live check** (revision 5, with H2 and M3). The fold runs only while the screen is interactive and the
+    keyguard unlocked (the gate below). If its state at `to` says the time doesn't count, the state turns to counting
+    at `to`. A missing or unread device event (the first fold's lookback, a phone with no keyguard, which sends no
+    KEYGUARD_HIDDEN after a reboot) can't stop the count for good. It counts at most `SETTLE_MS` before an unlock,
+    against the kid. The one fold that runs outside the gate (at screen off) reads not counting and changes nothing.
+- A group's time is the union of its packages' on and on-paused spans while the device state counts, so two of its
+  apps side by side count once.
+- **Each recorded sequence under these rules** (14 = §6ca, 16 = §6cb; the last four are the QA's, from AOSP 14's
+  code, not recorded: gate rows 13-17 run them):
 
   | Sequence | Events | Result |
   |---|---|---|
-  | Open and close (14, 16) | PAUSED Home, RESUMED app; then PAUSED app, RESUMED Home 1 ms later, STOPPED app 0.4 s later | On from the RESUMED, on-paused 0.4 s, off at the STOPPED. Right |
+  | Open and close (14, 16) | PAUSED Home, RESUMED app; then PAUSED app, RESUMED Home 1 ms later, STOPPED app 0.4 s later | On from the RESUMED, on-paused 0.4 s, off at the STOPPED (the PAUSED's class). Right |
   | Same-class relaunch (14, 16) | PAUSED, RESUMED 1-13 ms later (the new instance), STOPPED 0.5-0.6 s after that, no other RESUMED near it | Stays on. Right |
-  | kill -9 or `am crash`, Vibb One below (14, 16) | STOPPED with no PAUSED, RESUMED Vibb One 0-5 ms from it | Off at the STOPPED. Right |
+  | kill -9 or `am crash`, Vibb One below (14, 16) | STOPPED with no PAUSED, RESUMED Vibb One in the same ms or 1-5 ms after it | Off at the STOPPED. Right |
   | **kill -9, another app below** (14) | STOPPED with no PAUSED, the other app RESUMED in the same ms | Off at the STOPPED. Right (revision 3 left it on) |
   | **`am crash`, another app below** (14) | PAUSED, the other app RESUMED 1 ms later, STOPPED **10.6 s** later | On-paused 10.6 s, then off. **Accepted** (below) |
   | Split screen (14, 16) | Both RESUMED (16: in the same ms; 14: no event for the one already on), no PAUSED; Home: PAUSED both, RESUMED Home, STOPPED both | Both on, counted once for one group; both off at their STOPPEDs. Right |
   | PiP across screen off and on (14) | PAUSED (on-paused); at screen off SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN, STOPPED; at the unlock KEYGUARD_HIDDEN, then a lone PAUSED 22 ms later | On-paused, off at the screen off, on-paused again from the PAUSED. Right |
   | PiP across screen off and on (16) | RESUMED Home, PAUSED app (on-paused); at screen off SCREEN_NON_INTERACTIVE, STOPPED, KEYGUARD_SHOWN; at the unlock RESUMED Home and a lone PAUSED, then KEYGUARD_HIDDEN | The same: the PAUSED moves it to on-paused while the keyguard still shows, and it counts from KEYGUARD_HIDDEN. Right |
   | Suspended in front, kiosk off (14, 16) | PAUSED, the task below RESUMED in the same ms, STOPPED 0.3-0.4 s later | On-paused, then off. Right |
-  | Reboot (16) | PAUSED Home, DEVICE_SHUTDOWN 20 ms later with no STOPPED; after it SCREEN_INTERACTIVE, KEYGUARD_SHOWN, DEVICE_STARTUP | Off at the shutdown, nothing counts until KEYGUARD_HIDDEN. Right |
+  | Reboot (16) | PAUSED Home, DEVICE_SHUTDOWN 20 ms later with no STOPPED; after it SCREEN_INTERACTIVE, KEYGUARD_SHOWN, DEVICE_STARTUP | Off at the shutdown; counts again at KEYGUARD_HIDDEN. Right |
+  | Activity A to B, then PiP from B, kiosk off (QA M1) | RESUMED X(A); PAUSED X(A), RESUMED X(B); RESUMED Home, PAUSED X(B); STOPPED X(A) late | On, on-paused (class B); A's STOPPED ignored; off at B's STOPPED. Right (revision 4 cut the PiP) |
+  | Reboot with a Child PIN (QA H2) | DEVICE_SHUTDOWN; SCREEN_INTERACTIVE, KEYGUARD_SHOWN; KEYGUARD_HIDDEN, RESUMED Home, RESUMED X; DEVICE_STARTUP | X counts from its RESUMED; DEVICE_STARTUP changes nothing. Right (revision 4 dropped it) |
+  | Wake within the lock delay (QA M2) | SCREEN_NON_INTERACTIVE, SCREEN_INTERACTIVE, RESUMED X, no keyguard event | Off at the screen off, X counts from its RESUMED. Right |
+  | Crash or hard power-off after a fold (QA L3) | No DEVICE_SHUTDOWN at or after `from` (it is stamped at Android's last save); a new boot count | Every package off at `from`; nothing of the downtime counts. Right |
 
   **`am crash` over another app is accepted, not covered.** Its sequence (PAUSED, another package's RESUMED within
   ms) is the same as a PiP window's entry on 16 (RESUMED Home, PAUSED app), and the two can't be told apart without
@@ -237,46 +292,98 @@ get a one-line call into GPL code, as `PlatformRefusals.plannedOff` does today.
   gate's row 12 runs it there.
 - No simpler rule held on every sequence:
   - "Any STOPPED of an on package ends it" cuts a relaunched app.
+  - "Any STOPPED of an on-paused package ends it" cuts a PiP entered from a second activity (QA M1).
   - "Another package's RESUMED ends every on package" cuts the second app of a split pair.
   - A time window after the package's last RESUMED fails a relaunch whose old STOPPED comes late (up to the same
     ~10 s timeout).
-- **`carry`** is each package's state at `from`.
+- **The read window** (revision 5, QA H1). Android's `reportEvent` stamps an event with `elapsedRealtime`, then
+  stores it from a handler on its BackgroundThread. So an event can be stamped before a read's end and stored after
+  the read. Revision 4's folds read up to now (our activities' pause and resume fold right at such events) and moved
+  `from` past it, so the event was lost for good: a lost RESUMED left X uncounted, a lost PAUSED counted X all
+  session.
+  - Each fold reads `queryEvents(from, to)` with **`to = nowWall - SETTLE_MS`** (2 s).
+  - `begin` is inclusive and `end` exclusive, so a read holds `from <= t < to`, and the next read starts at `to`: an
+    event at exactly `to` is read once, by the next fold. Events of one ms always fall in one read.
+  - A fold whose `to` isn't after `from` reads nothing and changes nothing.
+  - An event stored more than 2 s after its stamp would still be lost [assumed]. The debug build re-reads each
+    fold's window at the next fold and logs `late event` if it holds more than the fold saw; gate row 18 checks the
+    log stays clean.
+  - The cost: the ledger runs 2 s behind the clock, and the cut comes up to `SETTLE_MS` + 1 s after the limit (the
+    timer, below).
+- **The pair window at a read's end** (QA L6). A STOPPED of an on package at `t` whose pair window (to `t +
+  KILL_PAIR_MS`, inclusive) isn't wholly before `to` stays **pending** in `carry`, still counted as on.
+  - Each fold first settles the pending STOPPEDs whose window now lies before its `to`: off at the STOPPED if a
+    partner came, dated at the STOPPED (the few ms already applied aren't taken back), dropped if none came.
+  - Folds closer together than the window (our pause and resume back to back, under 50 ms apart) leave it pending
+    again, across as many folds as it takes; nothing else changes.
+  - Since a partner is never before the STOPPED (L1), `carry` no longer keeps RESUMEDs from before `from`.
+- **`carry`** is the fold's state at `from`:
+  - every package that isn't off, **any package, not only the groups'** (revision 5, QA M3), with the class of the
+    PAUSED that made it on-paused. In practice the app or two on screen and a PiP window. A group added or changed
+    reads its apps' state from it at once;
+  - the device state (screen, keyguard);
+  - the pending STOPPEDs.
+- **The first fold** (revision 5, QA M3). With no last folded point, `carry` is unknown: the policy gets its first
+  group, the ledger is new or was unreadable, or the point was cleared when the policy lost its last group.
+  - That fold reads `[to - 3 h, to)` with the count off: every package starts off, the screen off and the keyguard
+    shown; the events move the states, nothing is added, and `from` becomes `to`. Then the live check.
+  - It is exact unless the screen has been on for more than 3 h (every package goes off at a screen off). Then an app
+    with no event in those 3 h starts off and counts from its next event, at the latest the next unlock. Accepted: it
+    happens once, when a phone's first group arrives.
+  - During design 114's setup hold the fold keeps running **for state only** (D10): it moves `from` and `carry` and
+    adds nothing, so the hold's end needs no lookback.
 - **The clocks** (QA M5):
-  - The query is in **wall time**: `queryEvents(fromWall, nowWall)`.
-  - The fold's spans are mapped to **elapsed realtime** through the wall/elapsed pair measured at each end of the read,
-    and capped to the elapsed length of `[from, to]`.
+  - The query is in **wall time** (the read window above).
+  - The fold's spans are mapped to **elapsed realtime** through the wall/elapsed pair measured at the fold (`to`'s
+    elapsed is the elapsed now less `SETTLE_MS`), and capped to the elapsed length of `[from, to]`.
   - The sum is attributed to the **trusted day** with `accrue`'s midnight split: the part after the trusted local
     midnight goes to the new day.
+  - **A backward clock step** (revision 5, QA L4). The wall clock is locked to automatic time (§4.2), but automatic
+    time can still step it back. Events after a step back by Δ are stamped before `from`, and a read from `from`
+    never sees them.
+    - The fold keeps the wall-minus-elapsed offset of its last point. When the offset has fallen by more than 50 ms
+      (two clock reads' noise), Δ is the fall.
+    - The fold then reads from `from - Δ - SETTLE_MS`, starts its spans at `from - Δ`, and **skips every event it
+      already applied**, by its key (time, package, class, kind). The keys of the events applied in the last 10 min
+      are kept in memory only, never stored.
+    - A step longer than that, or one after a process restart, applies again the old events it can't tell apart, and
+      events from both sides of the step interleave by time. The elapsed cap bounds what that adds to one fold's real
+      length, against the kid.
+    - A forward step leaves a stretch with no events; the elapsed cap already covers it.
 - **The threads:**
   - The read is a binder call, so it runs on the IO executor. Only one read is in flight (single-flight).
-  - Its result is applied on the main thread, and `from` moves to the read's end **only when the result is applied**
-    to the ledger, saved with it. A failed or dropped read leaves `from` where it was.
-- **The last folded point** is persisted in the ledger record: wall time, elapsed time, boot count, and `carry`. After
-  a process restart the next fold reads the gap from that point out of Android's stored events.
+  - Its result is applied on the main thread, and `from` moves to the read's `to` **only when the result is applied**
+    to the ledger, saved with it. A failed or dropped read leaves `from` and `carry` where they were.
+- **The last folded point** is persisted in the ledger record: wall time, elapsed time, boot count, the
+  wall-minus-elapsed offset, and `carry`. After a process restart the next fold reads the gap from that point out of
+  Android's stored events.
   - In the same boot, the elapsed cap holds.
-  - After a reboot, DEVICE_SHUTDOWN/STARTUP cut the spans. The cap is the trusted time between the point and now: 0 while
-    the time is only carried and not yet checked (§2's carried anchor).
+  - After a reboot, the boot-count change resets the state (above). The cap is the trusted time between the point
+    and now: 0 while the time is only carried and not yet checked (§2's carried anchor).
 - **When it runs:** while the policy has a group, the screen is interactive and the keyguard is down
-  (`PowerManager.isInteractive`, `KeyguardManager.isKeyguardLocked`), and design 114's setup hold isn't on. This gate
-  is its own and **sits before `update()`'s `if (!appInUse) return`**: our free screens stop the screen-time count,
-  not the groups'.
+  (`PowerManager.isInteractive`, `KeyguardManager.isKeyguardLocked`). During design 114's setup hold it folds for
+  state only. This gate is its own and **sits before `update()`'s `if (!appInUse) return`**: our free screens stop
+  the screen-time count, not the groups'.
   - It folds on the tracker's events (screen on/off, user present, our activities' resume and pause, every re-check)
     and at the 60 s checkpoint, which keeps running for groups when screen time doesn't count.
-  - At screen off it runs one last fold.
+  - At screen off it runs one last fold **`SETTLE_MS` + 0.5 s later**, outside the gate, so the span up to the
+    screen off (its SCREEN_NON_INTERACTIVE included) is in the ledger while the screen is dark.
 - **The timer:** next to `budgetRunsOut`, `groupRunsOut` fires at `min(remaining of the open groups) + 1 s`, under
   the same gate.
   - When it fires it folds again. A group used up starts `TimeRulesRuntime.recheck`; otherwise the timer is armed
     again with the new minimum.
-  - Time can't grow faster than the clock, so it never fires late.
+  - Time can't grow faster than the clock, so it never fires early. The fold lags the clock by `SETTLE_MS`, so the
+    cut comes up to `SETTLE_MS` + 1 s (~3 s) after the limit is reached (revision 5, QA H1).
 - **The ledger** (`ScreenTimeLedger`) gains:
   - `groupUsedMs: Map<Long, Long>`;
   - `groupExtraMinutes: Map<Long, Int>`;
   - `appliedGroupLifts: List<Long>` (at most 50);
-  - the last folded point.
+  - the last folded point (above).
 
-  A new day clears the two maps in the same branches that clear `usedMs` and `extraMinutes`. `PreviousDay` keeps them
-  too, so an undone carried reset brings the groups back. `unreadableLedger` closes every group with a limit today and
-  marks the delivered group lifts applied.
+  A new day clears the two maps in the same branches that clear `usedMs` and `extraMinutes`; the point and `carry`
+  run on across midnight. `PreviousDay` keeps the maps too, so an undone carried reset brings the groups back.
+  `unreadableLedger` closes every group with a limit today and marks the delivered group lifts applied; the next
+  fold is a first fold.
 - **The access:** `timerules/UsageAccess.kt` reads `granted: Boolean?` the way the service decides it [d57]:
   `unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS)` is `MODE_ALLOWED`, or `MODE_DEFAULT` with `PACKAGE_USAGE_STATS`
   granted. A throw gives `null`, which counts as not granted for D6.
@@ -498,22 +605,40 @@ rebuilt tables keep their shape plus the two columns.
 
 - **Launcher, pure:**
   - `AppGroupsTest`, the fold:
-    - each row of §4.1's sequence table, from the recorded events on 14 and on 16;
-    - the kill rule's edges: the partner RESUMED before and after the STOPPED, at 0 and 50 ms (off) and at 51 ms
-      (ignored), and a relaunch's late STOPPED with no partner (stays on);
-    - a pending STOPPED at a read's end settled by the next fold, and a partner RESUMED kept in `carry` from before
-      `from`;
-    - a lone PAUSED from off is on-paused, and it counts only from KEYGUARD_HIDDEN;
+    - each row of §4.1's sequence table, from the recorded events on 14 and on 16, and the four QA rows (revision 5):
+      activity A to B then PiP from B (A's late STOPPED ignored, B's ends it); a reboot with a Child PIN with
+      DEVICE_STARTUP after X's RESUMED (X counts); a wake within the lock delay with no keyguard event (X counts from
+      its RESUMED); a new boot count with no DEVICE_SHUTDOWN in the read (every package off at `from`, no downtime
+      counted) and with one after `from` (the old boot counts up to it);
+    - the kill rule's edges (L1): the partner RESUMED in the same ms, before and after the STOPPED in report order
+      (off), at 50 ms after (off), at 51 ms after (ignored), at 1 ms before (ignored), and a relaunch's late STOPPED
+      with no partner (stays on);
+    - an on-paused package and a STOPPED of another class (ignored) and of the PAUSED's class (off) (M1);
+    - the order kept (L5): a relaunch's PAUSED and RESUMED in the same ms stay on, and the fold's input is never
+      re-sorted;
+    - a pending STOPPED (L6): at a read's end, kept pending by a second fold 30 ms later, settled by a third whose
+      `to` passes its window, with a partner (off at the STOPPED) and without (dropped);
+    - the read window (H1): `to` is now less `SETTLE_MS`; an event at `from` is read, one at exactly `to` only by the
+      next fold; a fold whose `to` isn't after `from` changes nothing;
+    - the device state (H2, M2): a lone PAUSED from off is on-paused and counts only from KEYGUARD_HIDDEN;
+      DEVICE_STARTUP changes nothing; the live check turns the count on at `to` when the state says off;
+    - the first fold (M3): with no point, the 3 h lookback with the count off fills `carry` and adds nothing; a group
+      added later reads an app's state already in `carry`; the setup hold moves the state and adds nothing;
+    - a backward clock step (L4): the new events in the overlap counted, the applied ones skipped by key; without the
+      keys the elapsed cap bounds the count; a forward step capped;
     - two apps of one group side by side counted once;
     - `carry` across a read's start;
     - the elapsed cap, and the midnight split onto the trusted day;
-    - a dropped read leaves `from`.
+    - a dropped read leaves `from` and `carry`.
+  - The timer (H1): with the fold lagging by `SETTLE_MS`, the cut comes no later than `SETTLE_MS` + 1 s after the
+    limit, and never before it.
   - `UsageAccess`: an empty read with the op not allowed (before or after the query) applies nothing and closes the
     groups.
   - `AppGroupsTest`, `groupStates`: weekday limit, `0`, `null`, a lift applied once per id, no access, an unreadable
     ledger closing the groups and marking the lifts applied, the override and the pause lifting but still counting,
-    the setup hold not folding.
-  - `ScreenTimeTest`: a new day clears groups; a carried reset brings them back; the last folded point persists.
+    the setup hold counting nothing.
+  - `ScreenTimeTest`: a new day clears the groups' maps but keeps the point and `carry`; a carried reset brings them
+    back; the last folded point persists with its boot count and offset; an unreadable ledger leaves no point.
   - `EnforcementPlanTest`:
     - closed group apps are suspended, not hidden, out of the pins and out of the usable apps (bedtime included);
     - `groupOnly` excludes an app the lock also suspends;
@@ -560,6 +685,19 @@ Test app: any allowed F-Droid app, plus a second one as the group's other app. G
 12. **The kill rule** (kiosk off, a non-group app's task below the group app): `kill -9` of the group app stops its
     count at once (the PWA's minutes stay put while the other app is used); `am crash` stops it within ~11 s. On 16
     too, where step 0 had only Vibb One below.
+13. **A partner that must cold-start** (QA L2): as row 12, with the app below's process killed first (`am kill`, so
+    its RESUMED needs a cold start). Record the STOPPED-to-RESUMED gap on 14 and 16. Over 50 ms: §4.1's after-window
+    becomes "the first other RESUMED with no event of X between, within 2 s", and the row runs again.
+14. **A reboot with a Child PIN** (QA H2), on 14 and 16: record the order of SCREEN_*, KEYGUARD_*, DEVICE_STARTUP
+    and the first RESUMEDs; open the group app right after the unlock and use it 1 min. Its minutes count.
+15. **A wake within the lock delay** (QA M2): with the group app in front, let the screen time out and wake it before
+    Android's lock delay ends (no PIN asked). The app's minutes keep counting.
+16. **A hard power-off** (QA L3): use the group app past two folds, then `adb emu kill` (no shutdown); boot, unlock
+    and wait. The minutes don't grow by the time the emulator was off.
+17. **PiP from a second activity** (QA M1), kiosk off: a group app that opens a second activity and enters PiP from
+    it within ~0.5 s of going Home. It counts while the PiP plays, and stops when the PiP is closed.
+18. **No late event** (QA H1): the debug build's `late event` log line (§4.1, the read window) never appears over
+    rows 2-17.
 
 ## 9. Steps
 
@@ -567,8 +705,9 @@ Test app: any allowed F-Droid app, plus a second one as the group's other app. G
    `probe-139` was never pushed and isn't built on.
 1. **Server and contract** (one commit with the launcher's contract tests): the migration and its rebuild, the pages,
    the policy, the report fields, the group lift, the setup row and feature.
-2. **Launcher:** the manifest, `UsageAccess`, the fold, the clocks and the ledger, the plan's two inputs, the timer,
-   the cut with the call rule, and the report.
+2. **Launcher:** the manifest, `UsageAccess`, the fold (with revision 5's read window, device state, first fold and
+   clock step), the clocks and the ledger, the plan's two inputs, the timer, the cut with the call rule, the report,
+   and the debug build's `late event` re-read.
 3. **Launcher:** the dimmed tiles, the sheet, and Q4's notice.
 4. Code QA, then the emulator gate (§8) on 14 and 16. The release ships the server first.
 
@@ -586,6 +725,7 @@ Docs with the build:
   - `ACTIVITY_RESUMED/PAUSED/STOPPED` and `DEVICE_SHUTDOWN/STARTUP` are 29.
   - `SCREEN_INTERACTIVE/NON_INTERACTIVE` and `KEYGUARD_SHOWN/HIDDEN` are 28 [sdk].
   - `ACTIVITY_DESTROYED` and `getInstanceId` are [hidden] and not used.
+  - `Event.getClassName` is 21, `Settings.Global.BOOT_COUNT` 24 [sdk].
 
   No call needs a `SDK_INT` gate in v1 (D11). Lint's NewApi stays on.
 - **The access** is an app-op that a device owner can't grant: `hasQueryPermission` has no device-owner exemption on
@@ -599,6 +739,12 @@ Docs with the build:
 - **The events** are the same on 14 and 16 for every case of §4.1's table that both ran. Android writes a killed
   app's STOPPED itself on both. 16 orders a PiP window's PAUSED before KEYGUARD_HIDDEN and 14 after it, and the fold
   reads both the same [probe].
+- **How Android stores them** (the design QA's reading of AOSP 14, revision 5): `reportEvent` stamps
+  `elapsedRealtime` and stores the event later from a BackgroundThread handler (§4.1's read window);
+  DEVICE_SHUTDOWN is written at the next start, at the later of the last save and the stored events' end;
+  DEVICE_STARTUP is stamped at the user's storage unlock; `queryEvents` returns time order with ties in report order,
+  `begin` inclusive and `end` exclusive. Not read in 16's code: gate rows 14 and 18 run on 16 too, and 17 is
+  unchecked.
 - **The deprecation:** `unsafeCheckOpNoThrow` needs `@Suppress("DEPRECATION")` at compileSdk 36 (§4.1).
 - **Background activity starts:** the device owner is exempt on 14-17, which the time-rule screen's start relies on
   today. Nothing new.
@@ -810,3 +956,23 @@ Step 0 ran on Android 14 (`docs/testing/emulator.md` §6ca row 2) and 16 (§6cb 
 | §5.3, §6 | The usage access page: `package:` opens Vibb One's own page on 14 and 16, and the switch works for the debug build. The restricted-settings guard for a QR-provisioned, self-updated Vibb One is the Jelly check after the release. The step's (i) carries the on-phone path for a greyed switch from the start, and the line goes if the Jelly shows no guard. |
 | §7, §8, §9, §10 | Tests from the recorded sequences; §8 row 1 and §9 step 0 marked done; gate row 12 (the kill rule with another app below); §10's checked-on. |
 | Status | Step 0 is done on 14 and 16, and the build may start. §12's decisions are unchanged. |
+
+## 17. Revision 5 (the design QA of revision 4, daf759060)
+
+The QA read §4.1 against AOSP 14's usage-stats code. Every finding is taken; all of them land in §4.1's fold, with
+tests in §7 and gate rows 13-18 in §8. §12 is unchanged.
+
+| QA | What changed |
+|---|---|
+| H1 | §4.1 "The read window": each fold reads `queryEvents(from, to)` with `to = nowWall - SETTLE_MS` (2 s), `begin` inclusive and `end` exclusive, the next read from `to`. An event stamped before a read but stored after it is no longer lost. The timer: the cut comes up to `SETTLE_MS` + 1 s after the limit, never before. The screen-off fold runs `SETTLE_MS` + 0.5 s after the screen off. Added: the debug build re-reads each window and logs `late event` (gate row 18), so the 2 s is checked, not only assumed. |
+| H2 | §4.1 "The device state": DEVICE_STARTUP changes nothing. Counting is a state, screen on (SCREEN_*) and keyguard hidden (KEYGUARD_*). DEVICE_SHUTDOWN and a boot-count change turn every package off. Table row and test for a reboot with a Child PIN; gate row 14 records the order on 14 and 16 and counts the app opened right after the unlock. Added, a **live check**: a fold (which runs only while the screen is on and unlocked) whose state says "not counting" turns it on at `to`, so a missed device event (no keyguard at all, the first fold) can't stop the count for good; it costs at most 2 s before an unlock, against the kid. |
+| M1 | §4.1: an on-paused package goes off only at a STOPPED with the class of the PAUSED that made it on-paused (`Event.getClassName`, API 21). Table row, test, and gate row 17 (PiP from a second activity). §4.1's "no simpler rule" names the rule that failed. |
+| M2 | The same device state as H2: a wake within the lock delay counts X from its RESUMED. Table row and test with no keyguard event; gate row 15. |
+| M3 | §4.1 "The first fold": with no last folded point, a `[to - 3 h, to)` lookback with the count off fills `carry`. **One change to the suggested fix:** `carry` keeps every package that isn't off, not only the groups' apps, so a group added or changed needs no lookback, its apps' state is already there; the lookback is left for a missing point (a first group, a new or unreadable ledger, a point cleared when the last group went). During the setup hold the fold runs for state only (D10). D11 names what `carry` keeps. Accepted: an app in front with the screen on for over 3 h when a phone's first group arrives counts from its next event. |
+| L1 | §4.1's kill rule: the partner RESUMED is in the same ms (either report order) or up to 50 ms after the STOPPED, never before. `carry` no longer keeps RESUMEDs from before `from`. Tests at the edges. |
+| L2 | Gate row 13: a kill over an app that must cold-start, the gap recorded on 14 and 16. If over 50 ms, the after-window becomes "the first other package's RESUMED with no event of X between, within 2 s". |
+| L3 | §4.1: a boot-count change resets the state at the read's DEVICE_SHUTDOWN, or at `from` when the read holds none. **Better than "at the persisted point" alone:** a normal reboot's shutdown lies after `from` and its last minute still counts; a read with no shutdown holds nothing of the old boot, so the reset at `from` drops nothing. Table row, test, gate row 16 (`adb emu kill`). |
+| L4 | §4.1 "A backward clock step": the fold keeps the wall-minus-elapsed offset; on a fall Δ it reads from `from - Δ - SETTLE_MS` and skips events already applied, by key (time, package, class, kind). The keys are the last 10 min's, in memory only (not in the persisted `carry`, which stays small); beyond them, or after a restart, the elapsed cap bounds the overlap, against the kid. The offset is persisted with the point. Test only: the clock is locked to automatic time, and the emulator can't make a step in the gate's way. |
+| L5 | §4.1: the fold keeps `queryEvents`' order (ties in report order); no re-sort, a merge only stable. Test with a relaunch's PAUSED and RESUMED in the same ms. |
+| L6 | §4.1 "The pair window at a read's end": a pending STOPPED stays pending across folds closer than the window and is settled by the first fold whose `to` passes it. Test with folds 30 ms apart. |
+| Other | §10 records the QA's AOSP 14 reading (storage, the injected shutdown, DEVICE_STARTUP's stamp, the query's order and bounds) and the two new APIs. §9 step 2 names revision 5's parts. The ledger keeps the point and `carry` across midnight, and an unreadable ledger makes the next fold a first fold. §12's "never stored" line is left as decided: since revision 4 `carry`, on the phone only, keeps the one or two packages on screen at the last folded point (D11). |
