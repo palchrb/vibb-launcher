@@ -3636,3 +3636,88 @@ Not checked: the Jelly Star's restricted-settings guard (row 1, the owner's row)
    violation (101), with the kiosk off in the policy. The reboot of row 14 cleared it.
 4. **Row 15's case is unreachable on a Vibb phone with a Child PIN** (Android 14): the lock delay is 0, so there is
    nothing to fix; gate B can say whether 16 differs.
+
+## 6ce. Design 139 gate on Android 16 (branch `gate-139b`)
+
+§6cc's rows (design 139 §8 rows 2-18) on **Android 16 only**, `jelly36` (Google Play image, `-wipe-data`, port 5560),
+2026-11-27 13:50-15:05 UTC, with the owner's OK for the day; Android 14 is gate A's (`compat34`). `main` at `d4ebd4886`:
+gate A's debug launcher and debug server 0.95.0 (`--features emulator_keys`) run as this gate's own copy (admin
+`127.0.0.1:3200`, phones `10.0.2.2:3201`, own data). The phone: §4's adb lines (`appops set ... GET_USAGE_STATS allow`),
+"Telefon 1" with Foreldre-PIN 246813, Koble til with a typed code, the setup flow skipped through, Barne-PIN 4826 (Android's
+PIN), screen timeout 10 min (15 s for row 15), system language English (so the words below are the en copy). The group
+apps are three hand-made test apps outside the repo, built like §6cb's probe (`aapt2`, `javac`, `d8`, `apksigner` with the
+machine's debug key; debuggable, never on a real phone), let out with "Allow these apps": **X** `probe.usage` ("Probe X":
+a PiP-capable activity, a second activity that enters PiP on Home, a fake VoIP ring/call - CALL-category full-screen
+notification, a CALL-category foreground service, `MODE_IN_COMMUNICATION` with silence on a voice track - and §6cb's
+`Dump` receiver), **Y** `probe.other` (the group's second app) and **Z** `probe.below` (not in a group; the app below
+for rows 9, 12, 13; its `Dump` read the events). The group "Test" of X and Y was made anew per row (a new group starts
+at 0), limit 1-5 min. Minutes from the ledger (`run-as ... shared_prefs/time_rules_state.xml`, `group_used_ms`, ms) and
+the PWA's Time Rules row; events from `queryEvents` (`Dump`). "Kiosk off" = a parent pause (`/start-pause`, lock task
+`NONE`), as §6cb. Logs and scripts in the session's `scratchpad/g139b/` (not committed).
+
+| Row | Result on Android 16 |
+|---|---|
+| 2. Use the app 2 min | **Pass.** X RESUMED 14:07:42.083; at 14:09:45.393 PAUSED (the cut, 123.3 s after), `A group closed: Home over probe.usage`, Home in front, X and Y `suspended=true`, ledger 121734. Home's X and Y tiles dimmed (screenshot); a tap opens the sheet "Test" / "Used up today" / Close |
+| 3. Two apps in turn, one limit; screen off and the PIN lock count nothing | **Pass.** X 60.368 s (RESUMED to STOPPED) + Y 60.287 s = ledger 120655 exactly; the PWA "2 of 5 min". Screen off 60 s, then the keyguard (PIN pad) 40 s: +0 |
+| 4. +15 from the Skjermtid sheet | **Pass.** Limit lowered to 2 (used up, closed); `/lifts` `what=group-2 minutes=15`: unsuspended 1.1 s later, `group_extra_minutes {'2': 15}`, X opens |
+| 5. Revoke the access, grant again | **Pass.** `appops set ... GET_USAGE_STATS ignore` with X in front: X and Y suspended within 1 s, Home in front. The PWA: "App usage data is off", the row "Can't count" (and its (i)); the kid's sheet "Can't count now". `allow` again: open 1 s later, and the gap while it was off (X 14:15:50.720-14:16:00.403) was read and counted: +9683 exactly |
+| 6. Pause all restrictions; the setup hold | **Pause: Pass. Setup hold: Fail (finding F2).** Group used up (61.6 s of 60), the pause: open in 2.4 s; X 30 s in the pause counted (+30.0 s); "Lås igjen": closed again 1.1 s later, the 2.3 s up to X's STOPPED counted. The hold (a second wiped phone, "Telefon 2", its group made before enrolment): X 65 s in the hold - `group_used_ms` stayed empty, `carry` followed X (state only). But the first fold after the hold ended counted the hold's last 17.2 s (below) |
+| 7. A rule and bedtime that allow X, group used up | **Pass.** Bedtime 14:00-07:00 and a rule "Skole" 14:00-15:30, each allowing X and Z: the rule screen lists "Probe Z" and no row for X; X stays `suspended=true` |
+| 8. A call | **Pass.** (a) X at the limit in a fake VoIP call (`VoIP NONE -> RINGING`, answered: `RINGING -> IN_CALL, pinned probe.usage`): at the limit Y was suspended at once, X stayed in front and unsuspended; hang-up: X suspended 1 s later, `A group closed: Home over probe.usage`. (b) Y closed at once (above). (c) `MODE_IN_COMMUNICATION` alone (voice-track silence, `mAudioModeOwner ... probe.usage` still at the cut): X closed at the limit as any app. Noted: without audio, Android dropped the fake app's mode within ~16 s and VoipCalls went `IN_CALL -> NONE` while keeping `pinned probe.usage` (the call notification lived), so the hold held in (a) |
+| 9. Kiosk off: the cut brings Home; PiP counts | **Pass.** Several pinned apps (kiosk on), X's task over Z's: at the cut Z resumed (14:25:08.368) and Home came 362 ms later by the cut (`Home over probe.usage`). In a pause, X in PiP over Home: on-paused in `carry`, +41.9 s in 41.9 s; the pause's end with the PiP playing: PiP gone, Home, off at its STOPPED. X over Z in a pause, then the pause's end: Home (noted below) |
+| 10. The title in the last 5 min | **Pass.** Group limit 4 min, X in front: the anchor's title "Test: 4 min left" (3 min 2 s left, rounded up), then "Test: 3 min left"; after X closed the title went at the next fold. Noted below: it follows the fold's `carry` |
+| 11. Kill the launcher mid-use | **Pass.** `run-as ... kill -9` of Vibb One 15 s into X; the new process locked the phone (`PinLock: Process start: LOCKED`, screen off 14:31:25.661). The first fold read the gap from Android's events: X RESUMED 14:31:03.971 to STOPPED 14:31:25.521 = +21550 exactly |
+| 12. The kill rule, Z's task below X (kiosk off) | **Pass.** `kill -9`: STOPPED X 14:34:07.311 (no PAUSED), RESUMED Z 2 ms later; X off at once, +12021 = its RESUMED-to-STOPPED exactly; Z 30 s and more added nothing; the PWA "2 of 4 min". `am crash` on 16 is the same as a kill (unlike 14's 10.6 s): STOPPED X, RESUMED Z 1 ms later, +10004 exactly |
+| 13. A partner that must cold-start | **Fail - the 2 s fallback is needed (finding F1).** Z's process killed first (`am kill probe.below`, `pidof` empty), then X killed: STOPPED X to RESUMED Z = **338, 309, 326 ms** (`kill -9`) and **352, 322 ms** (`am crash`, a minute apart: a second crash within a minute brings "keeps stopping", which spoils the run). Warm, row 12: 1-2 ms. All five over 50 ms, so X stayed on |
+| 14. Reboot with a Child PIN | **Pass.** `svc power reboot`; before: PAUSED and STOPPED Home, DEVICE_SHUTDOWN 14:40:54.204. After (unlock at 14:43:0x): **SCREEN_INTERACTIVE, RESUMED Vibb One (`BootCoverActivity`), KEYGUARD_SHOWN at 14:43:02.899, KEYGUARD_HIDDEN .924, DEVICE_STARTUP .947** - the boot's events before the unlock are stamped at the unlock - then RESUMED Home 14:43:18.139, RESUMED X 14:43:27.223. X's minute counted: +64496 = RESUMED to the fold point exactly |
+| 15. A wake within the lock delay | **Blocked - not reachable on a Vibb phone (noted below).** Timeout 15 s, X in front; at the timeout SCREEN_NON_INTERACTIVE 14:47:15.208, KEYGUARD_SHOWN .729; a wake 1.5 s later asked for the PIN. X counted up to the screen off (30.787 s exactly), nothing after |
+| 16. A hard power-off | **Pass.** X past two folds (161016, 221078), `emu kill` 44.5 s after the last fold, off ~45 s, boot, unlock, two folds: still **221078**. The read held no DEVICE_SHUTDOWN (the events after Android's last save were gone, X's RESUMED too): the reset at `from`, the downtime and the 44.5 s uncounted |
+| 17. PiP from a second activity (kiosk off) | **Pass.** `am start -W` (clear task, X's Main opens Second) and Home: RESUMED Main 14:56:41.948, PAUSED Main .972, RESUMED Second .976, PAUSED Second 42.269 (PiP), **STOPPED Main 42.270 - after B's PAUSED**. `carry`: `probe.usage` on-paused, class `Second`; it counted while the PiP played and stopped at Second's STOPPED 14:57:32.101 (+50.153 s = Main's RESUMED to Second's STOPPED exactly). With A's STOPPED before B's PAUSED (a slower Home): the same, +32.944 exactly |
+| 18. No late event | **Pass.** 0 `late event` lines, and no other `AppGroupUsage` warning, in the whole logcat of rows 2-17 (the launcher's lifetime; only the reboots' boot windows missing) |
+
+### Findings
+
+**F1 (row 13) - Reproduced, traced. Medium (against the kid), fix small.** On 16 a group app killed or crashed over an
+app whose process must cold-start gets that app's RESUMED 309-352 ms after its STOPPED, past `KILL_PAIR_MS` = 50
+(`launcher/app/src/main/java/com/kidslauncher/mdm/timerules/AppGroups.kt:19`; the pair check `:271-283`). The STOPPED is
+dropped and the dead app stays **on** until its next event or the screen off: X died at 14:36:23.8 and was still counted
+at 14:37:02 (+38 s past its death), it went on counting through the next runs (group 7, limit 4 min, closed at 318 s with
+X dead most of it), and a new group (8) took +3.5 s for the dead X before the reboot. As §4.1 says for this case: the
+after-side becomes "the first RESUMED of another package with no event of X between, within 2 s" (the same-ms side and
+the rest unchanged; the pending STOPPED's window in `carry` grows to 2 s with it); then row 13 runs again on 14 and 16.
+
+**F2 (row 6, the setup hold) - Reproduced, traced. Low (once per phone, against the kid), fix small.**
+`timerules/AppGroupUsage.kt:95` decides `count = !plan.first && !RestrictionsPause.holdActive()` once per fold for its whole
+window, so the first fold after the hold ends counts the hold's last stretch since its last state-only fold: X in front,
+the last hold fold at 15:03:04.503, the hold ended 15:03:21.654 (`WindowRelock: Relocked (command, [pause])`), and the
+next fold counted from 15:03:04.503: 60955 = 17.556 s of hold + 43.401 s after it (X's events). At most a checkpoint (60
+s) + `SETTLE_MS`, at a fresh enrolment only. Fix: a state-only fold when the hold ends (before the flag clears), or count
+from the hold's end (`spanFrom = max(from, holdEnd)`).
+
+### Noted (no code change)
+
+- **Row 15 can't happen here.** Vibb sets the device policy's maximum time to lock to the screen timeout
+  (`lock/KeyguardCover.kt:39`, `:113`; `AndroidLock: maxTimeToLock=15000`), and SystemUI's lock delay is the smaller of
+  "lock after timeout" (5 s) and that maximum less the timeout - 0. So the keyguard shows at every screen-off timeout; the
+  QA M2 sequence (screen off and on, the app's RESUMED, no keyguard event) needs a phone without that policy. The fold's
+  rule for it stays unit-tested only.
+- **Row 10's title follows the fold's `carry`.** A group app opened from Home is in `carry` only at the next fold (the fold
+  at Home's pause reads up to now - 2 s), so the title came up to a checkpoint (~60 s) after X opened, and went a fold
+  after X closed. The timer is armed from the same fold, so the cut is unaffected.
+- **Row 9, the pause's end with X over Z:** the group code's cut didn't fire (X wasn't in `carry` yet, as above), Z
+  showed 1.5 s, and Home came from the relock's own `bringAfterUnlock` (`server/WindowRelock.kt:700`). Z is an allowed
+  app; nothing is wrong, but the cut alone wouldn't cover this.
+- Environment: the adb-installed test apps' own GET_USAGE_STATS app-op was back at `default` after a while (set again
+  before each `Dump`); the first boot's emulator was killed once (memory, while gate A built) and adb went offline at
+  its enrolment - a second wipe was clean.
+
+### Summary
+
+| Row | 16 |
+|---|---|
+| 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 16, 17, 18 | Pass |
+| 6 | Pause Pass; setup hold **Fail** (F2, Low) |
+| 13 | **Fail**: the cold-start gap is 309-352 ms (5 runs), the 2 s fallback is needed (F1, Medium) |
+| 15 | Blocked: not reachable with Vibb's maximum time to lock |
+
+No product code changed. The emulator and the server were stopped at 15:05 UTC.
