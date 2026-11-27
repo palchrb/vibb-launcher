@@ -24,7 +24,7 @@ async fn fresh_policy_has_no_rules_unlimited_budget_and_on_request_location() {
     assert_eq!(
         p["time_policy"],
         json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": [],
-               "request_answers": true})
+               "request_answers": true, "groups": []})
     );
     assert_eq!(
         p["location_policy"],

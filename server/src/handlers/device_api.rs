@@ -1863,7 +1863,7 @@ fn known_value(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<se
         };
         kept.insert(key.to_string(), value);
     }
-    (!kept.is_empty()).then(|| Value::Object(kept))
+    (!kept.is_empty()).then_some(Value::Object(kept))
 }
 
 /// `POST /api/devices/status`. Design 95 §3.5 (step 95-T2): a heartbeat is first expanded into the full report it
