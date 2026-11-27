@@ -105,9 +105,9 @@ fn posted_apps(fields: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
-/// `name` (1-40 characters, trimmed), `apps` (at least one, at most [MAX_APPS], none in another of the phone's groups
-/// - [others]: their names and apps, `None` for apps that don't read, which conflict with any app (fail closed) -, D2),
-/// `b0`..`b6` (0-1440 or empty). [labels]: the apps' names for a refusal.
+/// `name` (1-40 characters, trimmed), `apps` (at least one, at most [MAX_APPS], none in another of the phone's groups,
+/// D2), `b0`..`b6` (0-1440 or empty). [others]: the other groups' names and apps, `None` for apps that don't read,
+/// which conflict with any app (fail closed). [labels]: the apps' names for a refusal.
 pub(crate) fn parse_group_form(
     lang: Lang,
     fields: &[(String, String)],
