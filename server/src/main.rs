@@ -3,6 +3,7 @@ mod airplane_mode;
 mod apk;
 mod app_display;
 mod app_downloads;
+mod app_groups;
 mod app_icons;
 mod app_logos;
 mod app_permissions;
@@ -1092,6 +1093,19 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/bedtime/remove",
             post(handlers::bedtime::remove_bedtime),
+        )
+        // Design 139 §5.3: a phone's app groups.
+        .route(
+            "/devices/{id}/time/groups/new",
+            get(handlers::app_groups::new_group).post(handlers::app_groups::create_group),
+        )
+        .route(
+            "/devices/{id}/time/groups/{gid}",
+            get(handlers::app_groups::show_group).post(handlers::app_groups::save_group),
+        )
+        .route(
+            "/devices/{id}/time/groups/{gid}/delete",
+            post(handlers::app_groups::delete_group),
         )
         // Dagen (design 69 §3): Device › Calendar and its rule editor.
         .route(

@@ -1146,12 +1146,18 @@ async fn build_time_policy(
         crate::time_answers::phone_day_start(&state.db, policy.device_id, chrono::Utc::now())
             .await?;
     let answer = crate::time_answers::policy_answer(&state.db, policy.device_id, day_start).await?;
+    // Design 139 §5.2: a stored group that doesn't read is a 500, never fewer groups.
+    let groups = crate::app_groups::policy_groups(
+        &crate::app_groups::of_device(&state.db, policy.device_id).await?,
+    )
+    .map_err(PolicyError::CorruptTimePolicy)?;
     Ok(TimePolicy {
         rules,
         daily_budget_minutes,
         lifts,
         request_answers: true,
         answer,
+        groups,
     })
 }
 
@@ -1747,7 +1753,18 @@ pub(crate) enum Field {
     Bool,
     /// Integers, at most this many.
     Ints(usize),
+    /// Design 139 §5.2: objects of these known keys, at most this many - each object kept to its keys, anything that
+    /// isn't an object dropped.
+    Objects(usize, &'static [(&'static str, Field)]),
 }
+
+/// Design 139 §4.4: one group of `time_state.groups` - its id, minutes used and given, and whether it is closed.
+const GROUP_FIELDS: &[(&str, Field)] = &[
+    ("id", Field::Int),
+    ("used_minutes", Field::Int),
+    ("extra_minutes", Field::Int),
+    ("closed", Field::Bool),
+];
 
 /// The launcher's `TimeState` (`StatusReportRequest.kt`), every key it sends.
 pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
@@ -1766,6 +1783,12 @@ pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
     ("clock_trust", Field::Word(16)),
     ("unanchored_ms", Field::Int),
     ("storage_full", Field::Bool),
+    // Design 139 §4.4: the phone's "App usage data" access (left out when unreadable) and its app groups today.
+    ("usage_access", Field::Bool),
+    (
+        "groups",
+        Field::Objects(crate::app_groups::MAX_REPORTED, GROUP_FIELDS),
+    ),
 ];
 
 /// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
@@ -1804,6 +1827,11 @@ pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
 /// `value` isn't an object or none of its keys is kept. A key the launcher adds later is stored
 /// once it is listed here, when the server starts reading it.
 pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<String> {
+    known_value(value, fields).map(|kept| kept.to_string())
+}
+
+/// [known_fields] as a value.
+fn known_value(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<serde_json::Value> {
     use serde_json::Value;
     let object = value.as_object()?;
     let mut kept = serde_json::Map::new();
@@ -1826,11 +1854,16 @@ pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) 
             {
                 found.clone()
             }
+            (Field::Objects(max, keys), Value::Array(list)) if list.len() <= *max => Value::Array(
+                list.iter()
+                    .filter_map(|item| known_value(item, keys))
+                    .collect(),
+            ),
             _ => continue,
         };
         kept.insert(key.to_string(), value);
     }
-    (!kept.is_empty()).then(|| Value::Object(kept).to_string())
+    (!kept.is_empty()).then(|| Value::Object(kept))
 }
 
 /// `POST /api/devices/status`. Design 95 §3.5 (step 95-T2): a heartbeat is first expanded into the full report it

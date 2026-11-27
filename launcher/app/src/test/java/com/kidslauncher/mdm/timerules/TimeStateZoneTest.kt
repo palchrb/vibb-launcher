@@ -29,6 +29,12 @@ class TimeStateZoneTest {
         day = "2026-10-14", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 0, activeRuleId = 7,
         activeRuleName = "Leggetid", callsBlocked = false, lockReason = "BEDTIME", liftsActive = emptyList(),
         zone = zone, clockSkewMs = 0, clockTrust = "server", unanchoredMs = 0, storageFull = true,
+        // Design 139 §4.4: the usage access and the groups, minutes only.
+        usageAccess = true,
+        groups = listOf(
+            com.kidslauncher.mdm.server.dto.GroupReport(3, 40, 15, closed = false),
+            com.kidslauncher.mdm.server.dto.GroupReport(4, 60, 0, closed = true),
+        ),
     )
 
     /** The contract's clock fields: checked by the server, at the time it reported. */
@@ -48,7 +54,14 @@ class TimeStateZoneTest {
         val lock = TimeLock(reason = LockReason.BEDTIME, rules = listOf(rule), callsAllowed = true)
         val ledger = ScreenTimeLedger(day = "2026-10-14", usedMs = 42 * 60_000L)
         val policy = TimePolicy(rules = listOf(rule), dailyBudgetMinutes = List(7) { 90 })
-        return TimeRulesRuntime.Snapshot(lock, policy, ledger, budgetUse(ledger, policy), emptyList(), Clocks(0, 0, 1), zone, storageFull = true)
+        val groups = listOf(
+            GroupState(3, "Spill", setOf("org.example.game"), 60, 40 * 60_000L + 59_000L, 15, GroupStatus.OPEN),
+            GroupState(4, "Video", setOf("org.example.video"), 60, 60 * 60_000L, 0, GroupStatus.USED_UP, lifted = true),
+        )
+        return TimeRulesRuntime.Snapshot(
+            lock, policy, ledger, budgetUse(ledger, policy), emptyList(), Clocks(0, 0, 1), zone, storageFull = true,
+            groups = groups, usageAccess = true,
+        )
     }
 
     @Test

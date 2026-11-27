@@ -877,6 +877,7 @@ mod tests {
             phone_key: None,
             by: None,
             at_ms: 4,
+            group_id: None,
         };
         let lifts = served.with_twins(vec![lift(11, Some(9)), lift(12, None), lift(13, Some(4))]);
         assert_eq!(lifts.len(), 4);
@@ -966,6 +967,7 @@ mod tests {
             phone_key: None,
             by: Some("Mamma".into()),
             at_ms: 1_794_826_800_000,
+            group_id: None,
         };
         let served = |served: ServedRules| {
             serde_json::to_value(crate::time_rules::TimePolicy {
@@ -974,6 +976,7 @@ mod tests {
                 lifts: served.with_twins(vec![pause.clone()]),
                 request_answers: true,
                 answer: None,
+                groups: Vec::new(),
             })
             .unwrap()
         };
@@ -1072,6 +1075,7 @@ mod tests {
                 lifts: served.with_twins(Vec::new()),
                 request_answers: true,
                 answer: None,
+                groups: Vec::new(),
             })
             .unwrap()
         };

@@ -309,6 +309,10 @@ impl Integrations {
                 }
             }
         }
+        // Design 139 §5.3: the core's own input beside the integrations' - an app group limits some day.
+        if crate::app_groups::setup_input(&state.db, device_id).await {
+            part.inputs.push(crate::setup_status::APP_GROUPS_INPUT);
+        }
         part
     }
 }

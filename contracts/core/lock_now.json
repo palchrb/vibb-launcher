@@ -137,7 +137,8 @@
         "at_ms": 1794826800000
       }
     ],
-    "request_answers": true
+    "request_answers": true,
+    "groups": []
   },
   "policy_end_locked": {
     "rules": [
@@ -300,7 +301,8 @@
         "at_ms": 1794826800000
       }
     ],
-    "request_answers": true
+    "request_answers": true,
+    "groups": []
   },
   "policy_on_demand": {
     "rules": [
@@ -437,7 +439,8 @@
       null
     ],
     "lifts": [],
-    "request_answers": true
+    "request_answers": true,
+    "groups": []
   },
   "policy_off_rule": {
     "rules": [
@@ -574,7 +577,8 @@
       null
     ],
     "lifts": [],
-    "request_answers": true
+    "request_answers": true,
+    "groups": []
   },
   "cases": [
     {

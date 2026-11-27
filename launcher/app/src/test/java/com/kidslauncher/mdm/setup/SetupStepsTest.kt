@@ -93,6 +93,7 @@ class SetupStepsTest {
         mapAppInstalled = row.getValue("map_app_installed").jsonPrimitive.boolean,
         linkGate = row.getValue("link_gate").jsonPrimitive.boolean,
         locationInterval = row.getValue("location_interval").jsonPrimitive.boolean,
+        appGroups = row.getValue("app_groups").jsonPrimitive.boolean,
     )
 
     @Test

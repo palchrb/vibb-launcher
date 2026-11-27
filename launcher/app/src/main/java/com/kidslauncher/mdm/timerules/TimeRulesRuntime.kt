@@ -145,6 +145,10 @@ object TimeRulesRuntime {
         val phoneLiftIds: List<Long> = emptyList(),
         /** The ledger can't be saved ([storageFull]): `time_state.storage_full`. */
         val storageFull: Boolean = false,
+        /** Design 139: each app group today ([groupStates]). */
+        val groups: List<GroupState> = emptyList(),
+        /** Design 139: the usage access as read for this snapshot (`null` unreadable). */
+        val usageAccess: Boolean? = null,
     )
 
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
@@ -254,6 +258,12 @@ object TimeRulesRuntime {
             clockTrust = clock?.trust?.wire,
             unanchoredMs = clock?.unanchoredMs,
             storageFull = snap.storageFull,
+            usageAccess = snap.usageAccess,
+            groups = snap.groups.map {
+                com.kidslauncher.mdm.server.dto.GroupReport(
+                    it.id, (it.usedMs / 60_000L).toInt(), it.extraMinutes, it.status.closes,
+                )
+            },
         )
     }
 

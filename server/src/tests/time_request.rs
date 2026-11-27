@@ -901,6 +901,29 @@ async fn a_fitting_lift_answers_the_open_request() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     assert_eq!(answer_row(&app, id, &request).await, None, "a rule pause");
+    // Design 139 §5.2: extra time for an app group never answers a request for screen time (`fits`).
+    let group: i64 = sqlx::query_scalar(
+        "INSERT INTO app_groups (device_id, name, apps_json, days_json) VALUES (?, 'Spill', \
+         '[\"org.example.game\"]', '[60,60,60,60,60,60,60]') RETURNING id",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts"),
+            Some(&cookie),
+            &[("what", &format!("group-{group}")), ("minutes", "15")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(
+        answer_row(&app, id, &request).await,
+        None,
+        "a group's extra time"
+    );
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await

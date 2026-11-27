@@ -140,6 +140,32 @@
             {% endif %}
         </div>
     </section>
+
+    {#- Design 139 §5.3: the phone's app groups, a row each to its editor; design 114's line when App usage data is
+        off. A group's delete lands here with its flash. -#}
+    <section id="groups" aria-labelledby="groups-title">
+        <h2 class="group-header" id="groups-title">{{ self.t("device.groups.title") }}</h2>
+        {% for line in setup_warnings.at("groups") %}{% include "partials/setup_warning.html" %}{% endfor %}
+        <div class="group">
+            {% for g in groups %}
+            <a class="row" href="/devices/{{ device.id }}/time/groups/{{ g.id }}" data-group="{{ g.id }}">
+                <span class="row-label">{{ g.name }}<span class="row-sub{% if g.corrupt %} text-alarm{% endif %}">{{ g.summary }}</span></span>
+                {% if let Some(value) = g.value %}<span class="row-value">{{ value }}</span>{% endif %}
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endfor %}
+            <a class="row row-button" href="/devices/{{ device.id }}/time/groups/new">{{ self.t("device.groups.add") }}</a>
+            {% if let Some(text) = group_notice %}<p class="flash" role="status" data-flash="groups">{{ text }}</p>{% endif %}
+        </div>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.groups.info") }}</p>
+                </div>
+            </details>
+        </div>
+    </section>
     </div>
 </main>
 </body>

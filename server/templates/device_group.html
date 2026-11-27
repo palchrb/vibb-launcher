@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+{#- Design 139 §5.3: one app group, shaped like the Bedtime page. Save sits on the band and submits the form by its id;
+    the save's flash or a refusal's reason is the form's first box (.editor-flash). A save returns to this form
+    (#group), an add to the new group's page, a refusal renders this page again (400) as typed, the reason also under
+    its field. -#}
+{% call band::editor(title, "/devices/" ~ device_id ~ "/time#groups", self.t("device.page.time")) %}<button type="submit" class="title-action" form="group" data-save="group">{% if group_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+<main class="container container-fixed">
+    <form method="post" action="{% if let Some(gid) = group_id %}/devices/{{ device_id }}/time/groups/{{ gid }}{% else %}/devices/{{ device_id }}/time/groups/new{% endif %}#group" id="group">
+        {% if refusal.is_some() || saved %}
+        <div class="editor-flash">
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>{% endif %}
+            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="group">{{ self.t("common.saved") }}</p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if corrupt %}
+        <div class="attention attention-alarm" data-warning="group-corrupt"><div class="attention-text">{{ self.t("device.groups.corrupt") }}</div></div>
+        {% endif %}
+
+        <section id="group-main" aria-label="{{ self.t("device.groups.name") }}">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.groups.name") }}</span>
+                    <input type="text" class="row-input row-input-end" name="name" value="{{ form.name }}" maxlength="40" required autocomplete="off"{% if form.name_error.is_some() %} aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}>
+                </label>
+                {% if let Some(why) = form.name_error %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
+            </div>
+        </section>
+
+        <section id="group-apps" aria-labelledby="group-apps-title">
+            <div class="group">
+                <details class="cell disclosure"{% if form.apps_error.is_some() || group_id.is_none() %} open{% endif %}>
+                    <summary class="row">
+                        <span class="row-label" id="group-apps-title">{{ self.t("device.groups.apps") }}</span>
+                        <span class="row-value" data-value="apps">{{ form.apps_value(lang) }}</span>
+                        <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </summary>
+                    {% if let Some(why) = form.apps_error %}<p class="flash flash-error" id="apps-error" data-flash="apps">{{ why }}</p>{% endif %}
+                    {% for a in form.apps %}
+                    <label class="row">
+                        <span class="row-label">{{ a.label }}{% if let Some(note) = a.note %}<span class="row-sub" data-note="app">{{ self.t(note) }}</span>{% endif %}</span>
+                        <input type="checkbox" role="switch" class="sw" name="apps" value="{{ a.package }}"{% if a.checked %} checked{% endif %}{% if loop.first && form.apps_error.is_some() %} aria-invalid="true" aria-describedby="apps-error" autofocus{% endif %}><span class="knob" aria-hidden="true"></span>
+                    </label>
+                    {% else %}
+                    <p class="row row-note">{{ self.t("device.exceptions.none_allowed") }}</p>
+                    {% endfor %}
+                </details>
+            </div>
+        </section>
+
+        <section id="group-limit" aria-labelledby="group-limit-title">
+            <h2 class="group-header" id="group-limit-title">{{ self.t("device.groups.limit") }}</h2>
+            <div class="group cell-rows">
+                {% include "partials/budget_rows.html" %}
+            </div>
+        </section>
+    </form>
+
+    {% if let Some(gid) = group_id %}
+    <section id="delete" aria-label="{{ self.t("device.groups.delete") }}">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">{{ self.t("device.groups.delete") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device_id }}/time/groups/{{ gid }}/delete" class="confirm-body">
+                    <button type="submit" class="button-destructive">{{ self.t("device.groups.delete_button") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

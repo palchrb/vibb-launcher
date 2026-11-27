@@ -1,0 +1,19 @@
+{
+  "about": "Design 139 part A (docs/design/139-app-groups.md §4.4, §5.2): app groups. `policy`: time_policy's `groups` and a group lift (a `lifts[]` entry with target `group` and its `group_id`) as the server serves them for one group and one lift on a fresh database and the launcher decodes them (`expires_at_ms`, `at_ms` and `by` vary on the server). `report`: time_state's `usage_access` and `groups` as the launcher sends them. `report_kept`: time_state's groups as the server keeps them (`TIME_STATE_FIELDS`): the four known keys of each object, anything that isn't an object dropped, a value that isn't a list dropped.",
+  "policy": {
+    "groups": [
+      {"id": 1, "name": "Spill", "apps": ["org.example.game", "org.example.puzzle"], "days": [60, 60, 60, 60, 60, 120, 120]}
+    ],
+    "lifts": [
+      {"id": 1, "target": "group", "rule_id": null, "minutes": 15, "expires_at_ms": 1793077800000, "by": "Mamma", "at_ms": 1793034600000, "group_id": 1}
+    ]
+  },
+  "report": {"usage_access": true, "groups": [{"id": 1, "used_minutes": 40, "extra_minutes": 15, "closed": false}]},
+  "report_kept": [
+    {"sent": {"groups": [{"id": 1, "used_minutes": 40, "extra_minutes": 0, "closed": true, "apps": ["org.example.game"]}]}, "kept": {"groups": [{"id": 1, "used_minutes": 40, "extra_minutes": 0, "closed": true}]}},
+    {"sent": {"groups": [1, {"id": 2, "closed": false}, {"name": "Spill"}]}, "kept": {"groups": [{"id": 2, "closed": false}]}},
+    {"sent": {"groups": {"id": 1}}, "kept": null},
+    {"sent": {"usage_access": "yes"}, "kept": null},
+    {"sent": {"usage_access": false}, "kept": {"usage_access": false}}
+  ]
+}

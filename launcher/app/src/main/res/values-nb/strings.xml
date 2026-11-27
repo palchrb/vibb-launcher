@@ -915,6 +915,7 @@
     <string name="setup_step_vibb_notifications">Varsler fra Vibb One</string>
     <string name="setup_step_full_screen_intent">Fullskjermvarsler</string>
     <string name="setup_step_write_settings">Endre systeminnstillinger</string>
+    <string name="setup_step_usage_access">Data om appbruk</string>
     <string name="setup_step_assistant">Digital assistent</string>
     <string name="setup_step_wifi_airplane">Wi-Fi i flymodus</string>
     <string name="setup_step_call_filter">Samtalefilter</string>
@@ -944,6 +945,7 @@
     <string name="setup_how_vibb_notifications_role">Grå bryter? Sett Anrop og SMS til «Ikke styrt» i foreldreappen, og tilbake etterpå.</string>
     <string name="setup_how_full_screen_intent">Slå på Tillat fullskjermvarsler.</string>
     <string name="setup_how_write_settings">Slå på Tillat.</string>
+    <string name="setup_how_usage_access">Slå på Vibb One. Grå bryter: trykk på den, OK, så Appinfo › ⋮ › Tillat begrensede innstillinger.</string>
     <string name="setup_how_assistant">Velg Vibb One, og trykk OK.</string>
     <string name="setup_how_wifi_airplane">Slå på Wi-Fi i panelet.</string>
     <string name="setup_how_call_filter">Velg Vibb One begge gangene.</string>
