@@ -135,4 +135,48 @@ class HomeFrontTest {
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         assertEquals(emptyList<String>(), sources.filter { code(it).contains("animate = false") }.map { it.name })
     }
+
+    /** Design 141: the kiosk's end stops lock task from Home, the root, after the block and the switch and before the
+     * list is emptied - only there; the list is written in LockTaskChrome alone. */
+    @Test
+    fun `the kiosk's end - block, switch, Home's root stop, then the empty list`() {
+        val chrome = code(file("java/com/kidslauncher/mdm/lock/LockTaskChrome.kt"))
+        val unpin = chrome.substringAfter("private fun writeLockTask(").substringAfter("if (packages == null) {").substringBefore("} else if")
+        val order = listOf("liftAppBlock(dpm, admin)", "mdm.kioskEnabled(false)", "HomeRootStop.stop(context)", "HomeRootStop.step(context", "dpm.setLockTaskPackages(admin, emptyArray())", "HomeRootStop.afterUnpin(context")
+        val at = order.map { unpin.indexOf(it) }
+        assertTrue("$order: $at", at.all { it >= 0 } && at == at.sorted())
+        // Code QA L4: a step other than EMPTY returns before the list is written.
+        val skip = unpin.indexOf("if (HomeRootStop.step(context, stopAnswer) != UnpinStep.EMPTY) return false")
+        assertTrue(unpin, skip in 0 until unpin.indexOf("dpm.setLockTaskPackages(admin, emptyArray())"))
+        // A kiosk-on pin ends the spell, after the list is written.
+        val pin = chrome.substringAfter("private fun writeLockTask(").substringAfter("} else {").substringBefore("\n    }\n")
+        assertTrue(pin, pin.indexOf("dpm.setLockTaskPackages(admin, packages.toTypedArray())") in 0 until pin.indexOf("if (kioskOn) HomeRootStop.kioskOn()"))
+        assertEquals(1, Regex("HomeRootStop\\.kioskOn\\(").findAll(chrome).count())
+        // Code QA M1: Home's stop runs once per spell - the spell's flag goes into the answer, and ASKED sets it.
+        val stopper = code(file("java/com/kidslauncher/mdm/lock/HomeRootStop.kt"))
+        val stop = stopper.substringAfter("fun stop(context: Context): HomeRootStopAnswer {").substringBefore("\n    }\n")
+        assertTrue(stop, stop.contains("val asked = synchronized(logLock) { spell.homeAsked }"))
+        assertTrue(stop, stop.contains("homeRootStopAnswer(activity != null, lockTaskState(context), PinLockRuntime.chromeLocked, asked)"))
+        assertTrue(stop, stop.contains("if (answer == HomeRootStopAnswer.ASKED) spell.asked()"))
+        val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
+        assertEquals(listOf("LockTaskChrome.kt"), sources.filter { code(it).contains("HomeRootStop.stop(") }.map { it.name })
+        assertEquals(1, Regex("HomeRootStop\\.stop\\(").findAll(chrome).count())
+        assertEquals(listOf("LockTaskChrome.kt"), sources.filter { code(it).contains("setLockTaskPackages") }.map { it.name })
+    }
+
+    @Test
+    fun `Home registers in onCreate and unregisters only when not changing configurations (design 141 QA M3)`() {
+        val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
+        val onCreate = home.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
+        assertTrue(onCreate.contains("HomeRootStop.register(this)"))
+        val onDestroy = home.substringAfter("override fun onDestroy() {").substringBefore("\n    }\n")
+        assertTrue(onDestroy, onDestroy.contains("if (!isChangingConfigurations) HomeRootStop.unregister(this)"))
+        assertEquals(1, Regex("HomeRootStop\\.unregister\\(").findAll(home).count())
+        // Its own stop counts for the spell, and asks for the pass that empties the list only while a brought Home is
+        // awaited (§3.4, code QA M1).
+        val reconcile = home.substringAfter("private fun reconcileKioskMode() {").substringBefore("\n    }\n")
+        val call = "if (HomeRootStop.homeStopped()) PinLockRuntime.requestChromePass(this)"
+        assertTrue(reconcile, reconcile.indexOf("stopLockTask()") in 0 until reconcile.indexOf(call))
+        assertEquals(1, Regex("requestChromePass\\(").findAll(home).count())
+    }
 }

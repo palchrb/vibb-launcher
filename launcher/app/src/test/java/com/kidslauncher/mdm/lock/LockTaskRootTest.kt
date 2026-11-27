@@ -249,4 +249,132 @@ class LockTaskRootTest {
         // stopOwnLockTask keeps the default (in front): its stop agrees with every row.
         assertTrue(activity.substringAfter("private fun stopOwnLockTask() {").substringBefore("\n    }\n").contains("callLive = false).stopLockTaskFirst"))
     }
+
+    // Design 141: the kiosk ends from its root.
+
+    @Test
+    fun `lockTaskStateOf - ActivityManager's modes, anything else NONE`() {
+        assertEquals(LockTaskState.NONE, lockTaskStateOf(0))
+        assertEquals(LockTaskState.LOCKED, lockTaskStateOf(1))
+        assertEquals(LockTaskState.PINNED, lockTaskStateOf(2))
+        assertEquals(LockTaskState.NONE, lockTaskStateOf(7))
+    }
+
+    @Test
+    fun `homeRootStopAnswer - Home stops only while LOCKED, not ours, and registered`() {
+        var calls = 0
+        fun answer(
+            registered: Boolean,
+            state: LockTaskState,
+            chromeLocked: Boolean,
+            outcome: HomeRootStopAnswer = HomeRootStopAnswer.ASKED,
+            asked: Boolean = false,
+        ) = homeRootStopAnswer(registered, state, chromeLocked, asked) { calls++; outcome }
+
+        // NONE and PINNED (screen pinning is never the kiosk's) are NOT_LOCKED - never a stop, with or without a Home.
+        for (state in listOf(LockTaskState.NONE, LockTaskState.PINNED)) {
+            for (registered in listOf(true, false)) {
+                for (chrome in listOf(true, false)) assertEquals(HomeRootStopAnswer.NOT_LOCKED, answer(registered, state, chrome))
+            }
+        }
+        assertEquals(HomeRootStopAnswer.LOCKED_CHROME, answer(true, LockTaskState.LOCKED, chromeLocked = true))
+        assertEquals(HomeRootStopAnswer.LOCKED_CHROME, answer(false, LockTaskState.LOCKED, chromeLocked = true))
+        assertEquals(HomeRootStopAnswer.NO_HOME, answer(false, LockTaskState.LOCKED, chromeLocked = false))
+        // Code QA M1: once Home's stop went through in this spell, never again - LOCKED now is the retry's job.
+        assertEquals(HomeRootStopAnswer.ASKED_BEFORE, answer(true, LockTaskState.LOCKED, false, asked = true))
+        assertEquals(HomeRootStopAnswer.ASKED_BEFORE, answer(false, LockTaskState.LOCKED, false, asked = true))
+        assertEquals(HomeRootStopAnswer.NOT_LOCKED, answer(true, LockTaskState.NONE, false, asked = true))
+        assertEquals(HomeRootStopAnswer.LOCKED_CHROME, answer(true, LockTaskState.LOCKED, true, asked = true))
+        assertEquals("no stop asked so far", 0, calls)
+        assertEquals(HomeRootStopAnswer.ASKED, answer(true, LockTaskState.LOCKED, false))
+        assertEquals(HomeRootStopAnswer.REFUSED, answer(true, LockTaskState.LOCKED, false, HomeRootStopAnswer.REFUSED))
+        assertEquals(HomeRootStopAnswer.FAILED, answer(true, LockTaskState.LOCKED, false, HomeRootStopAnswer.FAILED))
+        assertEquals(3, calls)
+    }
+
+    @Test
+    fun `the stuck check follows every answer that found lock task LOCKED and not ours`() {
+        val due = HomeRootStopAnswer.entries.filter(::stuckCheckDue).toSet()
+        assertEquals(
+            setOf(HomeRootStopAnswer.NO_HOME, HomeRootStopAnswer.ASKED, HomeRootStopAnswer.ASKED_BEFORE, HomeRootStopAnswer.REFUSED, HomeRootStopAnswer.FAILED),
+            due,
+        )
+    }
+
+    @Test
+    fun `lockTaskStuck - LOCKED with the kiosk off, unlocked and no VoIP pin, nothing else`() {
+        assertTrue(lockTaskStuck(LockTaskState.LOCKED, kioskOn = false, chromeLocked = false, voipPinned = false))
+        assertFalse("the kiosk on", lockTaskStuck(LockTaskState.LOCKED, kioskOn = true, chromeLocked = false, voipPinned = false))
+        assertFalse("Vibb's chrome LOCKED", lockTaskStuck(LockTaskState.LOCKED, kioskOn = false, chromeLocked = true, voipPinned = false))
+        assertFalse("a VoIP pin", lockTaskStuck(LockTaskState.LOCKED, kioskOn = false, chromeLocked = false, voipPinned = true))
+        assertFalse("NONE", lockTaskStuck(LockTaskState.NONE, kioskOn = false, chromeLocked = false, voipPinned = false))
+        assertFalse("PINNED", lockTaskStuck(LockTaskState.PINNED, kioskOn = false, chromeLocked = false, voipPinned = false))
+    }
+
+    @Test
+    fun `unpinStep - no Home with the screen on brings it once, then empties after the wait`() {
+        assertEquals(UnpinStep.BRING_HOME, unpinStep(HomeRootStopAnswer.NO_HOME, interactive = true, broughtThisSpell = false, timerDue = false))
+        assertEquals(UnpinStep.WAIT_FOR_HOME, unpinStep(HomeRootStopAnswer.NO_HOME, interactive = true, broughtThisSpell = true, timerDue = false))
+        assertEquals(UnpinStep.EMPTY, unpinStep(HomeRootStopAnswer.NO_HOME, interactive = true, broughtThisSpell = true, timerDue = true))
+        for (brought in listOf(true, false)) {
+            for (due in listOf(true, false)) {
+                assertEquals("screen off", UnpinStep.EMPTY, unpinStep(HomeRootStopAnswer.NO_HOME, interactive = false, broughtThisSpell = brought, timerDue = due))
+                for (answer in HomeRootStopAnswer.entries - HomeRootStopAnswer.NO_HOME) {
+                    for (interactive in listOf(true, false)) {
+                        assertEquals("$answer", UnpinStep.EMPTY, unpinStep(answer, interactive, brought, due))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `kioskEndLogOnce - REFUSED, NO_HOME and the stuck line once per kiosk-off spell, NOT_LOCKED never`() {
+        val log = KioskEndLogOnce()
+        repeat(3) {
+            assertFalse(log.answer(HomeRootStopAnswer.NOT_LOCKED))
+            assertTrue(log.answer(HomeRootStopAnswer.ASKED))
+            assertTrue(log.answer(HomeRootStopAnswer.FAILED))
+            assertTrue(log.answer(HomeRootStopAnswer.LOCKED_CHROME))
+        }
+        assertTrue(log.answer(HomeRootStopAnswer.REFUSED))
+        assertFalse(log.answer(HomeRootStopAnswer.REFUSED))
+        assertTrue(log.answer(HomeRootStopAnswer.NO_HOME))
+        assertFalse(log.answer(HomeRootStopAnswer.NO_HOME))
+        assertTrue(log.answer(HomeRootStopAnswer.ASKED_BEFORE))
+        assertFalse(log.answer(HomeRootStopAnswer.ASKED_BEFORE))
+        assertTrue(log.stuck())
+        assertFalse(log.stuck())
+        log.kioskOn()
+        assertTrue("again after a kiosk-on pass", log.answer(HomeRootStopAnswer.REFUSED))
+        assertTrue(log.answer(HomeRootStopAnswer.NO_HOME))
+        assertTrue(log.stuck())
+    }
+
+    @Test
+    fun `KioskEndSpell - Home's stop once, a pass after Home's own stop only while a brought Home is awaited, one retry`() {
+        val spell = KioskEndSpell()
+        assertFalse(spell.homeAsked)
+        assertFalse("nothing brought: Home's own stop asks for no pass (code QA M1)", spell.awaitingHome)
+        spell.asked()
+        assertTrue(spell.homeAsked)
+        // §3.4: brought, then Home's stop asks for the pass that empties; once emptied, no more passes.
+        spell.brought(atMs = 1_000L)
+        assertEquals(1_000L, spell.broughtAtMs)
+        assertTrue(spell.awaitingHome)
+        spell.emptied()
+        assertFalse(spell.awaitingHome)
+        assertEquals(1_000L, spell.broughtAtMs)
+        // Code QA L1: one retry per spell.
+        assertTrue(spell.takeRetry())
+        assertFalse(spell.takeRetry())
+        spell.retried(HomeRootStopAnswer.ASKED)
+        assertEquals(HomeRootStopAnswer.ASKED, spell.retryAnswer)
+        spell.kioskOn()
+        assertFalse(spell.homeAsked)
+        assertEquals(null, spell.broughtAtMs)
+        assertFalse(spell.awaitingHome)
+        assertEquals(null, spell.retryAnswer)
+        assertTrue("a new spell retries again", spell.takeRetry())
+    }
 }
