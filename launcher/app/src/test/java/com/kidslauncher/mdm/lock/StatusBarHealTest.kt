@@ -334,7 +334,7 @@ class StatusBarHealTest {
         assertTrue(take, take.contains("gestureAskPending = false"))
         assertTrue(take, take.contains("return gestureAskTaken(gestureAskAt, gestureAskOffs, screenOffs, interactive(context), callLiveNow(context), SystemClock.elapsedRealtime())"))
         // Q-2: the mark dies at a screen-off and at any lock-state change.
-        val screenOffBranch = runtime.substringAfter("screenOffs++").substringBefore("androidRefronts = 0")
+        val screenOffBranch = runtime.substringAfter("screenOffs++").substringBefore("faceRefronts = FaceRefronts()")
         assertTrue(screenOffBranch, screenOffBranch.contains("gestureAskPending = false"))
         val modeEdge = body(runtime, "dispatch").substringAfter("if (before != result.mode) {").substringBefore("if ((before == LockMode.LOCKED)")
         assertTrue(modeEdge, modeEdge.contains("gestureAskPending = false"))

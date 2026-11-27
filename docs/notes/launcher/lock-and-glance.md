@@ -100,7 +100,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     the glance's `USER_PRESENT` path; neither -> own mode's rows, the RELOCK backstop). Dark -> nothing; the exemptions
     as own mode's (a VoIP call ringing or live yields); ours (`androidLossOurs`: the pad's ask - `noteAndroidAsk` -, our
     own start < 2 s, our screens) -> nothing; at most `ANDROID_REFRONT_CAP` (2) re-fronts per screen-on
-    (`androidRefronts`, zeroed only at the screen-off and `USER_PRESENT`); else a re-front with
+    (`FaceRefronts.screenOn`, new only at the screen-off and `USER_PRESENT`; a power change's own loss has a budget of its
+    own since (4i)'s glance-replug, below); else a re-front with
     `FLAG_ACTIVITY_NO_USER_ACTION` (`show(noUserAction)`, only from this rule). Log `AndroidLock: re-front #n (..)`.
   - *One stamping point*: `PinLockRuntime.noteOwnStart`, via `startOwn` (the call screen, the wakes, the time-rule
     screen's `LockActivity.start`) and `VoipCalls.send`. **A new `startActivity` in `lock/` goes through `startOwn`**
@@ -146,18 +147,45 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     Android's lock screen with Unihertz's `ChargingDialog` (`com.agui.settings`) over it until the screen cycled. Now
     `PinLockRuntime.powerReceiver` (registered at runtime) stamps `ACTION_POWER_CONNECTED` and `ACTION_POWER_DISCONNECTED`
     (an unplug wakes the screen too). Only the power change's own wake is exempt from the SOS rule (`powerWokeScreen`,
-    `sosScreenOn`, at the pause's mark, its delay and the stop's mark): the first screen-on from -300 ms to +2 s around
-    the broadcast (the two come in either order), with no screen-off between - the tag ends at the next screen-off. 1 s
+    `sosScreenOn`, at the pause's mark, its delay and the stop's mark): a screen-on from -0.8 s to +2 s around the stamp
+    that ends a dark spell of at least 1 s (`POWER_WAKE_DARK_MS`; no screen-off seen counts as long) - the tag ends at
+    the next screen-off (until glance-replug: -300 ms, and no screen-off between the stamp and the screen-on). 1 s
     after the change (`POWER_RECHECK_MS`) `powerRecheck` looks once: LOCKED, the glance not in front and lost from
-    -300 ms to +1.5 s around the change (the blocked start's) -> the re-front check runs now as a fresh loss (log
+    -1 s to +1.5 s around the change (the blocked start's; -300 ms until glance-replug, below) -> the re-front check
+    runs now as a fresh loss (log
     `AndroidLock: power changed`; own mode keeps its back-off). **The SOS guarantee:** a probable-SOS mark is never
-    cleared or overridden unless the screen-on behind it was the change's own wake. The SOS gesture's presses on a lit
-    screen begin with one that turns it off, so a press-SOS after a plug-in's wake has a screen-off first and keeps its
-    mark; a power change while the screen is already on exempts nothing. A screen-on by a press 2-3 s before a plug-in
+    cleared or overridden unless the screen-on behind it was the change's own wake. The SOS gesture's presses are a
+    fraction of a second apart, so a press-SOS's screen-on ends a short dark spell and keeps its mark, in whatever order
+    the stamp came; a power change while the screen is already on exempts nothing. A screen-on by a press 2-3 s before a plug-in
     can't be told from a press-SOS whose stop comes with the plug-in: the SOS rule wins there, and that narrow glimpse
     stays possible. The same rule decides the rest, so the kid's own PIN pad (ours), Android open (the leave), the
-    exempt screens (calls, emergency, alarm, VoIP, a real SOS) and the cap of two re-fronts per screen-on all hold; a
-    loss from before the change is left as it was. `PowerGlanceTest`.
+    exempt screens (calls, emergency, alarm, VoIP, a real SOS) and the cap all hold; a loss from before the change is
+    left as it was. `PowerGlanceTest`.
+    *The power change's budget* (the owner's log, 2026-11-26, rc.6; branch `glance-replug`): three plug-ins within 10 s
+    on one screen-on - the first two were re-fronted (`re-front #2` for the second), the third's pause and stop met the
+    cap of two per screen-on (`power changed` logged, no re-front) and Android's lock screen stayed until the screen
+    went off. Now (`FaceRefronts`, `faceRefrontStep` - the check runs exactly this): the cap per screen-on is as before,
+    and each power change opens a budget of its own at its stamp, `POWER_REFRONT_BUDGET` (3: the pause's and the stop's
+    checks and the look) re-fronts for a loss (the glance's last pause) inside the change's window, -1 s to +1.5 s
+    (`powerLossAround`, the look's own window); any other loss - also one 30 s after a plug-in - spends the screen-on's
+    count. At most `POWER_BUDGETS_PER_SCREEN_ON` (4) budgets per screen-on are spent (a change whose loss re-fronted; an
+    unplug that took nothing spends none) - the owner's three in-and-outs and one more; a cable that keeps flapping meets
+    the screen-on's cap after them, so the bound stays a bound, not a rate. Log `re-front #n of the power change (..)`.
+    A look that yields (a call, the alarm) takes nothing, and its yield's rechecks are no fresh loss.
+    *The stamp is late* (the emulator runs, §6bl "Row 5 again"): the broadcast is stamped when it reaches us, and
+    Android's broadcast queue delivers it ~500 ms late to a process that isn't in the foreground (`scheduled +500ms` in
+    `dumpsys activity broadcasts history`, Android 14 and 16) - once the glance has lost the front, and in the dark (a
+    plug-in with no wake: +500/+501 ms); with the wake right after the change the deferral ends once we are in front
+    (+24..+350 ms). So the look's window begins 1 s before the stamp (`POWER_LOSS_BEFORE_MS`; was 300 ms: a pause 100 ms
+    before the change was 600 ms before the stamp), and the wake's 800 ms (`POWER_WAKE_BEFORE_MS`; was 300 ms: the
+    deferral and the old reorder). **The SOS rule changed with it** (the code QA): the order of the stamp and the
+    screen-on can't tell a press-SOS any more - a press turning the screen off at T+0.4 and on at T+0.7 after a plug-in
+    at T came after a stamp at T+0.5 with no screen-off between, and read as the plug-in's wake. The wake is now the
+    screen-on that ends a dark spell of at least 1 s (`POWER_WAKE_DARK_MS`); the SOS gesture's last screen-on ends a short
+    one and keeps its mark. What can't be told: a single press waking the screen after a long dark, up to 0.8 s before a
+    plug-in's stamp, then a loss - read as the plug-in's wake, so the look re-fronts (seen on the emulator with a
+    stand-in: one wake key, the blocked start, a plug-in 0.25 s later). The exemptions still come before the cap, and a
+    mark from a screen-on that wasn't the change's own wake still stops the look.
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's
