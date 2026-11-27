@@ -5686,37 +5686,51 @@ Branch `gate-129b` at main `31a123725` (the merged `glance-back`), the debug lau
 Nothing failed. Not on the emulator: a real plug-in's own wake (the Jelly Star wakes on USB) and Unihertz's
 `ChargingDialog`; the owner's case from the field is the Jelly Star's to confirm.
 
-### Row 5 again: three plug-ins on one screen-on (branch `glance-replug`) - run 2026-11-26 (22:38-23:09 CET)
+### Row 5 again: plug-ins on one screen-on (branch `glance-replug`) - runs 2026-11-26/27
 
 The owner's log (rc.6, 2026-11-26 22:26): three plug-ins within 10 s with the screen on - the third met row 5's cap
-of two per screen-on (`power changed`, no re-front) and Android's lock screen stayed. The fix: each power change
-starts a re-front count of its own and its look keeps one re-front (`lock-and-glance.md`, "The cap per power
-change"). `aosp36` (Android 16) and `compat34` (Android 14) as the day's gates left them (the debug launcher as
-Device Owner, Android's PIN set, kiosk on), the branch's debug build installed over it (`adb install -r`, `adb shell
-sync`). Each row: a screen cycle (`input keyevent KEYCODE_SLEEP`, then `KEYCODE_WAKEUP`), 5 s (outside the SOS
+of two per screen-on (`power changed`, no re-front) and Android's lock screen stayed. The fix (`lock-and-glance.md`,
+"The power change's budget" and "The stamp is late"): the cap per screen-on stays; each power change opens a budget of
+three re-fronts for a loss inside its window (-1 s to +1.5 s around its stamp), at most four spent per screen-on; the
+plug-in's own wake is a screen-on that ends a dark spell of at least 1 s, up to 0.8 s before the stamp.
+
+Method: `aosp36` (Android 16) and `compat34` (Android 14) as the day's gates left them (the debug launcher as Device
+Owner, Android's PIN set, kiosk on), the branch's debug build installed over it (`adb install -r`, `adb shell sync`).
+Each row of 5b-5d: a screen cycle (`input keyevent KEYCODE_SLEEP`, then `KEYCODE_WAKEUP`), 5 s (outside the SOS
 window), then three cycles 4 s apart, each after `input keyevent KEYCODE_SHIFT_LEFT` - user activity, as the owner
 touching the screen: without it the un-occluded keyguard sleeps after 10 s (`Going to sleep due to timeout ...
 activityTimeoutWM=10000`), the screen-off resets the count and the run tests nothing. The blocked start is
 `am start -a android.intent.action.SET_WALLPAPER` (`BlockedAppActivity`, as above). Logs `AndroidLock`, `PinLock`;
 `dumpsys window` for `mKeyguardOccluded`; `dumpsys activity broadcasts history` for when `ACTION_POWER_CONNECTED`
-reached the launcher.
+reached the launcher (`DELIVERED scheduled +N ms` on our `BroadcastFilter`).
+
+Two rounds. **First** (22:38-23:09 CET, both versions): `4b593eb73` - a count reset at each change and a reserved
+re-front for the look; it found the late stamp (below). **Final** (00:05-00:18 CET, the code QA's budget and wake rule,
+`6c10933c0`): all rows on Android 16; on Android 14 only the delivery measurements - the night gate had left `compat34`
+without Android's PIN and with a policy without the Child PIN (the lock `DISABLED`, the glance not Android's face), and
+that phone's server was the gate's, so its policy wasn't changed. Android 14's face rows are the first round's; the
+rule changed since only in pure logic (`PowerGlanceTest`, `FaceRefronts`, `faceRefrontStep`).
 
 | # | Step | Android 14 (`compat34`) | Android 16 (`aosp36`) |
 |---|---|---|---|
-| 5a | The build before the fix (versionCode 116): three times `dumpsys battery unplug; dumpsys battery set usb 1; am start ...` | **Reproduced.** `re-front #1`, `#2`, the third: paused, `power changed` 0.9 s later, stopped, no re-front, `mKeyguardOccluded=false` | **Reproduced.** The same as the owner's log: paused, stopped, `power changed`, no re-front, Android's lock screen |
-| 5b | The fix, the same three | **Pass.** `re-front #1` each time (the count started again at each change), occluded after every cycle | **Pass.** The same |
-| 5c | Two blocked starts with no power change (the cap reached), then `am start ...; sleep 0.05-0.12; dumpsys battery unplug; set usb 1` - the loss before the broadcast | **Pass.** Each of three delays: the broadcast came 80-150 ms after the pause and reached the launcher 501 ms later (`scheduled +501ms`): the pause's check met the cap, `power changed` and `re-front #1 (the glance stopped)` by the look ~1.5 s after the pause | **Pass.** 0.05 and 0.08 s: the broadcast reached the launcher at once, before the pause's check - `re-front #1` by that check. 0.12 s: `scheduled +500ms`, the look's `power changed` and `re-front #1` as on 14 |
-| 5d | Three blocked starts, no power change | **Pass, unchanged:** `re-front #1`, `#2`, then the third stays on Android's lock screen - no loop | **Pass.** The same |
-| 5e | Screen off 3 s, then `input keyevent KEYCODE_WAKEUP; am start ...; sleep 0.6` (and again with `sleep 0.25`)`; dumpsys battery set usb 1` - a press's screen-on, a probable SOS, then a plug-in | **Pass.** `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed`, no re-front. With 0.25 s the pause was 733 ms before the broadcast reached the launcher - inside the look's window, and the mark still won | **Pass.** The same (0.25 s: 750 ms before) |
+| 5a | The build before the fix (versionCode 116): three times `dumpsys battery unplug; dumpsys battery set usb 1; am start ...` | **Reproduced** (first round). `re-front #1`, `#2`, the third: paused, `power changed`, stopped, no re-front, `mKeyguardOccluded=false` | **Reproduced** (first round). The owner's log: paused, stopped, `power changed`, no re-front, Android's lock screen |
+| 5b | The same three on the fix | **Pass** (first round): `re-front #1` each time | **Pass** (final): `re-front #1 of the power change` each time, occluded after every cycle |
+| 5c | Two blocked starts with no power change (the screen-on's cap reached), then `am start ...; sleep 0.05-0.12; dumpsys battery unplug; set usb 1` - the loss before the broadcast | **Pass** (first round, after the window fix): the broadcast 80-150 ms after the pause, `scheduled +501ms`; the pause's check met the cap, `power changed` and `re-front #1` by the look ~1.5 s after the pause | **Pass** (final). 0.05 s: the broadcast reached us at once (+6 ms), the pause's check took the budget (`re-front #1 of the power change`). 0.08 and 0.12 s: `+502ms`/`+500ms`, the pause's check met the screen-on's cap, the look's `power changed` and `re-front #1 of the power change (the glance stopped)` |
+| 5d | Three blocked starts, no power change | **Pass** (first round): `#1`, `#2`, then Android's lock screen - no loop | **Pass** (final): the same |
+| 5e | Screen off 3 s, `input keyevent KEYCODE_WAKEUP; am start ...; sleep 0.6; dumpsys battery set usb 1` - a press's screen-on, a probable SOS, then a plug-in | **Pass** (first round): `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed` | **Pass** (final): the same |
+| 5e' | As 5e with `sleep 0.25` - the stamp 0.75-0.95 s after that single press's wake | not run | **As designed** (final): stamp 934 ms after the wake - the mark kept; 753 ms - read as the plug-in's wake (a long dark spell, inside 0.8 s): `power changed`, the mark cleared, `re-front #1 of the power change`. The edge the note names: one press after a long dark can't be told from the plug-in's wake; the SOS gesture's last screen-on ends a short dark spell (D3) |
+| D1 | Screen dark 4 s, a plug-in with no wake: when the broadcast reaches the launcher | **`+500ms`, `+501ms`, `+501ms`** (final build; the lock `DISABLED`, the receiver is the same) | **`+501ms`, `+500ms`, `+500ms`** |
+| D1' | Screen dark 4 s, a plug-in and `KEYCODE_WAKEUP` in one line | **`+57ms`, `+46ms`** | **`+22`..`+350ms`** over ten tries (D2, D3; the deferral ends once we are in front) |
+| D2 | D1' and the blocked start in one line (row 2 above, with the late stamp) | not run (no face) | **Pass** (final): the pause and the stop came before the stamp, so the pause's mark was set; the look cleared the plug-in's own mark (`power changed`, `re-front #1 of the power change`), occluded ~1 s after |
+| D3 | D1', then a press-SOS's pattern: `KEYCODE_SLEEP`, `KEYCODE_WAKEUP` 30-290 ms later, the blocked start 0.3 s after | not run (no face) | **Pass** (final), four tries: `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no `power changed`, no re-front. The emulator ended the deferral at the wake, so the stamp always came before the press's screen-off - the code QA's order (the stamp between the off and the on) is `PowerGlanceTest`'s |
 
-**Found by the run, fixed on the branch (5c, first build):** the look's window began 300 ms before the change, but the
-change is stamped when the broadcast reaches the launcher, and once the glance has lost the front Android's broadcast
-queue delivers `ACTION_POWER_CONNECTED` ~500 ms late (`DELIVERED scheduled +500ms` / `+501ms` on both versions; at once
-while the glance is in front). A pause 107 ms before the change was 608 ms before the stamp: no `power changed`, the
-cap held, Android's lock screen. `POWER_LOSS_BEFORE_MS` is now 1 s; the wake's 300 ms (the SOS exemption) is unchanged.
+**Found by the runs:** the stamp is the broadcast's delivery to us, and Android's broadcast queue holds it ~500 ms for
+a process that isn't in front - once the glance has lost the front, and in the dark (D1, both versions). The first
+round's look missed a pause 107 ms before the change (608 ms before the stamp): `POWER_LOSS_BEFORE_MS` 1 s. The code QA
+found the same skew in the SOS rule (a press-SOS after a plug-in could read as its wake): the wake is now the one that
+ends a long dark spell, `POWER_WAKE_BEFORE_MS` 800 ms (the deferral and the old 300 ms reorder).
 Not on the emulator, as above: the Jelly Star's own wake on USB and Unihertz's `ChargingDialog` - the owner's
 plug-in-and-out run on the Jelly confirms it.
-
 ## 6bm. Enrolment requires a key: design 129b §10.3 with `emulator_keys` (branch `gate-129b`) - run 2026-11-24
 
 Design 129b §10.3's gate (`docs/design/129b-enrolment-requires-a-key.md`), on **Android 14 (`compat34`, google_apis)
