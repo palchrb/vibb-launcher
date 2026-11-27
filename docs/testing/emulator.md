@@ -3466,3 +3466,85 @@ Device Owner), a pause started from the PWA (`/start-pause`, the phone unlocked 
   below), so D7's "Home comes forward" needs our start only when another app's task is below.
 
 Gate B's §6cb has the same probe on 16 (and the restricted-settings check, 15+).
+
+## 6cb. The gate of 2026-11-27, Android 16 (branch `gate-1127b`)
+
+On **Android 16 only**, `jelly36` (Google Play image, `-wipe-data`, port 5560), with the owner's OK for the day,
+08:30-09:57 UTC; Android 14 is gate A's §6ca (`compat34`). `main` at `e9875c082`: gate A's debug launcher
+(`assembleDebug`) and its debug server 0.94.1 (`--features emulator_keys`) run as this gate's own copy on
+`127.0.0.1:3200` with its own data (`LAUNCHER_DEBUG_SIGNATURE_CHECKSUM` the debug signer, the debug component). The
+phone: §4's adb lines, Telefon 1 made with "Blokker USB-feilsøking" off and Foreldre-PIN 246813, Koble til with a typed
+code, the setup flow skipped through; no Barne-PIN. Location Regularly 10 min, Google's `network` provider off (a test
+provider, again after each boot), the satellite feed and made-up scans of `PlacesDebugReceiver` as §6bw. Logs and the
+hand-made probe app in the session's `scratchpad/gb/` (not committed).
+
+### Row 1: §6bw row p (design 138, the continuity gate after a cell fix) on Android 16
+
+Owed since §6by (both images: no placed cell). The gate's candidates are the newest reported fix and the last
+satellite fix (`WifiPlaces.routerOnlyFix`, `GateFix`), so the row needs the modem's cell **placed** (an own cell row is
+trusted at `CELL_OCCASIONS` = 3, an occasion per 30 min) and the satellite fix where the row wants it - and a
+satellite feed teaches the registered cell wherever it runs. Setup on this phone: Hjem (59.9139, 10.7522, 150 m) and
+Borte (59.9274, 10.7522, 150 m, 1.5 km north), both on Telefon 1; the made-up router `Net-C` (`00:00:5e:00:70:01`, psk,
+id 9) confirmed for Hjem, its own Wi-Fi rows left untrusted (one occasion; the router fix answers `at=zone acc=152`).
+**The cell placed in real time** (`jelly36` has no root for clock steps; the modem's registered cell is NR, `cells
+read=1 usable=1 registered=1 nr=1`): occasion 1 at home (08:45, a Locate with the feed: `taught aps=1 new=1`), 2 and 3
+600 m north (09:16, 09:46; one unknown AP `X1` heard, not connected, the feed and a Locate: `taught aps=2`), so its row
+sits between: the cell fix came out at 59.917005 (345 m north of Hjem's centre), `acc=500`. **Satellite fixes that must
+not teach the cell** ran with airplane mode on and Wi-Fi back on (`cmd connectivity airplane-mode enable`, `svc wifi
+enable`: the server stays reachable, `cells read=1 usable=0`). A cell-only Locate: GPS silent, one never-taught AP `U1`
+heard, not connected. Logs `adb logcat -s WifiPlaces`, the fixes from the server's `device_locations`.
+
+| Half | Result |
+|---|---|
+| A coarse fix that isn't surely outside says nothing | **Pass.** The satellite fix at home (airplane mode, 09:47); then the cell-only Locate: `cell fix acc=500 REPORT`, `attempt path=LOCATE result=vibb_cell`, the row `vibb_cell` 59.917005, 500 m - its centre outside Hjem (345 m > 150), not surely outside (345 - 500 < 150); a heartbeat reported the same cell fix again. Then `Net-C` alone, connected, GPS silent, Locate: `router fix fix at=zone acc=152`, `zone link confirmed rest=unknown`, `wifi fix check=link step=USE`, a `vibb_wifi` `link` fix at Hjem - the cell fix skipped, the satellite fix at home decided (H1) |
+| A cell fix surely outside - `continuity` | **Pass.** `Net-C` moved to Borte (Fjern on Hjem, Bekreft on Borte - Borte's page showed the Bekreft row only once a satellite fix there was reported). The satellite feed at Borte with airplane mode on (`gps` 59.9274, 10 m, `taught=false`); the control, still in airplane mode: `Net-C` alone, Locate: `router fix fix at=zone acc=152`, a `link` fix at Borte. Airplane mode off, the cell-only Locate 70 s later: `cell fix acc=500 REPORT`, `vibb_cell` 59.917005 - 1.16 km from Borte's centre, surely outside (1160 - 500 > 150). Then `Net-C` alone, Locate: **`router fix continuity`**, and the attempt fell back to the cell fix (`result=vibb_cell`); no `link` fix |
+
+Noted (environment, no code): with the `network` provider off, Google Play services' `fused` provider re-emitted the
+last mock satellite position as a `fused` fix of 100 m a few minutes after a feed (`dumpsys location`: `last
+location=Location[fused 59.927400,10.752200 hAcc=100.0 ... mock]`), and the launcher's passive feed kept and reported it
+(`ZoneWatch: Passive fix kept provider=fused sig=-/-/-@100`). It came after each half's router fix, so it decided
+nothing here; a later half on this image should read the newest rows with that in mind.
+
+### Row 2: design 139 step 0's probe (§8 row 1) on Android 16
+
+`docs/design/139-app-groups.md` (branch `app-groups-design`) §8 row 1 and §9 step 0, on `jelly36` only (Android 14 is
+§6ca's). Vibb One: first `main`'s debug launcher (no `PACKAGE_USAGE_STATS`), then gate A's throwaway probe build installed over it
+(`probe-139` `ffd5fbe2c`: `main` + the declaration + a debug `queryEvents` dump, `UsageProbeReceiver`; still Device Owner).
+Most events were read first by a throwaway app made by hand outside the repo (`probe.usage`, "Usage probe": `aapt2`, `javac`,
+`d8`, `apksigner` with the machine's debug key; never on a real phone): it declares `PACKAGE_USAGE_STATS` and
+`QUERY_ALL_PACKAGES` as the launcher would, an exported receiver logs `UsageStatsManager.queryEvents(now - N s, now)`
+through the public `UsageEvents.Event` getters (type, package, class, time), and its one activity supports
+picture-in-picture. On the managed phone it was `adb install`ed, ticked on the phone's Apps page and let out with
+"Allow these apps" (`outside_play`, §3b). Kiosk off = a parent pause (`/devices/1/start-pause`, lock task `NONE`).
+
+| Part | Result |
+|---|---|
+| Vibb One on "App usage data" during a pause | **Pass** with gate A's probe build (below). In the pause, Settings › "App usage data" lists "Vibb One (debug)" "Not allowed" among the apps that declare the permission; its page has the switch live; on: `cmd appops get me.vibb.launcher.debug GET_USAGE_STATS` -> `allow`. With `main`'s build (no declaration) Vibb One is not listed, and `ACTION_USAGE_ACCESS_SETTINGS` with `package:me.vibb.launcher.debug` still opens its own page with the switch greyed (`enabled=false`, a tap does nothing) - so the declaration is what puts it there. `package:<pkg>` opens the app's own page on 16 |
+| Restricted settings (ECM) on 16 | **Not guarded as installed here; the QR-provisioned, self-updated case Blocked.** The adb-installed Vibb One (`packageSource=1`, initiator `com.android.shell`) and the probe app: switches live, no "Restricted setting" dialog. Vibb One's self-update (`AppInstaller.installSilently`, `launcher/app/src/main/java/com/kidslauncher/mdm/server/AppInstaller.kt:77-82`) sets no package source (`PACKAGE_SOURCE_UNSPECIFIED`) and QR provisioning installs through Android's provisioning - neither path runs on this emulator (no QR, no signed release to self-update to), so that stays the owner's device check after the release. The probe app couldn't stand in: its own session install (source 4, `DOWNLOADED_FILE`) stops at `STATUS_PENDING_USER_ACTION` under Vibb's `no_install_unknown_sources` |
+| The grant | **Pass.** The probe's page in the pause: the switch on, `cmd appops get probe.usage GET_USAGE_STATS` -> `allow`. Before it (`default`, op mode 3) `queryEvents` returned **no events and no exception** - the step's `UsageAccess` must read the app-op, an empty answer says nothing |
+| Ordinary open and close | **Pass.** `PAUSED` Home (`me.vibb.launcher.debug` `HomeActivity`), `RESUMED` probe 19 ms later, `STOPPED` Home; Home key: `PAUSED` probe, `RESUMED` Home 1 ms later, `STOPPED` probe 0.4 s later. Third-party callers see Vibb's own Home and the `android` events (`SCREEN_*`, `KEYGUARD_*`, `DEVICE_*`) |
+| Same-class relaunch | **Pass - the order H1 needs.** A new instance of the same class over the old one (`am start -f 0x18000000`, a new task; and `-f 0x10008000`, clear task): `PAUSED` (old), `RESUMED` (new) 8-13 ms later, then the old instance's `STOPPED` 0.6 s **after** that `RESUMED`, same package and class (`getInstanceId` hidden: not told apart). A fold that ended the span at any `STOPPED` would cut a running app; §4.1's rule (a `STOPPED` ends a span only when no `RESUMED` came after the last `PAUSED`) keeps it |
+| `kill -9` of the front app | **Pass, with what it means.** `run-as probe.usage kill -9 <pid>` (the shell's own `kill` is refused on this user build; the probe is debuggable): `STOPPED` probe 0.1 s after the kill with **no `PAUSED` before it**, then `RESUMED` Home 1 ms later. Android writes the stop itself on 16 |
+| `am crash` of the front app | **Pass.** The same as `kill -9`: `STOPPED` (no `PAUSED`), `RESUMED` Home 1 ms later; no crash dialog stayed up |
+| Picture-in-picture across screen off and on (kiosk off) | **Pass - an event marks it visible again.** Entering PiP: `RESUMED` probe, then `RESUMED` Home and `PAUSED` probe (on-paused, the PiP window visible). Screen off: `SCREEN_NON_INTERACTIVE`, then `STOPPED` probe (cut at screen off), `KEYGUARD_SHOWN`. Screen on: `SCREEN_INTERACTIVE` and nothing for the probe while the keyguard is up; at the unlock `RESUMED` Home and **`PAUSED` probe with no `RESUMED` before it** (the app itself ran `onResume`, `onPause`), then `KEYGUARD_HIDDEN`. Twice, the same. So a `PAUSED` that arrives while the package is off means on-paused again (PiP back on screen) |
+| Split screen | **Pass.** Recents (Quickstep's fallback over Vibb's Home) › the probe's menu › "Split screen" with Settings: both `RESUMED` in the same ms (multi-resume); Home key: `PAUSED` both, `RESUMED` Home, `STOPPED` both. (`am start --windowingMode 6` alone gives a multi-window task, not a split pair) |
+| A visible activity suspended, kiosk off | **Noted.** `pm suspend probe.usage` with the probe in front: `PAUSED` probe and `RESUMED` Home in the same ms, `STOPPED` probe 0.3 s later - an ordinary close; the task is gone (not in `dumpsys activity`), the process stays (`pidof`). Unsuspended, nothing comes back |
+| A reboot (`svc power reboot`) | **Noted.** Before: `PAUSED` Home, `DEVICE_SHUTDOWN` 20 ms later (no `STOPPED`); after: `SCREEN_INTERACTIVE`, `KEYGUARD_SHOWN`, `DEVICE_STARTUP`, then the launcher's own events |
+
+**Vibb One's own read** (gate A's probe build, `UsageProbeReceiver`, access granted as above): an open and close, a `kill -9` and PiP across screen off and on gave the same events in the same order as the probe app's - `STOPPED` with no `PAUSED` at the kill, the lone `PAUSED` of the PiP app at the unlock. So the hand-made app's reads stand for Vibb One's.
+
+### Summary
+
+| Row | Result |
+|---|---|
+| 1. §6bw row p on Android 16 | **Pass**, both halves (`router fix fix` after a cell fix not surely outside; `router fix continuity` after one surely outside). §6bw row p on Android 14 stays §6ca's; the Jelly Star's device row stays owed |
+| 2. Design 139 step 0 on Android 16 | **Pass** for the page (with the declaring build), the grant and every event case; **Blocked**: restricted settings (ECM) for a QR-provisioned, self-updated Vibb One - the owner's device check after the release |
+
+What step 0 settles for design 139 §4.1 on 16 (the 14 half is §6ca's): a same-class relaunch's `STOPPED` comes after
+the new `RESUMED` (the H1 rule is needed); a killed or crashed front app gets a `STOPPED` from Android with no `PAUSED`
+(so our own `RESUMED` ending an on span is a fallback, not the only end); PiP is on-paused, cut by its `STOPPED` at
+screen off, and a lone `PAUSED` at the unlock marks it visible again; split screen resumes both apps in the same ms;
+suspending a visible app closes it like an ordinary close; a reboot gives `DEVICE_SHUTDOWN` after the last `PAUSED`
+(no `STOPPED`) and `DEVICE_STARTUP`. Without the grant `queryEvents` returns nothing, no exception.
+
+No product code changed. The emulator and the server were stopped at 09:57 UTC.
