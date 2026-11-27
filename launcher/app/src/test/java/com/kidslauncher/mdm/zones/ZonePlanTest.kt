@@ -77,6 +77,34 @@ class ZonePlanTest {
         assertEquals(2 * minute, CONFIRM_DELAY_MS)
     }
 
+    @Test
+    fun `a late echo to the side the phone already knows is no crossing`() {
+        val zones = listOf(home)
+        val late = 4 * 60 * minute + 19 * minute
+        val inside = QueuedFix(59.9139, 10.7522, 20f, 0)
+        val outside = QueuedFix(59.9229, 10.7522, 20f, 0) // 1 km north
+        val edge = QueuedFix(59.91525, 10.7522, 20f, 0) // on the 150 m edge: unsure
+        // The owner's Jelly (2026-11-27): lying still at home, the registration's "entering" 4 h 19 min late.
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside))
+        // A real enter from outside, and leaving while inside, are crossings.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = outside))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = inside))
+        // An "exiting" while the phone already reads outside changes nothing either.
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = late, reported = outside))
+        // No known side - no fix, an unsure one, none with accuracy - keeps the crossing.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = edge))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside.copy(accuracy = null)))
+        // A newer kept fix surely on the other side wins: the server doesn't have it yet; an unsure one doesn't count.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside, kept = outside))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside, kept = edge))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, reported = inside, kept = inside))
+        // A kept fix alone is no side the server knows.
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = late, kept = inside))
+        // Another zone's fence is still not ours, whatever the fix.
+        assertEquals(FenceVerdict.NOT_OURS, fenceVerdict(9, zones, entering = true, sinceRegisteredMs = late, reported = inside))
+    }
+
     private fun fix(t: Long, lat: Double = 59.9, mock: Boolean = false) = QueuedFix(lat, 10.7, 20f, t, "gps", mock)
 
     @Test

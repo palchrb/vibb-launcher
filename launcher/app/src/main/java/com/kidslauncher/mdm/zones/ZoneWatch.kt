@@ -202,14 +202,14 @@ object ZoneWatch {
         currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == "interval" }?.zones.orEmpty()
 
     /** A fence broadcast ([ZoneAlertReceiver]): a crossing asks for a fix now and another in
-     * [CONFIRM_DELAY_MS]; an id the current policy doesn't carry and the registration's echo are
-     * dropped (§4.2). */
+     * [CONFIRM_DELAY_MS]; an id the current policy doesn't carry and the registration's echo - early, or late to the
+     * side the phone already knows - are dropped (§4.2). */
     fun onFence(context: Context, zoneId: Long, entering: Boolean) {
         val app = context.applicationContext
         val zones = watchedZones()
         // No record = the registration is under way or gone: an "entering" is its echo (Q-7).
         val since = fenceRecord(app)?.let { SystemClock.elapsedRealtime() - it.registeredAtElapsed }
-        val verdict = fenceVerdict(zoneId, zones, entering, since)
+        val verdict = fenceVerdict(zoneId, zones, entering, since, LocateCommands.cachedQueued(), LocateCommands.keptUnreported())
         Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering): $verdict")
         if (verdict != FenceVerdict.CROSSING) return
         // The fence says the phone moved, whatever the sensor saw (F-3); and a crossing starts the

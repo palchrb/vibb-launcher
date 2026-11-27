@@ -75,13 +75,29 @@ fun zoneFencePlan(zones: List<PolicyZone>, watching: Boolean, stored: FenceRecor
  * "entering" within [FENCE_ECHO_WINDOW_MS] of the registration ([sinceRegisteredMs], elapsed). The
  * record (and its stamp) is written before the first add (qa-design-64-step2-code Q-7), so no
  * record (`null`) or a stamp from before a reboot (negative) is within the window too: an
- * "entering" then is the registration's own echo. */
+ * "entering" then is the registration's own echo.
+ *
+ * A late echo (the owner's Jelly, 2026-11-27): AOSP's `GeofenceManager` judges a new fence at once only with a fix
+ * under 5 min old (`MAX_LOCATION_AGE_MS`; removing our last fence also drops its own), else it stays unknown until
+ * the next fused fix - on a phone lying still that was the 4-h cap fix, and its unknown -> inside "entering" came
+ * 4 h 19 min after the registration, taken as a crossing. So a transition to the side the phone already knows is no
+ * crossing whenever it comes: the reported fix ([reported], the side the server has) [sureSide] on the fence's new
+ * side, and no newer kept fix ([kept]) surely on the other - an echo. An unsure or missing reported fix keeps the
+ * crossing (a real one is never dropped). */
 enum class FenceVerdict { CROSSING, NOT_OURS, ECHO }
 
-fun fenceVerdict(zoneId: Long, policyZones: List<PolicyZone>, entering: Boolean, sinceRegisteredMs: Long?): FenceVerdict = when {
-    policyZones.none { it.id == zoneId } -> FenceVerdict.NOT_OURS
-    entering && (sinceRegisteredMs == null || sinceRegisteredMs < FENCE_ECHO_WINDOW_MS) -> FenceVerdict.ECHO
-    else -> FenceVerdict.CROSSING
+fun fenceVerdict(
+    zoneId: Long,
+    policyZones: List<PolicyZone>,
+    entering: Boolean,
+    sinceRegisteredMs: Long?,
+    reported: QueuedFix? = null,
+    kept: QueuedFix? = null,
+): FenceVerdict {
+    val zone = policyZones.firstOrNull { it.id == zoneId } ?: return FenceVerdict.NOT_OURS
+    if (entering && (sinceRegisteredMs == null || sinceRegisteredMs < FENCE_ECHO_WINDOW_MS)) return FenceVerdict.ECHO
+    val known = reported?.let { sureSide(it, zone) } == entering && kept?.let { sureSide(it, zone) } != !entering
+    return if (known) FenceVerdict.ECHO else FenceVerdict.CROSSING
 }
 
 /**

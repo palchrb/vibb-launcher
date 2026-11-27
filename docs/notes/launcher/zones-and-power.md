@@ -148,7 +148,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `SecurityException` leaves the record without a fingerprint (CE prefs `zone_watch` `fences_v1`, `commit()`), so the
   next sync tries again - never a loop. A policy change reaches the phone at once (the PWA's zone save nudges).
 - **A crossing** (`ZoneWatch.onFence`, `fenceVerdict`): an id not in the cached policy's zones is ignored, an
-  "entering" within 60 s of the registration is its echo (`FENCE_ECHO_WINDOW_MS`); anything else sets the fresh-fix
+  "entering" within 60 s of the registration is its echo (`FENCE_ECHO_WINDOW_MS`), and so is any transition to the side
+  the reported fix surely has (`sureSide`) with no newer kept fix surely on the other - AOSP judges a new fence at once
+  only with a fix under 5 min old, so a still phone's echo can come hours late (2026-11-27); anything else sets the fresh-fix
   flag and asks `SyncRunner.request("zone")`, and arms `ZoneConfirmReceiver` 2 min later (`CONFIRM_DELAY_MS`,
   `setExactAndAllowWhileIdle`, request code 9) for the confirming fix (`"zone_confirm"`). The sync's location step
   takes the flag (`takeFreshWanted`, a `FreshKind`; the stronger ask wins) as a `locate` would, never answering a
