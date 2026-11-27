@@ -1,13 +1,17 @@
 # 139 - App groups with a shared daily limit, and apps outside the filter
 
-Status: design, **revision 2**, 2026-11-26 (branch `app-groups-design`), read against `main` b777a957e. Not built.
-Revision 1 was 07f876921; revision 2 takes the design QA (2 High, 5 Medium, 7 Low; §14 maps each one). PLAN's locked
+Status: design, **revision 3**, 2026-11-27 (branch `app-groups-design`), read against `main` b777a957e. Not built.
+**Part A is decided by the owner** (2026-11-27; §12): Q1 (a), Q2 (b), Q3 (b), Q4 (b), Q5 (a), all as recommended.
+**Part B waits** (QB1, §13). Step 0's probe runs on emulators 14 and 16 (gate agents; results in
+`docs/testing/emulator.md` §6ca/§6cb on branches `gate-1127`/`gate-1127b`), and its findings settle the fold's rows
+for kill and PiP (§4.1, §8 row 1) before the build's step 2. Revision 1 was 07f876921; revision 2 (238ceaffb) took
+the design QA (2 High, 5 Medium, 7 Low; §14 maps each one). PLAN's locked
 list item 7, approved by the owner on 2026-11-20 ("jeg synes begge ideene fra upstream høres veldig bra ut ... legg inn
 dette i planen vår som noe vi vil ha"), from `docs/review/2026-11-20-upstream-review.md`. Both directories.
 - **Part A (app groups)** is the main design: one migration and one new contract file, plus changed rows in three
   existing ones.
-- **Part B (chosen apps outside the filter VPN)** is a separate feature with no shared code. It is designed in §13,
-  because it is small and its open choice fits next to A's, and it is built on its own branch.
+- **Part B (chosen apps outside the filter VPN)** is a separate feature with no shared code. It is sketched in §13
+  for later: the owner holds it until we know why Vipps works only during a full pause (QB1).
 
 Android 14-17: every API used is a public one at or under minSdk 34 (§10).
 
@@ -552,7 +556,18 @@ Docs with the build:
 - **A per-group "Stopp nå"** (upstream's Pause): "Slå på regel" covers the whole phone. It can come later if asked.
 - **Hours per group** (upstream's window): Q5.
 
-## 12. The owner's questions (only what changes the build)
+## 12. The owner's questions - decided 2026-11-27
+
+| Q | Decision |
+|---|---|
+| Q1 | (a) Per phone: each phone's own groups and limits. |
+| Q2 | (b) Dimmed, and a tap shows the group's name and "Brukt opp i dag". |
+| Q3 | (b) Extra time from the parent only in v1. The kid's ask is a later round. |
+| Q4 | (b) Yes, the 5-minute warning in the anchor notification's title. |
+| Q5 | (a) No hours per group. |
+| QB1 | Part B waits (§13). |
+
+The questions as they were put, kept for the record:
 
 **Q1 - Groups per phone, or for everyone?**
 - (a) Per phone: each phone's own groups and limits, picked from its own apps.
@@ -613,7 +628,7 @@ Recommended: **(a)**. (b) doubles the editor and the phone's boundaries, and it 
 - **Undercount beside Vibb One:** a group app in split screen with Vibb One stops counting when Vibb One resumes. This
   is the price of ending the span of an app that died in front.
 
-## 13. Part B - chosen apps outside the filter VPN
+## 13. Part B - chosen apps outside the filter VPN (later; the owner's hold, 2026-11-27)
 
 Upstream: server 08af9149b (`vpn_bypass_packages`, a card on the device page) and launcher 547c77e1d
 (`addDisallowedApplication` for each, with the tunnel rebuilt when the installed set changes). The case is an app
@@ -674,7 +689,12 @@ that refuses to run under any VPN, typically a bank app.
 | (i) when Av | Appen bruker nettet uten Vibbs filter. Bare Vibb og Mobildata av stopper den fortsatt. | The app uses the network without Vibb's filter. Bare Vibb and Mobile data off still stop it. |
 | Refused | Kan ikke: appen er en nettleser. | Can't: the app is a browser. |
 
-**The owner's question for B:**
+**The owner's decision for B (2026-11-27): it waits.** First we learn why Vipps works only during a full pause: it
+fails even with Chrome fully allowed, so the cause may not be the VPN at all. When Part B is built, an app outside the
+filter **must still be cut by "Bare Vibb" and by the kid's "Mobildata av"**: it stays off lockdown's allow list, as
+above, and the gate's rows check both.
+
+The question as it was put:
 
 **QB1 - Build B now, or when an app needs it?** No app on the Jelly is known to refuse our VPN yet.
 - (a) Build it now.
@@ -701,3 +721,12 @@ is a day's work then.
 | L5 | §5.3: the orange line is 114's `setup.warn.usage_access` through the feature `app_groups` (page `time`, anchor `groups`, `feature_on`). The step's `need`, `summary` and `level` are set. Routes are under `/devices/{id}/time/groups/…`. |
 | L6 | §4.2-§4.3: only `groupOnly` apps are dimmed, and an app also suspended by anything else is hidden. |
 | L7 | §13: it says that it overturns design 95 D4, adds the open-connection row, and notes `tun0` scanners. QB1 stays (b). |
+
+## 15. Revision 3 (the owner's answers, 2026-11-27)
+
+- §12: the decisions are recorded (Q1 (a), Q2 (b), Q3 (b), Q4 (b), Q5 (a): all as recommended). The design already
+  builds exactly these, so no section changed beyond the status and §12.
+- §13: Part B is held until we know why Vipps works only during a full pause. The must-keep rule is restated: still cut
+  by "Bare Vibb" and "Mobildata av".
+- The status names step 0's probe (emulators 14 and 16, gate agents, `docs/testing/emulator.md` §6ca/§6cb on
+  `gate-1127`/`gate-1127b`). The build's step 2 waits for its findings.
