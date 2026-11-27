@@ -150,7 +150,7 @@
             {% for g in groups %}
             <a class="row" href="/devices/{{ device.id }}/time/groups/{{ g.id }}" data-group="{{ g.id }}">
                 <span class="row-label">{{ g.name }}<span class="row-sub{% if g.corrupt %} text-alarm{% endif %}">{{ g.summary }}</span></span>
-                {% if let Some(value) = g.value %}<span class="row-value">{{ value }}</span>{% endif %}
+                {% if let Some(value) = g.value %}<span class="row-value{% if g.alarm %} text-alarm{% endif %}" data-group-value>{{ value }}</span>{% endif %}
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endfor %}
@@ -162,6 +162,7 @@
                 <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("device.groups.info") }}</p>
+                    {% if groups_cant_count %}<p data-info="cant-count">{{ self.t("device.groups.cant_count_fix") }}</p>{% endif %}
                 </div>
             </details>
         </div>

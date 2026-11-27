@@ -1845,6 +1845,8 @@ struct DeviceTimeTemplate {
     budget_saved: bool,
     /// Design 139 §5.3: Appgrupper - a row per group to its editor.
     groups: Vec<GroupRow>,
+    /// A group's row says "Can't count": its (i) says how to fix it.
+    groups_cant_count: bool,
     /// The flash after a group's delete, or a group gone in another tab.
     group_notice: Option<&'static str>,
     /// Design 114's lines (the `groups` section's: "Data om appbruk er av").
@@ -1859,12 +1861,17 @@ pub(crate) struct GroupRow {
     /// "Mon-Fri 1 h · Sat-Sun 2 h · 3 apps"; "Can't be read" for a group that doesn't read.
     pub(crate) summary: String,
     pub(crate) corrupt: bool,
-    /// "40 of 60 min", "Used up", "No limit"; `None` without today's report.
+    /// "40 of 60 min", "Used up", "No limit", "Can't count"; `None` without today's report, and for a group with no
+    /// limit on any day (its sub-line says "No limit" already).
     pub(crate) value: Option<String>,
+    /// The value is a wrong state (`text-alarm`): the phone closed the group without its time used up - no "App usage
+    /// data", an unreadable record or a failed read (D6). How to fix is behind the group's (i).
+    pub(crate) alarm: bool,
 }
 
-/// The rows of Appgrupper: each group's days and apps, and today's state from the phone's report of today (`day` the
-/// phone's today) - the limit of the day's weekday with its extra minutes.
+/// The rows of Appgrupper: each group's days and apps, and today's state from the phone's report - the phone's own day
+/// (`time_state.day`, its weekday picks the limit), when it is no older than yesterday by [today] (the server's zone:
+/// a phone abroad may be a day off); the limit of the day with its extra minutes, and the report's `closed`.
 pub(crate) fn group_rows(
     lang: Lang,
     rows: &[crate::app_groups::AppGroupRow],
@@ -1874,8 +1881,11 @@ pub(crate) fn group_rows(
     use chrono::Datelike;
     let (day, reported) =
         crate::app_groups::reported(latest.and_then(|s| s.time_state_json.as_deref()));
-    let fresh = day.as_deref() == Some(today.format("%Y-%m-%d").to_string().as_str());
-    let weekday = today.weekday().num_days_from_monday() as usize;
+    let phone_day = day
+        .as_deref()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .filter(|d| *d >= today - chrono::Days::new(1));
+    let weekday = phone_day.unwrap_or(today).weekday().num_days_from_monday() as usize;
     rows.iter()
         .map(|row| match row.to_policy() {
             Ok(group) => {
@@ -1886,22 +1896,32 @@ pub(crate) fn group_rows(
                     &[],
                 );
                 let limit = group.days.get(weekday).copied().flatten();
-                let mine = reported.iter().find(|r| r.id == group.id).filter(|_| fresh);
-                let value = match (limit, mine) {
-                    (None, _) => Some(t(lang, "device.time.no_limit").to_string()),
-                    (Some(0), _) => Some(t(lang, "device.groups.not_today").to_string()),
+                let mine = reported
+                    .iter()
+                    .find(|r| r.id == group.id)
+                    .filter(|_| phone_day.is_some());
+                let words = |key: &str| Some(t(lang, key).to_string());
+                let (value, alarm) = match (limit, mine) {
+                    _ if group.days.iter().all(Option::is_none) => (None, false),
+                    (None, _) => (words("device.time.no_limit"), false),
+                    (Some(0), _) => (words("device.groups.not_today"), false),
                     (Some(limit), Some(r)) if r.used_minutes >= limit + r.extra_minutes => {
-                        Some(t(lang, "device.groups.used_up").to_string())
+                        (words("device.groups.used_up"), false)
                     }
-                    (Some(limit), Some(r)) => Some(t_params(
-                        lang,
-                        "device.groups.used_of",
-                        &[
-                            ("used", &r.used_minutes.to_string()),
-                            ("limit", &(limit + r.extra_minutes).to_string()),
-                        ],
-                    )),
-                    (Some(_), None) => None,
+                    // D6: closed with time left - the phone can't count.
+                    (Some(_), Some(r)) if r.closed => (words("device.groups.cant_count"), true),
+                    (Some(limit), Some(r)) => (
+                        Some(t_params(
+                            lang,
+                            "device.groups.used_of",
+                            &[
+                                ("used", &r.used_minutes.to_string()),
+                                ("limit", &(limit + r.extra_minutes).to_string()),
+                            ],
+                        )),
+                        false,
+                    ),
+                    (Some(_), None) => (None, false),
                 };
                 GroupRow {
                     id: row.id,
@@ -1909,6 +1929,7 @@ pub(crate) fn group_rows(
                     summary: format!("{} · {apps}", budget_summary(lang, &group.days)),
                     corrupt: false,
                     value,
+                    alarm,
                 }
             }
             Err(err) => {
@@ -1919,6 +1940,7 @@ pub(crate) fn group_rows(
                     summary: t(lang, "device.groups.unreadable").to_string(),
                     corrupt: true,
                     value: None,
+                    alarm: false,
                 }
             }
         })
@@ -2163,6 +2185,7 @@ async fn render_device_time(
                 None => budget_inputs(lang, &policy.daily_budget_json),
             },
             budget_saved: !refused && query.get("saved").map(String::as_str) == Some("budget"),
+            groups_cant_count: groups.iter().any(|g| g.alarm),
             groups,
             group_notice: match query.get("notice").map(String::as_str) {
                 Some("group_deleted") => Some(t(lang, "device.groups.deleted")),

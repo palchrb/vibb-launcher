@@ -10,7 +10,13 @@ pub(super) async fn migrated_before(version: i64) -> (SqlitePool, tempfile::Temp
         .filename(dir.path().join("old.db"))
         .create_if_missing(true)
         .foreign_keys(true);
-    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    // One connection (code QA of design 139): sqlx-sqlite 0.8.6 can panic (`row.rs:43`) on a statement one connection
+    // cached before the migrations changed the schema; a flaky `the_switch_per_rule_migration_keeps_every_phones_rules`.
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
     let full = sqlx::migrate!("./migrations");
     let mut old = sqlx::migrate!("./migrations");
     old.migrations = full

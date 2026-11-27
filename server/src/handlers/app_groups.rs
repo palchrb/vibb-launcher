@@ -22,7 +22,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::AppState;
-use crate::app_groups::{self, AppGroupRow, MAX_APPS, MAX_NAME_CHARS};
+use crate::app_groups::{self, AppGroupRow, MAX_APPS, MAX_GROUPS, MAX_NAME_CHARS};
 use crate::handlers::schedules::{
     AppChoice, BudgetInput, budget_entered, budget_inputs, field, form_pairs, nudge,
     parse_budget_form, read_failed_in, render, scope_apps, server_error_in,
@@ -88,6 +88,8 @@ pub(crate) enum GroupError {
     Name(String),
     Apps(String),
     Day(usize, String),
+    /// The phone has [MAX_GROUPS] groups already: the bar alone says so.
+    Full(String),
 }
 
 /// The form's apps as posted: valid package names, none of ours, each once, in order.
@@ -104,11 +106,12 @@ fn posted_apps(fields: &[(String, String)]) -> Vec<String> {
 }
 
 /// `name` (1-40 characters, trimmed), `apps` (at least one, at most [MAX_APPS], none in another of the phone's groups
-/// - [others]: their names and apps -, D2), `b0`..`b6` (0-1440 or empty). [labels]: the apps' names for a refusal.
+/// - [others]: their names and apps, `None` for apps that don't read, which conflict with any app (fail closed) -, D2),
+/// `b0`..`b6` (0-1440 or empty). [labels]: the apps' names for a refusal.
 pub(crate) fn parse_group_form(
     lang: Lang,
     fields: &[(String, String)],
-    others: &[(String, Vec<String>)],
+    others: &[(String, Option<Vec<String>>)],
     labels: &BTreeMap<String, String>,
 ) -> Result<GroupInput, GroupError> {
     let name: String = field(fields, "name")
@@ -133,7 +136,10 @@ pub(crate) fn parse_group_form(
         ));
     }
     for app in &apps {
-        if let Some((group, _)) = others.iter().find(|(_, list)| list.contains(app)) {
+        if let Some((group, _)) = others
+            .iter()
+            .find(|(_, list)| list.as_ref().is_none_or(|list| list.contains(app)))
+        {
             let label = labels.get(app).map_or(app.as_str(), String::as_str);
             return Err(GroupError::Apps(t_params(
                 lang,
@@ -218,7 +224,10 @@ async fn offer(
         .await
         .map_err(|err| Box::new(read_failed_in(lang, err, "the reported apps")))?;
     let others = others(state, id, this, lang).await?;
-    let taken: BTreeSet<&String> = others.iter().flat_map(|(_, apps)| apps).collect();
+    let taken: BTreeSet<&String> = others
+        .iter()
+        .flat_map(|(_, apps)| apps.iter().flatten())
+        .collect();
     let offered = scope
         .offered
         .iter()
@@ -369,6 +378,7 @@ async fn refuse(
             budget = budget_entered(lang, fields, &(i, why.clone()));
             why
         }
+        GroupError::Full(why) => why,
     };
     render(
         GroupTemplate {
@@ -401,22 +411,94 @@ async fn labels(
         .map_err(|err| Box::new(read_failed_in(lang, err, "the reported apps")))
 }
 
-/// The others of the phone's groups (D2), names and apps.
+/// The others of the phone's groups (D2): names and apps, `None` for apps that don't read.
+fn others_of(rows: &[AppGroupRow], this: Option<i64>) -> Vec<(String, Option<Vec<String>>)> {
+    rows.iter()
+        .filter(|g| Some(g.id) != this)
+        .map(|g| (g.name.clone(), app_groups::parse_apps(&g.apps_json).ok()))
+        .collect()
+}
+
 async fn others(
     state: &AppState,
     id: i64,
     this: Option<i64>,
     lang: Lang,
-) -> Result<Vec<(String, Vec<String>)>, Box<Response>> {
+) -> Result<Vec<(String, Option<Vec<String>>)>, Box<Response>> {
     app_groups::of_device(&state.db, id)
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .filter(|g| Some(g.id) != this)
-                .map(|g| (g.name.clone(), g.apps()))
-                .collect()
-        })
+        .map(|rows| others_of(&rows, this))
         .map_err(|err| Box::new(read_failed_in(lang, err, "the app groups")))
+}
+
+/// What a write did.
+enum Written {
+    Added(i64),
+    Saved,
+    /// The group was deleted meanwhile: nothing written.
+    Gone,
+    Refused(GroupError),
+}
+
+/// QA L3: the overlap check (D2), the cap and the write in one `BEGIN IMMEDIATE` transaction, so two saves at once
+/// can't put one app in two groups. [this]: the group saved, `None` for an add.
+async fn write_group(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    this: Option<i64>,
+    fields: &[(String, String)],
+    labels: &BTreeMap<String, String>,
+) -> Result<(Written, Option<String>), sqlx::Error> {
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let rows: Vec<AppGroupRow> = sqlx::query_as(
+        "SELECT id, name, apps_json, days_json FROM app_groups WHERE device_id = ? ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    match this {
+        Some(gid) if !rows.iter().any(|r| r.id == gid) => return Ok((Written::Gone, None)),
+        None if rows.len() >= MAX_GROUPS => {
+            let why = t(lang, "device.groups.refused.too_many_groups").to_string();
+            return Ok((Written::Refused(GroupError::Full(why)), None));
+        }
+        _ => {}
+    }
+    let input = match parse_group_form(lang, fields, &others_of(&rows, this), labels) {
+        Ok(input) => input,
+        Err(error) => return Ok((Written::Refused(error), None)),
+    };
+    let apps = serde_json::to_string(&input.apps).expect("strings serialize");
+    let written = match this {
+        None => Written::Added(
+            sqlx::query_scalar(
+                "INSERT INTO app_groups (device_id, name, apps_json, days_json) VALUES (?, ?, ?, ?) \
+                 RETURNING id",
+            )
+            .bind(id)
+            .bind(&input.name)
+            .bind(&apps)
+            .bind(&input.days_json)
+            .fetch_one(&mut *tx)
+            .await?,
+        ),
+        Some(gid) => {
+            sqlx::query(
+                "UPDATE app_groups SET name = ?, apps_json = ?, days_json = ? WHERE id = ? AND device_id = ?",
+            )
+            .bind(&input.name)
+            .bind(&apps)
+            .bind(&input.days_json)
+            .bind(gid)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            Written::Saved
+        }
+    };
+    tx.commit().await?;
+    Ok((written, Some(input.name)))
 }
 
 /// The security log's line: the phone and the group's name.
@@ -449,36 +531,23 @@ pub async fn create_group(
     if let Err(answer) = phone_or_answer(&state, id, lang).await {
         return *answer;
     }
-    let (others, labels) = match (
-        others(&state, id, None, lang).await,
-        labels(&state, id, lang).await,
-    ) {
-        (Ok(o), Ok(l)) => (o, l),
-        (Err(answer), _) | (_, Err(answer)) => return *answer,
+    let labels = match labels(&state, id, lang).await {
+        Ok(labels) => labels,
+        Err(answer) => return *answer,
     };
-    let input = match parse_group_form(lang, &fields, &others, &labels) {
-        Ok(input) => input,
-        Err(error) => return refuse(&state, id, None, &fields, error, lang).await,
-    };
-    let gid: i64 = match sqlx::query_scalar(
-        "INSERT INTO app_groups (device_id, name, apps_json, days_json) VALUES (?, ?, ?, ?) RETURNING id",
-    )
-    .bind(id)
-    .bind(&input.name)
-    .bind(serde_json::to_string(&input.apps).expect("strings serialize"))
-    .bind(&input.days_json)
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(gid) => gid,
-        Err(err) => return server_error_in(lang, err, "failed to add an app group"),
-    };
-    log(&state, &admin, "app_group_saved", id, &input.name).await;
-    nudge(&state, Some(id)).await;
-    Redirect::to(&format!(
-        "/devices/{id}/time/groups/{gid}?saved=added#group"
-    ))
-    .into_response()
+    match write_group(&state, lang, id, None, &fields, &labels).await {
+        Ok((Written::Added(gid), Some(name))) => {
+            log(&state, &admin, "app_group_saved", id, &name).await;
+            nudge(&state, Some(id)).await;
+            Redirect::to(&format!(
+                "/devices/{id}/time/groups/{gid}?saved=added#group"
+            ))
+            .into_response()
+        }
+        Ok((Written::Refused(error), _)) => refuse(&state, id, None, &fields, error, lang).await,
+        Ok(_) => to_groups(id, "group_gone"),
+        Err(err) => server_error_in(lang, err, "failed to add an app group"),
+    }
 }
 
 /// POST `/devices/{id}/time/groups/{gid}`: then its form.
@@ -497,36 +566,23 @@ pub async fn save_group(
         Ok(row) => row,
         Err(answer) => return *answer,
     };
-    let (others, labels) = match (
-        others(&state, id, Some(gid), lang).await,
-        labels(&state, id, lang).await,
-    ) {
-        (Ok(o), Ok(l)) => (o, l),
-        (Err(answer), _) | (_, Err(answer)) => return *answer,
+    let labels = match labels(&state, id, lang).await {
+        Ok(labels) => labels,
+        Err(answer) => return *answer,
     };
-    let input = match parse_group_form(lang, &fields, &others, &labels) {
-        Ok(input) => input,
-        Err(error) => return refuse(&state, id, Some(&row), &fields, error, lang).await,
-    };
-    match sqlx::query(
-        "UPDATE app_groups SET name = ?, apps_json = ?, days_json = ? WHERE id = ? AND device_id = ?",
-    )
-    .bind(&input.name)
-    .bind(serde_json::to_string(&input.apps).expect("strings serialize"))
-    .bind(&input.days_json)
-    .bind(gid)
-    .bind(id)
-    .execute(&state.db)
-    .await
-    {
+    match write_group(&state, lang, id, Some(gid), &fields, &labels).await {
+        Ok((Written::Saved, Some(name))) => {
+            log(&state, &admin, "app_group_saved", id, &name).await;
+            nudge(&state, Some(id)).await;
+            Redirect::to(&format!("/devices/{id}/time/groups/{gid}?saved=1#group")).into_response()
+        }
+        Ok((Written::Refused(error), _)) => {
+            refuse(&state, id, Some(&row), &fields, error, lang).await
+        }
         // Deleted between the read and the write: as a group deleted in another tab.
-        Ok(done) if done.rows_affected() == 0 => return to_groups(id, "group_gone"),
-        Ok(_) => {}
-        Err(err) => return server_error_in(lang, err, "failed to save an app group"),
+        Ok(_) => to_groups(id, "group_gone"),
+        Err(err) => server_error_in(lang, err, "failed to save an app group"),
     }
-    log(&state, &admin, "app_group_saved", id, &input.name).await;
-    nudge(&state, Some(id)).await;
-    Redirect::to(&format!("/devices/{id}/time/groups/{gid}?saved=1#group")).into_response()
 }
 
 /// POST `/devices/{id}/time/groups/{gid}/delete`: then Device › Time Rules' Appgrupper.
@@ -572,7 +628,13 @@ mod tests {
     fn the_group_form() {
         let labels: BTreeMap<String, String> =
             [("org.example.game".to_string(), "Game".to_string())].into();
-        let others = vec![("Spill".to_string(), vec!["org.example.game".to_string()])];
+        let others = vec![
+            (
+                "Spill".to_string(),
+                Some(vec!["org.example.game".to_string()]),
+            ),
+            ("Video".to_string(), Some(vec![])),
+        ];
         let ok = parse_group_form(
             Lang::En,
             &pairs(&[
@@ -616,6 +678,18 @@ mod tests {
             refused(&[("name", "A"), ("apps", "org.example.video"), ("b2", "1441")]),
             GroupError::Day(2, _)
         ));
+        // QA L3: a group whose apps don't read conflicts with any app (fail closed).
+        let broken = vec![("Broken".to_string(), None)];
+        assert_eq!(
+            parse_group_form(
+                Lang::En,
+                &pairs(&[("name", "A"), ("apps", "org.example.video")]),
+                &broken,
+                &labels
+            )
+            .unwrap_err(),
+            GroupError::Apps("org.example.video is in Broken".into())
+        );
         // A long name is cut to 40 characters.
         let long = "x".repeat(60);
         let cut = parse_group_form(

@@ -4946,5 +4946,8 @@
   "setup.step.usage_access": "Data om appbruk",
   "setup.how.usage_access": "Slå på Vibb One. Grå bryter: trykk på den, OK, så Appinfo › ⋮ › Tillat begrensede innstillinger.",
   "setup.why.usage_access": "Appgruppenes apper er stengt til den er på.",
-  "setup.warn.usage_access": "Data om appbruk er av"
+  "setup.warn.usage_access": "Data om appbruk er av",
+  "device.groups.cant_count": "Kan ikke telle",
+  "device.groups.cant_count_fix": "Kan ikke telle: telefonen stenger gruppen til Data om appbruk er på. Slå den på i telefonens Oppsett.",
+  "device.groups.refused.too_many_groups": "Høyst 50 grupper"
 }

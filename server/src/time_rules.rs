@@ -321,6 +321,9 @@ pub struct TimeLiftRow {
     /// Design 139 (migration 0186): a `group` lift's group name, the pages' words once the group is gone.
     #[sqlx(default)]
     pub group_name: Option<String>,
+    /// Its group, NULL once the group is deleted (the lift is then no longer delivered).
+    #[sqlx(default)]
+    pub group_id: Option<i64>,
 }
 
 pub fn valid_minute(m: i64) -> bool {

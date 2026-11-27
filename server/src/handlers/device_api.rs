@@ -1854,9 +1854,11 @@ fn known_value(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<se
             {
                 found.clone()
             }
-            (Field::Objects(max, keys), Value::Array(list)) if list.len() <= *max => Value::Array(
+            // Code QA L2: the first `max` objects, never the whole key dropped for one too many.
+            (Field::Objects(max, keys), Value::Array(list)) => Value::Array(
                 list.iter()
                     .filter_map(|item| known_value(item, keys))
+                    .take(*max)
                     .collect(),
             ),
             _ => continue,

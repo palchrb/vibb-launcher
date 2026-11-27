@@ -4946,5 +4946,8 @@
   "setup.step.usage_access": "App usage data",
   "setup.how.usage_access": "Turn on Vibb One. Greyed switch: tap it, OK, then App info › ⋮ › Allow restricted settings.",
   "setup.why.usage_access": "The groups' apps are closed until it is on.",
-  "setup.warn.usage_access": "App usage data is off"
+  "setup.warn.usage_access": "App usage data is off",
+  "device.groups.cant_count": "Can't count",
+  "device.groups.cant_count_fix": "Can't count: the phone closes the group until App usage data is on. Turn it on in the phone's Setup.",
+  "device.groups.refused.too_many_groups": "At most 50 groups"
 }

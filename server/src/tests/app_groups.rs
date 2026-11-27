@@ -394,12 +394,13 @@ async fn the_report_keeps_the_groups_known_keys() {
             .map(|k| serde_json::from_str::<Value>(&k).unwrap());
         assert_eq!(kept.unwrap_or(Value::Null), row["kept"], "{}", row["sent"]);
     }
-    // At most 50 groups.
+    // At most 50 groups: the first 50 kept (code QA L2), never the key dropped.
     let many: Vec<Value> = (0..51).map(|i| json!({"id": i})).collect();
-    assert_eq!(
-        known_fields(&json!({"groups": many}), TIME_STATE_FIELDS),
-        None
-    );
+    let kept: Value =
+        serde_json::from_str(&known_fields(&json!({"groups": many}), TIME_STATE_FIELDS).unwrap())
+            .unwrap();
+    assert_eq!(kept["groups"].as_array().unwrap().len(), 50);
+    assert_eq!(kept["groups"][49], json!({"id": 49}));
 }
 
 #[tokio::test]
@@ -437,7 +438,12 @@ async fn device_time_rules_shows_todays_state_and_the_setup_line() {
         "{groups}"
     );
     assert!(groups.contains("App usage data is off"));
-    assert!(groups.contains("40 of 75 min"), "{groups}");
+    // Code QA M1: closed with time left is the phone that can't count - a wrong state, how to fix behind the (i).
+    assert!(
+        groups.contains("text-alarm\" data-group-value>Can&#39;t count<"),
+        "{groups}"
+    );
+    assert!(groups.contains("data-info=\"cant-count\""));
     let setup = app
         .get_page(&format!("/devices/{id}/setup"), &cookie)
         .await
@@ -471,7 +477,9 @@ async fn device_time_rules_shows_todays_state_and_the_setup_line() {
     let html = app.get_page(&time, &cookie).await.text();
     let groups = section(&html, "groups");
     assert!(!groups.contains("data-setup-warning"));
-    assert!(groups.contains(">No limit<"));
+    // Code QA L5: the sub-line says "No limit" already; no value beside it.
+    assert!(groups.contains("No limit · 1 app"), "{groups}");
+    assert!(!groups.contains("data-group-value"));
 }
 
 /// §5.1: the rebuild of `time_lifts` and `time_request_answers` keeps every row, id and `lift_id`, and the counter.
@@ -523,12 +531,17 @@ async fn the_migration_keeps_every_lift_and_answer() {
         .await
         .unwrap();
     }
-    type Lift = (i64, String, Option<i64>, Option<String>);
+    // Every column of both tables as they were before 0186 (code QA L7).
+    sqlx::query("UPDATE time_lifts SET ended_early_at = datetime('now') WHERE id = 3")
+        .execute(&db)
+        .await
+        .unwrap();
     let lifts = |db: &sqlx::SqlitePool| {
         let db = db.clone();
         async move {
-            sqlx::query_as::<_, Lift>(
-                "SELECT id, target, rule_id, phone_key FROM time_lifts ORDER BY id",
+            sqlx::query_scalar::<_, String>(
+                "SELECT json_array(id, device_id, target, rule_id, rule_name, minutes, created_at, expires_at, \
+                 created_by, ended_early_at, phone_key) FROM time_lifts ORDER BY id",
             )
             .fetch_all(&db)
             .await
@@ -538,8 +551,9 @@ async fn the_migration_keeps_every_lift_and_answer() {
     let answers = |db: &sqlx::SqlitePool| {
         let db = db.clone();
         async move {
-            sqlx::query_as::<_, (String, String, Option<i64>)>(
-                "SELECT request_id, answer, lift_id FROM time_request_answers ORDER BY request_id",
+            sqlx::query_scalar::<_, String>(
+                "SELECT json_array(device_id, request_id, answer, lift_id, answered_by, by_name, answered_at) \
+                 FROM time_request_answers ORDER BY request_id",
             )
             .fetch_all(&db)
             .await
@@ -549,7 +563,15 @@ async fn the_migration_keeps_every_lift_and_answer() {
     let (lifts_before, answers_before) = (lifts(&db).await, answers(&db).await);
     super::cleanup::finish(&db).await;
     assert_eq!(lifts(&db).await, lifts_before);
+    assert_eq!(lifts_before.len(), 3);
     assert_eq!(answers(&db).await, answers_before);
+    let new_columns: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM time_lifts WHERE group_id IS NOT NULL OR group_name IS NOT NULL",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(new_columns, 0);
     let next: i64 = sqlx::query_scalar(
         "INSERT INTO time_lifts (device_id, target, minutes, expires_at, group_name) \
          VALUES (?, 'group', 15, datetime('now'), 'Spill') RETURNING id",
@@ -564,10 +586,12 @@ async fn the_migration_keeps_every_lift_and_answer() {
         .execute(&db)
         .await
         .unwrap();
-    assert_eq!(
-        answers(&db).await[0],
-        ("r1".to_string(), "yes".to_string(), None)
-    );
+    let lift_of_r1: Option<i64> =
+        sqlx::query_scalar("SELECT lift_id FROM time_request_answers WHERE request_id = 'r1'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(lift_of_r1, None);
     // A group's delete keeps its lift with its name.
     let group: i64 = sqlx::query_scalar(
         "INSERT INTO app_groups (device_id, name, days_json) VALUES (?, 'Spill', '[]') RETURNING id",
@@ -593,4 +617,35 @@ async fn the_migration_keeps_every_lift_and_answer() {
             .await
             .unwrap();
     assert_eq!(kept, (None, Some("Spill".to_string())));
+}
+
+/// Code QA L2: at most 50 groups on one phone; the 51st is refused in place, nothing written.
+#[tokio::test]
+async fn a_phone_has_at_most_50_groups() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    report_apps(&app, &token, &[("org.example.game", "Game")]).await;
+    for n in 0..crate::app_groups::MAX_GROUPS {
+        sqlx::query("INSERT INTO app_groups (device_id, name, apps_json, days_json) VALUES (?, ?, '[]', '[]')")
+            .bind(id)
+            .bind(format!("G{n}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/time/groups/new"),
+            Some(&cookie),
+            &[("name", "Spill"), ("apps", "org.example.game")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("At most 50 groups"));
+    assert_eq!(
+        groups_of(&app, id).await.len(),
+        crate::app_groups::MAX_GROUPS
+    );
 }

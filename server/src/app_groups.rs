@@ -12,6 +12,8 @@ use sqlx::SqlitePool;
 pub const MAX_NAME_CHARS: usize = 40;
 /// At most this many apps in one group.
 pub const MAX_APPS: usize = 50;
+/// At most this many groups on one phone (code QA L2).
+pub const MAX_GROUPS: usize = 50;
 /// The report's `time_state.groups` keeps at most this many groups.
 pub const MAX_REPORTED: usize = 50;
 
@@ -34,9 +36,27 @@ pub struct PolicyGroup {
     pub days: Vec<Option<i64>>,
 }
 
-/// A package Vibb never puts in a group (D8): Vibb One, Vibb music and our other packages. The phone spares them too.
+/// Packages a group never offers (D8, code QA L3): the Play Store and Play services, the system WebView, the usual
+/// dialers, clocks and keyboards - the phone spares them anyway (its `neverRestrict`, the alarm apps, the Play Store), so
+/// the PWA never shows them as closable.
+pub const NEVER_GROUPED: &[&str] = &[
+    "com.android.vending",
+    "com.google.android.gms",
+    "com.google.android.gsf",
+    "com.google.android.webview",
+    "com.android.webview",
+    "com.android.dialer",
+    "com.google.android.dialer",
+    "com.android.deskclock",
+    "com.google.android.deskclock",
+    "com.android.inputmethod.latin",
+    "com.google.android.inputmethod.latin",
+];
+
+/// A package Vibb never puts in a group (D8): Vibb One, Vibb music and our other packages, and [NEVER_GROUPED]. The phone
+/// spares its own and the music app too.
 pub fn never_grouped(package: &str) -> bool {
-    package.starts_with("me.vibb.")
+    package.starts_with("me.vibb.") || NEVER_GROUPED.contains(&package)
 }
 
 /// The stored apps: valid package names, at most [MAX_APPS], none of ours.

@@ -253,8 +253,36 @@ async fn record_group_lift(
             "error.unknown_lift",
         ));
     }
-    let group = match crate::app_groups::one(&state.db, id, group_id).await {
-        Ok(Some(group)) => group,
+    // Code QA L4: the group's read and the lift's row in one transaction - a group deleted in between is the 404 below,
+    // never a lift of a group that is gone.
+    let written = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM app_groups WHERE id = ? AND device_id = ?")
+                .bind(group_id)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, minutes, expires_at, created_by, group_id, group_name) \
+             VALUES (?, 'group', ?, datetime('now', ?), ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(minutes)
+        .bind(format!("+{BUDGET_LIFT_DELIVERY_HOURS} hours"))
+        .bind(&admin.username)
+        .bind(group_id)
+        .bind(&name)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(Some(name))
+    };
+    let group_name = match written.await {
+        Ok(Some(name)) => name,
         Ok(None) => {
             return Err(crate::i18n::error(
                 lang,
@@ -262,29 +290,14 @@ async fn record_group_lift(
                 "error.group_not_found",
             ));
         }
-        Err(err) => return Err(server_error(lang, err, "failed to read an app group")),
+        Err(err) => return Err(server_error(lang, err, "failed to record a group lift")),
     };
-    if let Err(err) = sqlx::query(
-        "INSERT INTO time_lifts (device_id, target, minutes, expires_at, created_by, group_id, group_name) \
-         VALUES (?, 'group', ?, datetime('now', ?), ?, ?, ?)",
-    )
-    .bind(id)
-    .bind(minutes)
-    .bind(format!("+{BUDGET_LIFT_DELIVERY_HOURS} hours"))
-    .bind(&admin.username)
-    .bind(group.id)
-    .bind(&group.name)
-    .execute(&state.db)
-    .await
-    {
-        return Err(server_error(lang, err, "failed to record a group lift"));
-    }
     let detail = security::Detail::words(
         "security.detail.lift.group",
         &[
             ("device", &id.to_string()),
             ("minutes", &minutes.to_string()),
-            ("group", &group.name),
+            ("group", &group_name),
         ],
     )
     .with_facts(format!("device {id}"));
@@ -631,7 +644,8 @@ pub(crate) async fn today(
                         ),
                         _ => t_params(lang, "device.summary.today.extra", &[("duration", &length)]),
                     },
-                    if active {
+                    // Code QA L6: a group lift whose group is gone is no longer sent.
+                    if active && !(lift.target == "group" && lift.group_id.is_none()) {
                         LiftState::Sent
                     } else {
                         LiftState::Done
