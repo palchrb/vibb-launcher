@@ -170,8 +170,6 @@ class WallpaperInkTest {
         assertTrue(colours.contains("<color name=\"kid_core_dim\">#C7FBE4DC</color>"))
         assertTrue(colours.contains("<color name=\"kid_emergency_text\">#FF8A8A</color>"))
         assertTrue(colours.contains("<color name=\"kid_ink\">#FFFFFF</color>"))
-        val keypad = listOf("src/main", "app/src/main").map { java.io.File(it, "res/layout/activity_pin_lock.xml") }.first { it.exists() }.readText()
-        assertTrue(keypad.substringAfter("@+id/pin_parent_code").substringBefore("/>").contains("android:alpha=\"0.75\""))
     }
 
     /** qa-25b-25f L1: a second draw of the same ground never paints the photo at the scrim's alpha. */

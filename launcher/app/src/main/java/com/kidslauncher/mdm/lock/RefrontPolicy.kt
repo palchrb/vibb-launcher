@@ -27,11 +27,7 @@ data class RefrontInputs(
     val voipCall: Boolean = false,
     /** Probably Emergency SOS (five power presses) is in front ([sosGestureLikely], bug 25b-H). */
     val sosFlow: Boolean = false,
-    /** Design 32 step 2: the keyguard cover is on ([KeyguardCover.coverOn], debug switch only). */
-    val coverOn: Boolean = false,
-    /** Design 32: the lock is the top task since its lock-up ([lockOnTopAfter], best effort). */
-    val lockOnTop: Boolean = false,
-    /** Design 59b §3: the glance is Android's face and [androidLoss] applies (`null`: own mode's rows). */
+    /** Design 59b §3: the glance is Android's face and [androidLoss] applies (`null`: no face - nothing to bring back). */
     val android: AndroidLoss? = null,
     /** Design 59b §3 step 3: the loss is ours ([androidLossOurs]): the PIN pad's ask, one of our own starts, one of our
      * own screens resumed. */
@@ -46,7 +42,7 @@ data class RefrontInputs(
      * re-front's own follow-up. The face re-fronts only then. */
     val androidFreshLoss: Boolean = false,
     /** qa-59b-code B-5: Android read open with no `USER_PRESENT` once already ([AndroidLoss.WAIT]) - this check is the
-     * wait's end: own mode's rows, the RELOCK backstop. */
+     * wait's end: the RELOCK backstop ([relockBackstop]). */
     val androidWaited: Boolean = false,
 )
 
@@ -60,14 +56,14 @@ enum class AndroidLoss {
     OPEN,
 
     /** qa-59b-code B-5: Android is open and no `USER_PRESENT` came yet (a background broadcast, often late): one wait of
-     * [ANDROID_ANSWER_WAIT_MS] for it ([RefrontAction.AndroidWait]), then own mode's re-front - the RELOCK backstop. */
+     * [ANDROID_ANSWER_WAIT_MS] for it ([RefrontAction.AndroidWait]), then the RELOCK backstop ([relockBackstop]). */
     WAIT,
 }
 
 /**
  * Design 59b §3/§2 (Q59b-6, qa-59b-code B-5): [androidLoss]'s input from the face's live reads - `null` without the
- * face or a credential (own mode's rows); Android open with no `USER_PRESENT` waits once for it before own mode's
- * re-front, the backstop that RELOCKs an unexpectedly open Android, runs.
+ * face or a credential (no lock to bring back); Android open with no `USER_PRESENT` waits once for it before the
+ * backstop that RELOCKs an unexpectedly open Android ([relockBackstop]) runs.
  */
 fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, presentSinceLocked: Boolean): AndroidLoss? = when {
     !face || !deviceSecure -> null
@@ -77,8 +73,8 @@ fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, pr
 }
 
 /** Design 59b §3 step 6 (Q59b-3): at most this many re-fronts per screen-on - then SystemUI's face (with our ground)
- * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. A power
- * change's own loss has a budget of its own ([FaceRefronts]). */
+ * until the screen-off: a cap leaves only Android's locked keyguard. A power change's own loss has a budget of its own
+ * ([FaceRefronts]). */
 const val ANDROID_REFRONT_CAP = 2
 
 /** glance-replug: the re-fronts a power change's own loss may take - the cap and one more, so the change's look
@@ -186,19 +182,11 @@ sealed interface RefrontAction {
     data object AndroidLeave : RefrontAction
 
     /** qa-59b-code B-5: as the face, Android open with no `USER_PRESENT` yet - look again in [ANDROID_ANSWER_WAIT_MS]
-     * (the broadcast leaves; else own mode's backstop), never a re-front at once (Q59b-1's narrow race). */
+     * (the broadcast leaves; else the RELOCK backstop), never a re-front at once (Q59b-1's narrow race). */
     data object AndroidWait : RefrontAction
-
-    /**
-     * Design 32 step 2 (M5): while dark under the keyguard cover, with the lock not on top and nothing
-     * exempt any more (a system-dialer call ended in the dark): the lock-up once (the lock alone, as every
-     * lock-up under the cover - [lockUpStarts]' coverOn),
-     * so the cover's keyguard is occluded by the lock at the wake, not shown un-occluded. No next check.
-     */
-    data object DarkLockUp : RefrontAction
 }
 
-/** 0.5 s, 2 s, then every 5 s - never giving up (QA 10 #2: a cap would fail open). */
+/** The RELOCK backstop's re-fronts ([relockBackstop]): 0.5 s, 2 s, then every 5 s. */
 fun refrontDelayMs(attempt: Int): Long = when {
     attempt <= 0 -> 500L
     attempt == 1 -> 2_000L
@@ -206,22 +194,25 @@ fun refrontDelayMs(attempt: Int): Long = when {
 }
 
 /**
- * The check that runs [refrontDelayMs] after the lock left the front (and again after each
- * re-front). Only the named exempt set is left alone; every other front task - an allowlisted
- * app relaunching itself, a full-screen intent, the camera gesture - loses, forever.
+ * The check that runs after the glance left the front (and again after each re-front). Design 132: the glance is
+ * always Android's face - [androidLossStep], and after its one wait for `USER_PRESENT` the RELOCK backstop
+ * ([relockBackstop]). No face ([RefrontInputs.android] `null`: no credential, nothing locked): nothing.
  */
 fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed -> RefrontAction.Stop
-    // B-5: the face's one wait for USER_PRESENT is over - own mode's rows (the RELOCK backstop).
-    inputs.android != null && !(inputs.android == AndroidLoss.WAIT && inputs.androidWaited) -> androidLossStep(inputs, attempt)
-    // The screen off: nothing - except under the keyguard cover with the lock not on top (design 32
-    // step 2, M5): the exempt screens are still yielded to (the system_call yield keeps looking every
-    // 2 s while dark), and once none is left the lock-up runs while dark ([RefrontAction.DarkLockUp]).
-    !inputs.interactive && !(inputs.coverOn && !inputs.lockOnTop) -> RefrontAction.Stop
-    else -> exemptYield(inputs) ?: if (!inputs.interactive) RefrontAction.DarkLockUp else RefrontAction.Refront(refrontDelayMs(attempt + 1))
+    inputs.android == null -> RefrontAction.Stop
+    inputs.android == AndroidLoss.WAIT && inputs.androidWaited -> relockBackstop(inputs, attempt)
+    else -> androidLossStep(inputs, attempt)
 }
 
-/** The named exempt screens, in their order - own mode's and the face's alike. */
+/**
+ * qa-59b-code B-5: Android read open and no `USER_PRESENT` came in the face's one wait - the glance comes back (the
+ * exemptions first), and its resume's read RELOCKs Android ([faceStep]). Screen off: nothing (the sleep check's).
+ */
+fun relockBackstop(inputs: RefrontInputs, attempt: Int): RefrontAction =
+    if (!inputs.interactive) RefrontAction.Stop else exemptYield(inputs) ?: RefrontAction.Refront(refrontDelayMs(attempt + 1))
+
+/** The named exempt screens, in their order. */
 private fun exemptYield(inputs: RefrontInputs): RefrontAction.Yield? = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
@@ -241,13 +232,12 @@ private fun exemptYield(inputs: RefrontInputs): RefrontAction.Yield? = when {
  * isn't showWhenLocked un-occluded the keyguard) is covered again fast - only for an unexpected loss, at most
  * [ANDROID_REFRONT_CAP] times per screen-on. Android's keyguard stays locked under it either way: the glance is
  * showWhenLocked with no dismiss, so a re-front only occludes it again - a look, never a path past the PIN.
- * 1. The screen off: nothing (the screen-off's lock-up and the sleep check own the dark) - before the exemptions only
- *    here; own mode's dark cover row ([RefrontAction.DarkLockUp]) is unchanged.
+ * 1. The screen off: nothing (the screen-off's lock-up and the sleep check own the dark).
  * 2. Android open with a `USER_PRESENT` since the LOCKED edge: the leave without Home, never a re-front (Q59b-6) - before
  *    the exemptions, so a pending yield's recheck never keeps our lock LOCKED over an Android the kid unlocked.
- * 3. Android open with no `USER_PRESENT` yet: one wait for it (qa-59b-code B-5), then own mode's backstop.
- * 4. The exemptions, as own mode's (a VoIP call ringing **or** live yields - no re-front over a call screen, Q59b-2;
- *    a probable SOS too, without own mode's narrowed lock task - 59d D).
+ * 3. Android open with no `USER_PRESENT` yet: one wait for it (qa-59b-code B-5), then [relockBackstop].
+ * 4. The exemptions (a VoIP call ringing **or** live yields - no re-front over a call screen, Q59b-2; a probable SOS
+ *    too, without a narrowed lock task - 59d D).
  * 5. Ours (the PIN pad's ask, our own start, our own screen): nothing.
  * 6. The cap reached, or a check no fresh pause or stop scheduled (a yield's recheck, a re-front's follow-up -
  *    qa-59b-code B-3: what is in front after a yield is the platform's, e.g. Android's own Emergency dialer): nothing -
@@ -607,13 +597,12 @@ fun pauseRefrontDelayMs(lastScreenOnAtMs: Long?, pausedAtMs: Long): Long =
 /**
  * The rc.2 run's R1 (Medium): the SOS gesture's activity pauses the glance at its start, and a cold SOS app draws -
  * stopping the glance - 0.9-1.2 s later (the emulator), past [SOS_PAUSE_GRACE_MS]: the pause's check re-fronted over the
- * countdown. As Android's face ([androidFace]) a pause inside the gesture's window is the mark itself: Android's locked
- * keyguard refuses Recents (P59-1), so nothing a pause-only cover could hide needs the fast re-front there. Never for a
- * pause of ours ([ours]: the pad's ask, our own start). Own mode keeps its stop-only mark (Recents only pauses it and
- * must be covered again, bug 25b-A).
+ * countdown. As Android's face (design 132: the only face) a pause inside the gesture's window is the mark itself:
+ * Android's locked keyguard refuses Recents (P59-1), so nothing a pause-only cover could hide needs the fast re-front
+ * there. Never for a pause of ours ([ours]: the pad's ask, our own start).
  */
-fun sosMarkAtPause(androidFace: Boolean, ours: Boolean, lastScreenOnAtMs: Long?, pausedAtMs: Long, sosAppPresent: Boolean): Boolean =
-    androidFace && !ours && sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent)
+fun sosMarkAtPause(ours: Boolean, lastScreenOnAtMs: Long?, pausedAtMs: Long, sosAppPresent: Boolean): Boolean =
+    !ours && sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent)
 
 /** The log line of a probable SOS (the field logs' evidence of a real one). */
 const val SOS_MARK_LINE = "The lock left the front just after a screen-on: probably Emergency SOS"

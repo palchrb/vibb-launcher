@@ -166,7 +166,8 @@ object SetupReadings {
             mask = policy.quickControlsMask,
             clockFormat = clock,
             callsManaged = policy.callPolicy?.callsMode.let { it != null && it != "unmanaged" },
-            androidLock = policy.kidLock?.keyguard == "android",
+            // Design 132: `android_lock` means a Child PIN is stored (Android's lock is the only lock).
+            androidLock = policy.kidLock != null,
             mapLinksOn = mapLinksOn(policy),
             mapAppInstalled = mapAppInstalled(reportedPackages(context)),
             linkGate = com.kidslauncher.mdm.logins.LinkGateRuntime.enabled(context),

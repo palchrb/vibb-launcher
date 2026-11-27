@@ -220,7 +220,7 @@ fn every_editors_save_names_its_form() {
     for (file, id) in [
         ("schedule_rule.html", "rule"),
         ("device_bedtime.html", "bedtime"),
-        ("device_zone.html", "zone-form"),
+        ("family_zone.html", "zone-form"),
         ("device_calendar_rule.html", "rule-form"),
     ] {
         let text = std::fs::read_to_string(format!("templates/{file}")).unwrap();
@@ -935,14 +935,7 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     }
     // A zone (design 64, code QA Q-3): Locate's #zones with Locate Regularly (a new phone is in
     // Only when asked), and the zone's two pages.
-    sqlx::query(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, 'Home', 59.9139, 10.7522, 150)",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    super::zones::insert_zone(&app, id, "Home", 59.9139, 10.7522, 150).await;
     // Design 77 step 4: messages waiting (a stranger, a sender name, an emergency number), a blocked one and a listed
     // name, so the Calls page's held rows, Delete Everything Waiting and the names card render every form.
     let now_ms = chrono::Utc::now().timestamp_millis();
@@ -1028,24 +1021,43 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     .unwrap();
     sqlx::query(
         "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
-         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         hosts, principal, calendars_json, state, owner_device_id) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
          '[\"dav.example.net\"]', '/p/', \
-         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok')",
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok', ?)",
     )
+    .bind(id)
     .execute(&app.db)
     .await
     .unwrap();
+    // Design 136: a shared account seen from another phone, and a shared one no phone owns.
+    for (user, owner) in [("forelder2", Some(id)), ("forelder3", None)] {
+        sqlx::query(
+            "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
+             hosts, principal, calendars_json, state, owner_device_id, shared) \
+             VALUES ('https://dav.example.net/', ?, x'00', x'00', '', '[\"dav.example.net\"]', '/p/', '[]', 'ok', ?, 1)",
+        )
+        .bind(user)
+        .bind(owner)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
     let mut pages = vec![
         format!("/devices/{id}/calendar/add"),
         format!("/devices/{id}/calendar/add?kind=caldav"),
         format!("/devices/{id}/calendar/links/{link}"),
         format!("/devices/{id}/calendar/caldav/1"),
+        format!("/devices/{id}/calendar/caldav/2"),
+        format!("/devices/{not_set_up}/calendar/caldav/2"),
+        format!("/devices/{id}/calendar/caldav/3"),
         format!("/devices/{id}/calendar/rules/new"),
         format!("/devices/{id}/calendar/rules/1"),
         format!("/devices/{id}/bedtime"),
         format!("/devices/{not_set_up}/bedtime"),
-        format!("/devices/{id}/zones/new"),
-        format!("/devices/{id}/zones/1"),
+        // Design 135: the family's zones and a zone's editor.
+        "/zones".to_string(),
+        format!("/zones/new?device={id}"),
+        "/zones/1".to_string(),
         "/devices".to_string(),
         "/devices/new".to_string(),
         "/apps".to_string(),
@@ -2059,7 +2071,7 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
     // Saves in place (design 103): swap.js un-deferred right after scroll-restore.js (which hands it a save's landing),
     // and auto-reload.js on every page, armed only by the server's `data-waits` marker.
     assert!(head.contains(
-        "<script src=\"/static/scroll-restore.js?v=11\"></script>\n\
+        "<script src=\"/static/scroll-restore.js?v=12\"></script>\n\
          <!-- Saves in place (design 103)"
     ));
     assert!(head.contains("<script src=\"/static/swap.js?v=2\"></script>"));

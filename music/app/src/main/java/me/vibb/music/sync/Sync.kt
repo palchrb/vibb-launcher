@@ -212,6 +212,11 @@ object Sync {
         // Keep/prune (only on parsed listings), never what the player holds (design 30 §1.6); the bytes no row
         // owns; then the played extras over the parent's limit or under the free floor (§1.8) - after the sweep,
         // so orphans about to go never cost an extra (qa-30-s3b-code L2); then the downloads.
+        // Design 117 §8, §7 first: a plain Storytel copy from before goes, then the sealed books' check - a book whose key
+        // is lost goes too; the plan below wants both again, sealed. Counts only in the log.
+        val plain = CacheThrough.dropPlainStorytel(context)
+        val lost = CacheThrough.dropLostBooks(context)
+        if (plain + lost > 0) Log.i("Sync", "Sealed books: dropped $plain plain, $lost lost")
         val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
         CacheThrough.remove(context, plan.prune)
         CacheThrough.sweepOrphans(context)

@@ -158,21 +158,16 @@ class PinLockStateTest {
     }
 
     @Test
-    fun `activation decides why the lock is off`() {
-        fun act(managed: Boolean = true, pin: Boolean = true, secure: Boolean = false, kg: Boolean = true, hash: Boolean = true, guard: Boolean = false) =
-            lockActivation(managed, pin, secure, kg, hash, guard)
+    fun `activation decides why the lock is off - Android's face or no lock (design 132)`() {
+        fun act(managed: Boolean = true, pin: Boolean = true, secure: Boolean = true, guard: Boolean = false) =
+            lockActivation(managed, pin, secure, guard)
         assertEquals(true to null, act())
         assertEquals(false to LockInactive.NO_PIN, act(pin = false))
         assertEquals(false to LockInactive.NO_PIN, act(pin = false, managed = false))
         assertEquals(false to LockInactive.UNMANAGED, act(managed = false))
-        assertEquals(false to LockInactive.ANDROID_CREDENTIAL, act(secure = true, kg = false))
-        assertEquals(false to LockInactive.KEYGUARD_NOT_DISABLED, act(kg = false))
+        assertEquals("a Child PIN, no Android PIN: no lock, no glance", false to LockInactive.NO_ANDROID_PIN, act(secure = false))
         assertEquals(false to LockInactive.CRASH_GUARD, act(guard = true))
-        assertEquals("bad hash: on, parent code only", true to LockInactive.BAD_HASH, act(hash = false))
-        assertTrue(wantKeyguardDisabled(true, true, false))
-        assertFalse(wantKeyguardDisabled(true, true, true))
-        assertFalse(wantKeyguardDisabled(false, true, false))
-        assertFalse(wantKeyguardDisabled(true, false, false))
+        assertEquals(listOf("no_pin", "unmanaged", "no_android_pin", "crash_guard"), LockInactive.entries.map { it.wire })
     }
 
     // ---- design 17: VoIP calls over the lock ------------------------------------------------
@@ -249,33 +244,11 @@ class PinLockStateTest {
     }
 
     @Test
-    fun `PIN entry`() {
+    fun `the Child PIN's length`() {
         assertEquals(4, kidPinLength(null))
         assertEquals(4, kidPinLength(3))
         assertEquals(6, kidPinLength(6))
         assertEquals(4, kidPinLength(7))
-        var entered = ""
-        for (c in "12345") entered = appendDigit(entered, c, 4)
-        assertEquals("1234", entered)
-        assertEquals("123", deleteDigit(entered))
-        assertEquals("", deleteDigit(""))
-        assertEquals("12", appendDigit("12", 'x', 4))
     }
 
-    @Test
-    fun `a screen-off drops the digits typed before it`() {
-        assertEquals("12", enteredAfterScreenOffs("12", enteredAtScreenOffs = 3, screenOffs = 3))
-        assertEquals("", enteredAfterScreenOffs("12", enteredAtScreenOffs = 3, screenOffs = 4))
-        assertEquals("", enteredAfterScreenOffs("", enteredAtScreenOffs = 3, screenOffs = 9))
-    }
-
-    @Test
-    fun `the lock checks the typed digits against the screen-offs at every resume`() {
-        val path = "java/com/kidslauncher/mdm/lock/PinLockActivity.kt"
-        val src = listOf(java.io.File("src/main/$path"), java.io.File("app/src/main/$path")).first { it.exists() }.readText()
-        val resume = src.substringAfter("override fun onResume()").substringBefore("override fun onUserInteraction()")
-        assertTrue(resume.contains("enteredAfterScreenOffs(entered, enteredAt, PinLockRuntime.screenOffs)"))
-        val digit = src.substringAfter("private fun onDigit(").substringBefore("private fun onDelete(")
-        assertTrue(digit.contains("if (entered.isEmpty()) enteredAt = PinLockRuntime.screenOffs"))
-    }
 }

@@ -178,6 +178,15 @@
             <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
             <div class="info-panel"><p>{{ self.t("locate.all.footer") }}</p></div>
         </details></div>
+        {#- Design 135 §5.1: the family's zones, behind one row. -#}
+        <div class="group">
+            <a class="row" href="/zones" data-row="family-zones">
+                <span class="tile tile-orange"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.4 1.8"/><circle cx="8.5" cy="8.5" r="2.2" fill="currentColor"/></svg></span>
+                <span class="row-label">{{ self.t("locate.zones.title") }}</span>
+                <span class="row-value">{{ all.zones }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>

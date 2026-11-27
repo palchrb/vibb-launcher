@@ -31,7 +31,7 @@ enum class LockTaskEntry {
     /** Home was asked less than [HOME_ROOT_RETRY_MS] ago: wait for the [LOCK_FALLBACK_MS] fallback. */
     WAIT_FOR_HOME,
 
-    /** The lock starts lock task itself: the kiosk is off (own mode, or the face with Android not locked), Home didn't
+    /** The lock starts lock task itself: the kiosk is off (the face with Android not locked), Home didn't
      * (fallback), or the face with Android locked and the kiosk on. */
     START_SELF,
 
@@ -41,7 +41,7 @@ enum class LockTaskEntry {
      * not at the leave, where it would clear a helper's task. Only as the root (E7b M-B1): `stopLockTask` from a task
      * that isn't the root takes that task out and clears it (AOSP `clearLockedTask` -> `performClearTaskForReuse`) - the
      * glance is finished, Home's locked resume shows it again in a new task, which joins the lock task and stops again:
-     * a loop with Android's keyguard un-occluded. Another root (Home's, own mode's kiosk) stays until the leave. */
+     * a loop with Android's keyguard un-occluded. Another root (Home's kiosk) stays until the leave. */
     STOP_OWN,
 }
 
@@ -121,11 +121,11 @@ data class LockLeave(
  *   which Home would only hide. The lock task is stopped first exactly as in the rows above (so `stopOwnLockTask`
  *   still agrees). Kept: kiosk on with the glance the lock-task root - stopping its lock task drops the kiosk, and
  *   Home re-roots it.
- * - Design 59d step H (the user's Q1, Q59d-4): as Android's face ([androidFace]) with the kiosk on, no Home over a live
+ * - Design 59d step H (the user's Q1, Q59d-4): with the kiosk on, no Home over a live
  *   call ([callLive] = `PinLockRuntime.callLiveNow`): the glance finishes and the call's UI (the app's own, or ours)
  *   stays in front - with the kiosk on only locked tasks can come forward. Except as the kiosk root ([startedLockTask]):
  *   stopping a root lock task clears every locked task, the call app's included, and only Home re-roots the kiosk.
- *   Kiosk off already has the rule; own mode is unchanged.
+ *   Kiosk off already has the rule.
  */
 fun lockLeave(
     kioskOn: Boolean,
@@ -133,22 +133,20 @@ fun lockLeave(
     lockTaskRunning: Boolean,
     callLive: Boolean,
     glanceInFront: Boolean = true,
-    androidFace: Boolean = false,
 ): LockLeave =
     if (kioskOn) {
-        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = startedLockTask || (glanceInFront && !(androidFace && callLive)))
+        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = startedLockTask || (glanceInFront && !callLive))
     } else {
         LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = glanceInFront && !callLive)
     }
 
 /**
- * Design 59b step 0: whether the leave counts the glance as in front - always in own mode (every own path is
- * unchanged); as Android's face ([androidFace]) only when it is resumed at the leave ("Lås opp", a row via the pad, a
+ * Design 59b step 0: whether the leave counts the glance as in front - only when it is resumed at the leave ("Lås opp", a row via the pad, a
  * fingerprint from dark that resumed it). Stopped under an app (`USER_PRESENT` after SystemUI's face or pad): not.
  * qa-59b-code B-4: the pad's success ([fromAsk]) is always the glance's own ask - in front whatever the lifecycle reads
  * while the bouncer or the keyguard's going-away covers it, so a row's target is kept.
  */
-fun leaveInFront(androidFace: Boolean, resumed: Boolean, fromAsk: Boolean = false): Boolean = !androidFace || resumed || fromAsk
+fun leaveInFront(resumed: Boolean, fromAsk: Boolean = false): Boolean = resumed || fromAsk
 
 /** The finish was refused (`isFinishing` still false) with the kiosk on: the lock is the root. */
 val rootLeave = LockLeave(stopLockTaskFirst = true, homeFirst = true)

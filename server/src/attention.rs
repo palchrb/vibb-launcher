@@ -546,6 +546,8 @@ pub struct Sources<'a> {
     pub integrations: &'a [(crate::integration_health::Title, usize)],
     /// The integrations' part of the setup steps (`Integrations::setup`; design 110's map steps, design 114 §2.6).
     pub setup_part: &'a crate::integrations::SetupPart,
+    /// Design 132 §4.5: a `set_kid_pin` is waiting or in flight (`kid_lock::pin_on_its_way`), read by the caller.
+    pub pin_on_its_way: bool,
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -702,6 +704,7 @@ async fn facts_enrolled(state: &AppState, device: &Device, connection: Connectio
             Vec::new()
         });
     let setup_part = state.integrations.setup(state, id).await;
+    let pin_on_its_way = crate::kid_lock::pin_on_its_way(&state.db, id).await;
     facts_of(
         &Sources {
             device,
@@ -717,6 +720,7 @@ async fn facts_enrolled(state: &AppState, device: &Device, connection: Connectio
             last_phone_on_ms,
             integrations: &integrations,
             setup_part: &setup_part,
+            pin_on_its_way,
         },
         now_ms,
     )
@@ -739,7 +743,10 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             latest,
             crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY,
         ),
-        pin_waiting: false,
+        pin_on_its_way: s.pin_on_its_way,
+        this_enrolment: latest.is_some_and(|st| {
+            st.reported_at.as_str() >= s.device.enrolled_at.as_deref().unwrap_or("")
+        }),
         no_pin: crate::setup_status::reported_child_pin(latest) == Some(Some(false)),
     };
     let escapes =

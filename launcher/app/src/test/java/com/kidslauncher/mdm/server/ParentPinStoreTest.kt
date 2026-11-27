@@ -100,7 +100,7 @@ class ParentPinStoreTest {
     @Test
     fun `four wrong tries at the PIN lock and a fifth at the rule pause lock out`() {
         val now = at(1_000_000L)
-        repeat(4) { check("000000", now, ParentPinEntry.PIN_LOCK) }
+        repeat(4) { check("000000", now, ParentPinEntry.SETTINGS) }
         assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.RULE_PAUSE))
         assertEquals("rule_pause", store.queue().last().entry)
         assertEquals(ParentPinResult.LockedOut(15 * min - min), check(pin, at(now.wallMs + min), ParentPinEntry.RULE_PAUSE))
@@ -123,15 +123,16 @@ class ParentPinStoreTest {
         for (n in 1..4) {
             assertEquals(ParentPinResult.Wrong(5 - n, 15 * min), check("000000", now, ParentPinEntry.entries[n - 1]))
         }
-        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.PIN_LOCK))
+        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.SETTINGS))
         assertEquals(listOf("wrong", "wrong", "wrong", "wrong", "lockout"), kinds())
-        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "pin_lock"), store.queue().map { it.entry })
+        assertEquals(listOf("settings", "pause", "install_mode", "rule_pause", "settings"), store.queue().map { it.entry })
         // The time lock's `override` is gone (2026-11-01, PWA only); design 98's Foreldrekode is the fifth entry, design
         // 102's Wi-Fi sign-in the sixth (the server's `Entry::WifiSignin`).
-        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "rule_pause", "wifi_signin"), ParentPinEntry.entries.map { it.wire })
+        // Design 132: the lock's "Parent code" (`pin_lock`) went with our keypad.
+        assertEquals(listOf("settings", "pause", "install_mode", "rule_pause", "wifi_signin"), ParentPinEntry.entries.map { it.wire })
         val before = prefs.map.toMap()
         // Even the right PIN: refused without hashing, nothing counted, no event.
-        assertEquals(ParentPinResult.LockedOut(10 * min), check(pin, at(now.wallMs + 5 * min), ParentPinEntry.PIN_LOCK))
+        assertEquals(ParentPinResult.LockedOut(10 * min), check(pin, at(now.wallMs + 5 * min), ParentPinEntry.SETTINGS))
         assertEquals(before, prefs.map)
         assertEquals(15 * min - min, parentPinStatus(store, parentPinFingerprint(hash, salt), at(now.wallMs + min)).lockoutMs)
         assertTrue(started.isEmpty())
@@ -186,7 +187,7 @@ class ParentPinStoreTest {
     fun `a correct fifth try undoes its own lockout and event`() {
         val now = at(1_000_000L)
         repeat(4) { check("000000", now) }
-        assertEquals(ParentPinResult.Ok, check(pin, now, ParentPinEntry.PIN_LOCK))
+        assertEquals(ParentPinResult.Ok, check(pin, now, ParentPinEntry.SETTINGS))
         assertEquals(listOf("wrong", "wrong", "wrong", "wrong", "unlocked"), kinds())
         assertNull(store.queue().last().untilMs)
         assertEquals(ParentLockoutState(pinFingerprint = parentPinFingerprint(hash, salt)), state(now))

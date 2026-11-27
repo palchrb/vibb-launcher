@@ -187,7 +187,8 @@ class SealedPrefsTest {
         fun owners(text: String) = all.filterValues { text in it }.keys
         assertEquals(setOf("main/server/SealedPrefs.kt"), owners("mdm.device_token"))
         assertEquals(setOf("main/server/WindowRelockStore.kt"), owners("\"window_relock/token\""))
-        assertEquals(setOf("main/lock/PinLockStore.kt"), owners("\"pin_lock_state/"))
+        // Design 132: the kid PIN is no longer stored - no sealed field of `pin_lock_state` is left.
+        assertEquals(emptySet<String>(), owners("\"pin_lock_state/"))
         assertEquals(setOf("main/server/SealedPrefs.kt"), all.filterValues { Regex("""\bdeviceToken\(""").containsMatchIn(it) }.keys)
         assertEquals(setOf("main/server/TailnetAuthKey.kt"), owners("mdm.tailscale_auth_key"))
         assertEquals(setOf("main/server/TailnetAuthKey.kt"), all.filterValues { Regex("""\btailscaleAuthKey\(""").containsMatchIn(it) }.keys)
@@ -236,14 +237,14 @@ class SealedPrefsTest {
     }
 
     @Test
-    fun `the kid PIN and the reset token are read and written only sealed`() {
+    fun `the reset token is read and written only sealed, and no kid PIN is kept (design 132)`() {
         val all = sources()
+        // The own lock's keys are named only to remove them once (PinLockStore.OLD_KEYS).
         assertEquals(setOf("lock/PinLockStore.kt"), all.filterValues { "\"pin_hash\"" in it || "\"pin_salt\"" in it }.keys)
         val store = all.getValue("lock/PinLockStore.kt")
         val relock = all.getValue("server/WindowRelockStore.kt")
-        for (raw in listOf("getString(PIN_HASH", "putString(PIN_HASH", "getString(PIN_SALT", "putString(PIN_SALT")) assertFalse(raw, raw in store)
+        for (raw in listOf("getString(", "putString(\"pin", "sealed.")) assertFalse(raw, raw in store.substringBefore("fun active("))
         for (raw in listOf("getString(TOKEN", "putString(TOKEN")) assertFalse(raw, raw in relock)
-        assertTrue(store.contains("sealed.read(p, HASH_AAD, PIN_HASH)"))
         assertTrue(relock.contains("sealed.read(prefs, TOKEN_AAD, TOKEN)"))
         assertTrue(relock.contains("sealed.edit(prefs) { it.putSealed(TOKEN_AAD, TOKEN, hex) }"))
     }

@@ -33,6 +33,7 @@ class LockUpTest {
         assertEquals(200L, PAUSE_REFRONT_MS)
         // The check itself is the one the stop runs: exempt screens still yield.
         val inputs = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
+        android = AndroidLoss.WAIT, androidWaited = true,
             telecomInCall = false, emergencyFlow = false, alarmRinging = false)
         assertTrue(refrontAction(inputs, 0) is RefrontAction.Refront)
         assertTrue(refrontAction(inputs.copy(emergencyFlow = true), 0) is RefrontAction.Yield)
@@ -99,6 +100,7 @@ class LockUpTest {
         assertFalse("before the screen-on", sosGestureLikely(10_000L, 9_000L, true))
         assertEquals("the countdown and the dial (qa-25b-25f H1)", 15_000L, SOS_FLOW_MS)
         val inputs = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
+        android = AndroidLoss.WAIT, androidWaited = true,
             telecomInCall = false, emergencyFlow = false, alarmRinging = false, sosFlow = true)
         assertEquals(RefrontAction.Yield("sos"), refrontAction(inputs, 0))
         assertEquals("its emergency call", RefrontAction.Yield("system_call"), refrontAction(inputs.copy(telecomInCall = true), 0))

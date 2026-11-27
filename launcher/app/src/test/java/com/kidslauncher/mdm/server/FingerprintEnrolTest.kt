@@ -14,20 +14,18 @@ class FingerprintEnrolTest {
     private val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
     private fun src(path: String) = File(main, path).readText()
 
-    private val ours = FingerprintLockState(owned = true, deviceSecure = true, pinRevKnown = true, requested = true)
+    private val ours = FingerprintLockState(owned = true, deviceSecure = true, pinRevKnown = true)
 
     @Test
-    fun `the row shows only while Android's PIN is the Child PIN Vibb set and wants, with a sensor`() {
+    fun `the row shows only while Android's PIN is the Child PIN Vibb set, with a sensor`() {
         assertTrue(fingerprintRowShown(ours, hasSensor = true))
         assertFalse(fingerprintRowShown(ours, hasSensor = false))
-        // Own mode, or a credential someone else set.
+        // A credential someone else set.
         assertFalse(fingerprintRowShown(ours.copy(owned = false), hasSensor = true))
-        // OWN_KEYPAD: the credential removed by hand - hidden at once, before configure clears `owned`.
+        // The credential removed by hand - hidden at once, before configure clears `owned`.
         assertFalse(fingerprintRowShown(ours.copy(deviceSecure = false), hasSensor = true))
         // Code QA Q-4: Android's PIN changed on the phone (59 §3.7, the rev unknown) - not the Child PIN.
         assertFalse(fingerprintRowShown(ours.copy(pinRevKnown = false), hasSensor = true))
-        // Code QA Q-4: the rollback's escrow (own mode chosen, no token yet) - the next token clears it all.
-        assertFalse(fingerprintRowShown(ours.copy(requested = false), hasSensor = true))
     }
 
     @Test

@@ -122,6 +122,7 @@ import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.shuffleShown
 import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.itemCacheKey
+import me.vibb.music.logic.sealedCacheKey
 import me.vibb.music.logic.nextAction
 import me.vibb.music.logic.nowWindow
 import me.vibb.music.logic.wantArtDelay
@@ -1685,8 +1686,9 @@ class PlaybackService : MediaSessionService() {
             spotifyItemUri(a.entry, item.key)?.let { b.setUri(it) }
         } else if (a.entry.source == Source.STORYTEL) {
             // Download-only (design 26b §4.4): the book plays from its copy and nothing else. Its uri is
-            // the source id (no network scheme, never a minted URL); the data source has no upstream.
-            val cacheKey = itemCacheKey(a.entry.key, item.key)
+            // the source id (no network scheme, never a minted URL); the data source has no upstream. Its
+            // cache key is its done row's - sealed (design 117 §6); without one it plays nothing anyway.
+            val cacheKey = download?.cacheKey ?: sealedCacheKey(a.entry.key, item.key)
             b.setUri(sourceId(a.entry, item)).setCustomCacheKey(cacheKey)
             b.setTag(ItemTag(cacheKey, hls = false, publicOnly = true, copyOnly = true))
         } else {
@@ -2194,7 +2196,7 @@ class PlaybackService : MediaSessionService() {
                 onIsPlayingChanged(event.playing)
                 if (callPause.inCall) callStep()
             }
-            is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)
+            is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork, event.lost)
             is RendererEvent.Lost -> scope.launch { lost(event.askAdult) }
             RendererEvent.StateChanged -> {
                 publish()
@@ -2348,8 +2350,10 @@ class PlaybackService : MediaSessionService() {
      * an `http_416` on the phone for an item without a done copy - the length guard's changed source, or
      * the server's own - drops the row and plays the item on uncached from where it was ([playOnUncached]).
      * [noNetwork]: a name that couldn't be looked up says "Trenger internett" ([failureMessage]); the item error is kept.
+     * [lost] (design 117 §6): a sealed book whose key is lost - "Ikke lastet ned" (it will be fetched again), no item
+     * error, the copy no longer counted here, and a sync asked for at once, whose check drops the row (§7).
      */
-    private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {
+    private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false, lost: Boolean = false) {
         val a = active ?: return
         val index = renderer.currentIndex()
         val item = a.items.getOrNull(index) ?: return
@@ -2363,6 +2367,11 @@ class PlaybackService : MediaSessionService() {
         }
         when {
             item.fileId != null || gated -> Unit
+            lost -> {
+                a.copies -= item.key
+                a.downloads -= item.key
+                Sync.nudge(this, settleS = 0)
+            }
             copy != null -> if (code == "bad_media") {
                 // A copy that isn't playable media: drop it, so the next sync fetches it again.
                 a.copies -= item.key
@@ -2380,7 +2389,7 @@ class PlaybackService : MediaSessionService() {
         }
         // Spotify's offline isn't the item's (its gate is the network, §5.10): always "Kan ikke spilles" - its web
         // player never reports `gated` (that is the phone's own player's streaming gate, design 30 §1.6)
-        val offline = gated ||
+        val offline = gated || lost ||
             !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(failureMessage(offline, noNetwork))
         renderer.saveNow()

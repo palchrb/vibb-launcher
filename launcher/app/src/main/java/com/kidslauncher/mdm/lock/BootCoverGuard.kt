@@ -138,11 +138,11 @@ object BootCoverGuard {
         }
     }
 
-    /** The cover stays enabled at every event ([coverPersistent]): android mode or [ownCover]. */
+    /** The cover stays enabled at every event ([coverPersistent]): Android's lock or [ownCover]. */
     fun persistent(context: Context): Boolean = coverPersistent(androidMode(context), ownCover(context))
 
     /** Design 59d step M: the main process's take-over stamp `boot_cover_taken` (device-protected, the boot count it was
-     * written in) - in android mode the cover stays enabled, so it reads the take-over here ([coverTakenOver]). */
+     * written in) - with Android's lock the cover stays enabled, so it reads the take-over here ([coverTakenOver]). */
     private fun takenStamp(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, TAKEN_STAMP)
 
     /** Main process, unlocked (the take-over). Returns whether this boot's stamp is new. Written to a temp file and
@@ -187,7 +187,7 @@ object BootCoverGuard {
     /**
      * From `Application.onCreate` in the cover's process (qa-16b-code #2), so a crash anywhere in
      * that process counts - not only after the activity's onCreate: counts it in the record and,
-     * once the guard trips, disables the cover before the crash goes on - in own mode; in android mode it stays
+     * once the guard trips, disables the cover before the crash goes on - without an Android PIN; with Android's lock it stays
      * enabled and the next cover is inert (qa-59d-m-code M-1, [coverInert]).
      */
     fun install(app: Context) {
@@ -198,8 +198,8 @@ object BootCoverGuard {
             try {
                 val next = coverCrashed(read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong())
                 write(app, next)
-                // M-1: android mode keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on;
-                // compat-fix-1: so does own mode on a managed phone.
+                // M-1: Android's lock keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on;
+                // compat-fix-1: so does no Android PIN on a managed phone.
                 val keep = bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = androidMode(app), persistent = persistent(app))
                 if (coverGuardTripped(next) && keep == false) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {

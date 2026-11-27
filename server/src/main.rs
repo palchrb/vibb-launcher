@@ -401,6 +401,8 @@ async fn main() {
     }
 
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
+    // Design 132 §4.2: the Child PINs this server can never send to Android's lock, counted once.
+    kid_lock::log_legacy_pins(&db).await;
 
     let session_store = SqliteStore::new(db.clone());
     session_store
@@ -484,7 +486,8 @@ async fn main() {
     };
 
     // The Child PIN's key (design 59 §2.1): its own file in data/keys/, made on the first start; a
-    // file that doesn't parse leaves the PINs without a sealed copy, never replaced.
+    // file that doesn't parse is never replaced, and a Child PIN can't be saved until it reads
+    // (design 132 §4.2).
     let kid_pin_key = match kid_pin::load(std::path::Path::new(kid_pin::DEFAULT_KEY_FILE)) {
         Ok(key) => Some(std::sync::Arc::new(key)),
         Err(err) => {
@@ -1182,6 +1185,11 @@ pub fn build_admin_router(
             "/devices/{id}/calendar/caldav/{account}/calendars",
             post(handlers::calendar_sources::save_caldav_calendars),
         )
+        // Design 136: "Delt i familien", the owner's page only.
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/sharing",
+            post(handlers::calendar_sources::save_caldav_sharing),
+        )
         .route(
             "/devices/{id}/calendar/caldav/{account}/remove",
             post(handlers::calendar_sources::remove_caldav),
@@ -1303,10 +1311,6 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/kid-lock",
             post(handlers::devices::update_kid_lock),
-        )
-        .route(
-            "/devices/{id}/kid-lock/keyguard",
-            post(handlers::devices::update_kid_keyguard),
         )
         .route(
             "/devices/{id}/kid-pin/send",
@@ -1524,35 +1528,38 @@ pub fn build_admin_router(
             "/devices/{id}/locate-result.json",
             get(handlers::locate::locate_result_json),
         )
-        // Design 64: a phone's zones (the list is the Zones page since design 88).
+        // Design 64: a phone's zones (the list is the Zones page since design 88; design 135: one
+        // auto-saving form, a switch per family zone).
         .route("/devices/{id}/zones.json", get(handlers::zones::zones_json))
         .route(
             "/devices/{id}/zones",
-            get(handlers::locate::show_zones).post(handlers::zones::create_zone),
+            get(handlers::locate::show_zones).post(handlers::zones::save_phone),
+        )
+        // Design 135: the family's zones and each zone's editor.
+        .route(
+            "/zones",
+            get(handlers::zones::list_page).post(handlers::zones::create_zone),
+        )
+        .route("/zones/new", get(handlers::zones::new_zone))
+        .route(
+            "/zones/{zone_id}",
+            get(handlers::zones::show_zone).post(handlers::zones::save_zone),
+        )
+        .route(
+            "/zones/{zone_id}/delete",
+            post(handlers::zones::delete_zone),
+        )
+        // Design 138: a zone's confirmed Wi-Fi routers (the family zone's, for every phone using it).
+        .route("/zones/{zone_id}/wifi", post(handlers::zones::confirm_wifi))
+        .route(
+            "/zones/{zone_id}/wifi/{network_id}/delete",
+            post(handlers::zones::remove_wifi),
         )
         // Design 88: Locate's Find Phone and Location Settings pages.
         .route("/devices/{id}/find", get(handlers::locate::show_find))
         .route(
             "/devices/{id}/location-settings",
             get(handlers::locate::show_location_settings),
-        )
-        .route("/devices/{id}/zones/new", get(handlers::zones::new_zone))
-        .route(
-            "/devices/{id}/zones/{zone_id}",
-            get(handlers::zones::show_zone).post(handlers::zones::save_zone),
-        )
-        .route(
-            "/devices/{id}/zones/{zone_id}/delete",
-            post(handlers::zones::delete_zone),
-        )
-        // Design 138: a zone's confirmed Wi-Fi routers.
-        .route(
-            "/devices/{id}/zones/{zone_id}/wifi",
-            post(handlers::zones::confirm_wifi),
-        )
-        .route(
-            "/devices/{id}/zones/{zone_id}/wifi/{network_id}/delete",
-            post(handlers::zones::remove_wifi),
         )
         .route("/devices/{id}/command/ring", post(handlers::locate::ring))
         .route(

@@ -30,7 +30,6 @@ class WindowRelockStore(
         private const val PENDING = "pending"
         private const val GEN = "gen"
         private const val WINDOWS = "windows"
-        private const val SECURE_AT_START = "secure_at_start"
         private const val SNAPSHOT = "snapshot"
         private const val DISABLED_AT_START = "disabled_at_start"
         private const val BLOCKED = "blocked"
@@ -69,9 +68,6 @@ class WindowRelockStore(
 
     fun saveMarker(marker: RelockMarker): Boolean = prefs.edit().putMarker(marker).commit()
 
-    /** `null` = unknown (no start snapshot: an adopted window). */
-    fun secureAtStart(): Boolean? = if (prefs.contains(SECURE_AT_START)) prefs.getBoolean(SECURE_AT_START, true) else null
-
     /** `null` = no snapshot (an adopted window, or it couldn't be taken). Unreadable = none. */
     fun snapshot(): Map<String, PackageState>? = decode(SNAPSHOT) { ServerJson.decodeFromString(SNAPSHOT_SERIALIZER, it) }
 
@@ -101,7 +97,6 @@ class WindowRelockStore(
         val editor = prefs.edit().putMarker(marker)
         if (start != null) {
             editor.putLong(START_MS, start.atMs)
-            if (start.secure != null) editor.putBoolean(SECURE_AT_START, start.secure) else editor.remove(SECURE_AT_START)
             putOrRemove(editor, SNAPSHOT, start.packages?.let { ServerJson.encodeToString(SNAPSHOT_SERIALIZER, it) })
             putOrRemove(editor, DISABLED_AT_START, start.disabled?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
             putOrRemove(editor, CA_AT_START, start.caCerts?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
@@ -168,7 +163,6 @@ class WindowRelockStore(
             editor.putMarker(after)
                 .putString(REPORT_LAST, encoded)
                 .remove(REPORT_CURRENT)
-                .remove(SECURE_AT_START)
                 .remove(START_MS)
                 .remove(SNAPSHOT)
                 .remove(DISABLED_AT_START)
@@ -197,12 +191,10 @@ class WindowRelockStore(
     }
 }
 
-/** The first window's start state ([takesStartSnapshot]): when it opened, whether the phone had an
- * Android credential, the non-system packages, the disabled system packages, the user CA
- * certificates and the Wi-Fi proxies (`null` = couldn't be read). */
+/** The first window's start state ([takesStartSnapshot]): when it opened, the non-system packages, the disabled
+ * system packages, the user CA certificates and the Wi-Fi proxies (`null` = couldn't be read). Design 132: no screen
+ * lock at the start any more - no credential is removed at a relock. */
 data class RelockStart(
-    /** `null` = unknown (design 114's setup hold, QA M1): never a credential removed. */
-    val secure: Boolean?,
     val packages: Map<String, PackageState>?,
     val disabled: Set<String>?,
     val atMs: Long = 0L,
@@ -217,18 +209,6 @@ interface RelockPlatform {
 
     /** The windows open now (`isActive()` of the override and the pause). */
     fun openWindows(): Set<WindowKind>
-
-    fun secureNow(): Boolean
-
-    /** Our reset-password token is stored and active. */
-    fun tokenUsable(): Boolean
-
-    /** `resetPasswordWithToken(null)`: true when the credential is gone. */
-    fun removeCredential(): Boolean
-
-    /** Design 59 §3.7: the policy asks for Android's lock (CE `keyguard_requested`) or we own its credential
-     * (`keyguard_android`) - step 1 is skipped then. Unreadable counts as true (the safe side). */
-    fun androidKeyguardRequested(): Boolean = false
 
     fun installedPackages(): List<InstalledPackage>
 
@@ -257,7 +237,8 @@ interface RelockPlatform {
 
     fun regrantNotifications()
 
-    /** What is still on (the credential is the engine's: [RelockDetections.credentialLeft] is ignored). */
+    /** What is still on ([RelockDetections.credentialLeft] is always false since design 132: Android's PIN is the
+     * Child PIN, and a PIN the kid changed in a window is the PWA's "isn't the Child PIN" line). */
     fun detect(disabledAtStart: Set<String>?): RelockDetections
 
     /** The lock re-check, the time-rule screen, the alarm, Home to the front (unless a call,
@@ -269,8 +250,8 @@ interface RelockPlatform {
 data class RelockOutcome(val report: RelockReport?, val cleared: Boolean)
 
 /**
- * One relock (design 24b §1.2), when due: (1) an Android screen lock set in the window goes, so
- * `PinLockRuntime.configure` in (3) sees none; (2) the signer check writes `relock_blocked`; (3)
+ * One relock (design 24b §1.2), when due: (1) gone with design 132 (an Android screen lock set in the window was
+ * removed - now Android's PIN is the Child PIN, never removed); (2) the signer check writes `relock_blocked`; (3)
  * apply(); (4) the resets; (5) the detections; (6) finish. Each step's findings are committed as it
  * completes; a step that throws is a failure and the rest still runs; a throwing apply() or signer
  * check keeps the marker (and the snapshot) for the next trigger. (3) always runs - also in the sync,
@@ -286,7 +267,6 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
         marker
     }
     val genAtStart = marker.gen
-    val secureAtStart = store.secureAtStart()
     var report = (store.currentReport() ?: startedReport(platform.now(), trigger, marker.windows))
         .let { it.copy(windows = (it.windows + marker.windows).filter { w -> WindowKind.entries.any { k -> k.wire == w } }.distinct().sorted()) }
 
@@ -301,12 +281,6 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
         store.saveCurrentReport(report)
     }
 
-    // 1. The credential first (QA #9).
-    step(RelockFailure.CREDENTIAL) {
-        if (credentialAction(secureAtStart, platform.secureNow(), platform.tokenUsable(), platform.androidKeyguardRequested()) == CredentialAction.REMOVE) {
-            report = withResets(report, 0, 0, platform.removeCredential(), emptyList())
-        }
-    }
     // 2. The signer check: a throw keeps the marker and the snapshot (QA Low 2).
     var signerFailed = false
     step(RelockFailure.SIGNER_CHECK) {
@@ -348,8 +322,7 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
     step(RelockFailure.NOTIFICATIONS) { platform.regrantNotifications() }
     // 5. What is still on.
     step(RelockFailure.DETECTIONS) {
-        val left = credentialAction(secureAtStart, platform.secureNow(), tokenUsable = false) != CredentialAction.NONE
-        report = withDetections(report, platform.detect(store.disabledAtStart()).copy(credentialLeft = left))
+        report = withDetections(report, platform.detect(store.disabledAtStart()).copy(credentialLeft = false))
     }
     // 6. Finish.
     step(RelockFailure.FINISH) {

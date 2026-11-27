@@ -99,7 +99,7 @@ const val GESTURE_ASK_WINDOW_MS = 3_000L
  * Quickstep that Home is disabled - the user's AVD has no navigation bar of SystemUI's, so lock task's `DISABLE_HOME`
  * reaches no `home_disabled` and no heal can help - every bottom-edge swipe goes through. So the kid's swipe becomes
  * "a flash, then the unlock": the lock the system's Home brings back asks for it at once (as the handle's swipe does -
- * Android's PIN pad as the face, our keypad in own mode), once per gesture: never with a call live ([callLive]), never
+ * Android's PIN pad), once per gesture: never with a call live ([callLive]), never
  * within [GESTURE_ASK_QUIET_MS] of a notice ([lastNoticeElapsedMs]) or a screen-on ([lastScreenOnElapsedMs]), and at
  * most every [GESTURE_ASK_MIN_GAP_MS] ([lastAskElapsedMs]). Independent of the heal's 5 s gap: swipes 2.5 s apart all ask.
  */

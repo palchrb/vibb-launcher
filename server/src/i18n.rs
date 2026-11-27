@@ -709,7 +709,9 @@ mod tests {
         // 3c: Locate.
         "device_locate.html",
         "device_locations.html",
-        "device_zone.html",
+        // Design 135: the family's zones and a zone's editor (device_zone.html before it).
+        "family_zone.html",
+        "family_zones.html",
         // Design 88: Locate's rows' pages.
         "device_zones.html",
         "device_find.html",

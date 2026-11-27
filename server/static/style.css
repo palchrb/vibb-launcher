@@ -3654,7 +3654,7 @@ input[type="file"]::file-selector-button {
     .pull-spinner { animation: none; border-right-color: currentColor; opacity: 0.6; }
 }
 
-/* ---- Design 64: safe zones (templates/device_zone.html, the Locate page's #zones) ---- */
+/* ---- Design 64: safe zones (templates/family_zone.html since design 135, the Locate page's #zones) ---- */
 /* The radius slider under its number field; shown by static/zones.js (no name: the number posts). */
 .zone-slider { padding-top: 8px; padding-bottom: 8px; }
 .zone-slider input[type="range"] { flex: 1 1 auto; width: 100%; margin: 0; accent-color: var(--tint); }

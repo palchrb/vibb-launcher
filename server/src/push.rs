@@ -737,12 +737,20 @@ async fn queue_as(
         ),
         None => "1".to_string(),
     };
+    // Design 135 decision 7, §6: a zone event goes to the parents whose own switch for that phone,
+    // zone and direction is on (`zone_alerts`, no row = on), read from the event itself; filtered
+    // once, here, so a retry re-sends what was queued and a switch turned off later recalls nothing.
+    let zone_alerts = if matches!(kind, Kind::ZoneArrived | Kind::ZoneLeft) {
+        ZONE_ALERTS_ON
+    } else {
+        ""
+    };
     sqlx::query(&format!(
         "INSERT INTO push_deliveries (subscription_id, event_id, kind, token_hash, next_try_at) \
-         SELECT s.id, ?, ?, X'', ? FROM push_subscriptions s \
+         SELECT s.id, ?1, ?2, X'', ?3 FROM push_subscriptions s \
          JOIN admin_users a ON a.id = s.admin_id \
          LEFT JOIN notification_prefs p ON p.admin_id = s.admin_id \
-         WHERE s.state = 'active' AND a.removed_at IS NULL AND {CURRENT_EPOCH} AND {on}"
+         WHERE s.state = 'active' AND a.removed_at IS NULL AND {CURRENT_EPOCH} AND {on}{zone_alerts}"
     ))
     .bind(event_id)
     .bind(delivery)
@@ -751,6 +759,13 @@ async fn queue_as(
     .await?;
     Ok(())
 }
+
+/// [queue_as]'s condition for a zone event (`?1`, design 135 §6): the subscriber's own switch for
+/// the event's link (`params.zone_id`) and direction isn't off.
+const ZONE_ALERTS_ON: &str = " AND NOT EXISTS (SELECT 1 FROM parent_events e JOIN zone_alerts za \
+     ON za.device_zone_id = json_extract(e.params, '$.zone_id') \
+     WHERE e.id = ?1 AND za.admin_id = s.admin_id \
+     AND ((e.kind = 'zone_arrived' AND za.arrive = 0) OR (e.kind = 'zone_left' AND za.leave = 0)))";
 
 /// How SQLite's `datetime('now')` writes a time; every push column uses it, so they compare.
 pub fn db_time(t: DateTime<Utc>) -> String {

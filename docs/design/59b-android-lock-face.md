@@ -8,6 +8,8 @@ rule is **not built**: a notice dump at flip + 15 s (§7) must confirm the cause
 (`docs/testing/2026-10-22-d59-rc-run.md`), and the user's reports and logs on 0.36.0-rc.1 (android mode, emulator).
 AOSP references are `android16-release`; launcher paths are under `lock/` unless named.
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock.
+
 ## 0. Summary
 
 - **Step 0, the user's live bug** (Q59b-1): an unlock on Android's own face or pad lands on our Home over the app the

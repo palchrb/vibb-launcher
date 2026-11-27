@@ -1,9 +1,9 @@
-//! Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md` in the handy
-//! workspace, with `qa-10-design.md` on top): the kid's PIN rules, the cross-check with the
-//! override PIN, and what Lock Screen & PINs says about the phone's `lock_state`. Pure apart from
-//! the PBKDF2 calls in [decide_kid_pin]/[override_conflicts] and design 59's command queue
-//! ([queue_pin_command], [cancel_pin_command], [after_lock_report]); unit-tested here, end to end
-//! in `src/tests/step10.rs` and `src/tests/kid_keyguard.rs`.
+//! The Child PIN (handy step 10, design 59; since design 132 Android's PIN lock is the only lock): the kid's PIN
+//! rules, the cross-check with the override PIN, design 59's command that hands the PIN to Android's lock, and what
+//! Lock Screen & PINs says about the phone's `lock_state`. Pure apart from the PBKDF2 calls in
+//! [decide_kid_pin]/[override_conflicts] and the command queue ([queue_pin_command], [after_lock_report],
+//! [newest_pin_send], [legacy_pins]); unit-tested here, end to end in `src/tests/step10.rs` and
+//! `src/tests/android_lock_page.rs`.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,9 +20,13 @@ pub const ANDROID_KEYGUARD_CAPABILITY: &str = "android_keyguard_v1";
 /// It never expires (like `lock`) and its row holds no PIN (`pending_command.pin` is filled at
 /// delivery).
 pub const SET_KID_PIN: &str = "set_kid_pin";
-/// `device_policy.kid_keyguard` and `kid_lock.keyguard`: Android's own lock screen.
+/// The phone's answer to [SET_KID_PIN] while its reset token isn't active ([PinAnswer::NoToken]).
+const NO_TOKEN_ANSWER: &str = "refused: no_token";
+/// `kid_lock.keyguard`, always (design 132: an older launcher never falls back to its own lock), and a report's
+/// `lock_state.keyguard` while Android's PIN is the phone's gate.
 pub const KEYGUARD_ANDROID: &str = "android";
-/// Vibb One's own lock (today's); anything stored but [KEYGUARD_ANDROID] is sent as this.
+/// Vibb One's own lock, gone with design 132: only an older launcher's report says it, and it reads as "no Android
+/// PIN" ([LockState::no_android_pin]).
 pub const KEYGUARD_OWN: &str = "own";
 /// The highest `lock_state.keyguard_relocks` kept.
 const MAX_RELOCKS: i64 = 1000;
@@ -49,11 +53,7 @@ pub fn policy_kid_lock(policy: &DevicePolicy) -> Option<KidLock> {
         pin_hash: hash.clone(),
         pin_salt: salt.clone(),
         pin_length: len,
-        keyguard: if policy.kid_keyguard == KEYGUARD_ANDROID {
-            KEYGUARD_ANDROID
-        } else {
-            KEYGUARD_OWN
-        },
+        keyguard: KEYGUARD_ANDROID,
         pin_rev: policy.kid_pin_rev,
     })
 }
@@ -67,17 +67,19 @@ fn waiting_pin_row() -> String {
     )
 }
 
-/// Design 59 §2.1's queue rule, the one place a [SET_KID_PIN] row is made: the keyguard is
-/// android, a sealed PIN is stored, the phone's last report has [ANDROID_KEYGUARD_CAPABILITY]
-/// (no row for an older launcher at all) and none is waiting. After a Child PIN save, the switch
-/// to android and "Send the Child PIN again" (`report: None`), and at a status report (`report`,
-/// [after_lock_report]): then only when the phone needs the PIN - it reports Vibb One's lock (a
-/// phone updated after the switch), or a rev that is a number other than the current one (never
-/// `null`, a PIN changed on the phone: open question 4) - and while the newest row of this
+/// Design 59 §2.1's queue rule, the one place a [SET_KID_PIN] row is made: a sealed PIN is
+/// stored, the phone's last report has [ANDROID_KEYGUARD_CAPABILITY] (no row for an older
+/// launcher at all) and none is waiting. After a Child PIN save and "Send the Child PIN again"
+/// (`report: None`), and at a status report (`report`, [after_lock_report]): then only when the
+/// phone needs the PIN - it has no Android PIN ([LockState::no_android_pin], design 132 §4.5), or
+/// a rev that is a number other than the current one (never `null`, a PIN changed on the phone:
+/// open question 4) - and while the newest row of this
 /// enrollment is neither in flight (delivered within the re-delivery window and not used up, no
 /// answer yet: no duplicate) nor answered (a refusal, or an answer that didn't change the report,
 /// e.g. an unmanaged phone keeps reporting its own lock: never a loop; the parent's "Send again"
-/// retries). An answered row carried the PIN of the rev stored when it went out: the pop hands a
+/// retries). One exception (design 132 §7.1, Koble til): a newest row refused `no_token` is tried
+/// once more by a report whose `reset_token` is on and whose rev isn't the current one - unless the
+/// row before it was refused `no_token` too, so a token that keeps failing never loops. An answered row carried the PIN of the rev stored when it went out: the pop hands a
 /// row out only at the rev it read (S59-1). Reports and rows from before the enrollment are an
 /// earlier install's (S59-2, S59-3). One statement, so a save can run it in its own transaction.
 /// Returns whether a row was made.
@@ -87,32 +89,43 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
     report: Option<&LockState>,
     requested_by: Option<i64>,
 ) -> Result<bool, sqlx::Error> {
+    // The newest row of this enrolment.
+    let newest = format!(
+        "(SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+         AND requested_at >= {})",
+        crate::models::ENROLLED_AT
+    );
     // The last report's capabilities, as `device_api::last_capabilities` reads them.
     let sql = format!(
         "INSERT INTO device_commands (device_id, command, requested_by) \
-         SELECT device_id, ?2, ?10 FROM device_policy \
-         WHERE device_id = ?1 AND kid_keyguard = ?3 AND kid_pin_sealed IS NOT NULL \
+         SELECT device_id, ?2, ?9 FROM device_policy \
+         WHERE device_id = ?1 AND kid_pin_sealed IS NOT NULL \
            AND EXISTS (SELECT 1 FROM device_status s, json_each(CASE \
                WHEN json_valid(s.capabilities_json) THEN s.capabilities_json ELSE '[]' END) c \
              WHERE s.id = (SELECT id FROM device_status WHERE device_id = ?1 \
                AND reported_at >= {enrolled} ORDER BY reported_at DESC, id DESC LIMIT 1) \
-               AND c.value = ?8) \
+               AND c.value = ?7) \
            AND NOT EXISTS (SELECT 1 FROM device_commands WHERE {waiting}) \
-           AND (NOT ?4 OR ((?5 OR (?6 IS NOT NULL AND ?6 != kid_pin_rev)) \
-             AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
-               (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
-                 AND requested_at >= {enrolled}) \
-               AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL AND deliveries < ?9 \
-                    AND first_delivered_at > datetime('now', ?7))))))",
+           AND (NOT ?3 OR ((?4 OR (?5 IS NOT NULL AND ?5 != kid_pin_rev)) \
+             AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = {newest} \
+               AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL AND deliveries < ?8 \
+                    AND first_delivered_at > datetime('now', ?6))))) \
+             OR (?10 AND (?5 IS NULL OR ?5 != kid_pin_rev) \
+               AND EXISTS (SELECT 1 FROM device_commands WHERE id = {newest} \
+                 AND acknowledged_at IS NOT NULL AND TRIM(result) = ?11) \
+               AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
+                 (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+                   AND requested_at >= {enrolled} AND id < {newest}) \
+                 AND TRIM(COALESCE(result, '')) = ?11)))",
         waiting = waiting_pin_row(),
+        newest = newest,
         enrolled = crate::models::ENROLLED_AT
     );
     let done = sqlx::query(&sql)
         .bind(device_id)
         .bind(SET_KID_PIN)
-        .bind(KEYGUARD_ANDROID)
         .bind(report.is_some())
-        .bind(report.is_some_and(|r| r.keyguard.as_deref() == Some(KEYGUARD_OWN)))
+        .bind(report.is_some_and(LockState::no_android_pin))
         .bind(report.and_then(|r| r.pin_rev))
         .bind(format!(
             "-{} minutes",
@@ -121,30 +134,11 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
         .bind(ANDROID_KEYGUARD_CAPABILITY)
         .bind(crate::models::MAX_COMMAND_DELIVERIES)
         .bind(requested_by)
+        .bind(report.is_some_and(|r| r.reset_token))
+        .bind(NO_TOKEN_ANSWER)
         .execute(db)
         .await?;
     Ok(done.rows_affected() > 0)
-}
-
-/// A waiting [SET_KID_PIN] row is cancelled (`reason`: `kid_pin_cleared`, `keyguard_own`): no PIN
-/// to hand over, or Vibb One's lock again.
-pub async fn cancel_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
-    db: E,
-    device_id: i64,
-    reason: &str,
-) -> Result<u64, sqlx::Error> {
-    let sql = format!(
-        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = ?3 \
-         WHERE {}",
-        waiting_pin_row()
-    );
-    Ok(sqlx::query(&sql)
-        .bind(device_id)
-        .bind(SET_KID_PIN)
-        .bind(reason)
-        .execute(db)
-        .await?
-        .rows_affected())
 }
 
 /// A status report's `lock_state` (design 59 §2.1), from a launcher with
@@ -174,8 +168,8 @@ pub async fn after_lock_report(
 }
 
 /// `pending_command.pin` for a popped [SET_KID_PIN] (design 59 §2.1): the PIN sealed in `policy`
-/// (the row the answer's `kid_lock` comes from), only in android mode and for a launcher whose
-/// last report has [ANDROID_KEYGUARD_CAPABILITY]. `None` otherwise, or when this server can't
+/// (the row the answer's `kid_lock` comes from), only for a launcher whose last report has
+/// [ANDROID_KEYGUARD_CAPABILITY]. `None` otherwise, or when this server can't
 /// open it (no key, another key, a legacy PIN) - the phone then answers `refused: no_pin`.
 pub fn deliverable_pin(
     key: Option<&MusicKey>,
@@ -183,10 +177,9 @@ pub fn deliverable_pin(
     device_id: i64,
     capabilities: &[String],
 ) -> Option<KidPin> {
-    if policy.kid_keyguard != KEYGUARD_ANDROID
-        || !capabilities
-            .iter()
-            .any(|c| c == ANDROID_KEYGUARD_CAPABILITY)
+    if !capabilities
+        .iter()
+        .any(|c| c == ANDROID_KEYGUARD_CAPABILITY)
     {
         return None;
     }
@@ -207,8 +200,7 @@ pub fn deliverable_pin(
 pub enum KidPinRefusal {
     /// Not 4-6 digits.
     Invalid,
-    /// No override PIN: without the "Foreldrekode" a forgotten kid PIN plus an unreachable
-    /// server would leave only calls (QA 10 #6).
+    /// No override PIN: without it nothing can be opened or lifted on the phone itself (QA 10 #6).
     NeedsOverride,
     /// The kid PIN verifies against the override hash - it would open the override.
     SameAsOverride,
@@ -259,12 +251,11 @@ pub fn override_conflicts(new_override: &str, policy: &DevicePolicy) -> bool {
 #[serde(default)]
 pub struct LockState {
     pub active: bool,
-    /// null | "no_pin" | "unmanaged" | "android_credential" | "keyguard_not_disabled" |
-    /// "crash_guard" | "bad_hash"
+    /// null | "no_pin" | "unmanaged" | "crash_guard" | "no_android_pin" (design 132 §4.3: a Child
+    /// PIN stored, Android has no credential yet); an older launcher's other words read as
+    /// [Inactive::Other]. Its `failures` and `backoff_until_ms` (our keypad's) are dropped.
     pub inactive: Option<String>,
     pub locked: bool,
-    pub failures: i64,
-    pub backoff_until_ms: Option<i64>,
     /// Times the lock stepped aside for an exempt screen (call, emergency dialer, alarm) since
     /// the last report (QA 10 #2: these are the only fights that are counted).
     pub exempt_yields: i64,
@@ -277,10 +268,10 @@ pub struct LockState {
     /// `{package, last_at_ms}` is dropped, never the whole `lock_state`; a missing field is empty.
     #[serde(deserialize_with = "lenient_voip_rang")]
     pub voip_rang: Vec<VoipRang>,
-    /// Design 59 §1: the gate the phone runs - [KEYGUARD_ANDROID] while Android's PIN is the gate
-    /// (also while a rollback waits for the token: then `inactive` is `android_credential`, why
-    /// Vibb One's lock is off), else [KEYGUARD_OWN]; any other word is dropped. `None` from a
-    /// launcher before design 59 - told apart by [ANDROID_KEYGUARD_CAPABILITY], never by this.
+    /// Design 59 §1: the gate the phone runs - [KEYGUARD_ANDROID] while Android's PIN is the gate;
+    /// [KEYGUARD_OWN] only from an older launcher (design 132: read as no Android PIN); any other
+    /// word is dropped. `None` from a launcher before design 59 - told apart by
+    /// [ANDROID_KEYGUARD_CAPABILITY], never by this.
     pub keyguard: Option<String>,
     /// The `kid_lock.pin_rev` the gate enforces; `None` = unknown (a PIN changed on the phone) or
     /// an older launcher. Negative values are dropped.
@@ -290,6 +281,15 @@ pub struct LockState {
     /// Times Vibb One locked Android's keyguard under its glance since the last report (§3.3),
     /// 0..=1000.
     pub keyguard_relocks: i64,
+}
+
+impl LockState {
+    /// Design 132 §4.5: the phone has a Child PIN and no Android PIN - it says so
+    /// (`inactive: no_android_pin`), or an older launcher still runs its own lock (`keyguard: own`).
+    pub fn no_android_pin(&self) -> bool {
+        self.inactive.as_deref() == Some("no_android_pin")
+            || self.keyguard.as_deref() == Some(KEYGUARD_OWN)
+    }
 }
 
 /// One `lock_state.voip_rang` entry: a package name and the wall time (ms) of its last ring over
@@ -378,32 +378,26 @@ pub struct LockCard {
     pub notes: Vec<LockNote>,
 }
 
-/// Why the phone's lock is off (`lock_state.inactive`). `no_pin` (no Child PIN yet) is none.
+/// Why the phone's lock is off (`lock_state.inactive`). `no_pin` (no Child PIN yet) is none, and
+/// so is design 132's `no_android_pin`: [lock_card] says it as [LockNote::NoAndroidPin] from
+/// [LockState::no_android_pin], quiet while the PIN is on its way (§4.5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inactive {
     /// Not managed: no app list and calls not managed.
     Unmanaged,
-    /// The phone still has Android's own PIN or pattern (no double lock).
-    AndroidCredential,
-    /// Android refused to switch its own lock screen off.
-    KeyguardNotDisabled,
     /// The lock crashed several times in a row.
     CrashGuard,
-    /// The phone can't read the Child PIN's hash.
-    BadHash,
-    /// A reason this server doesn't know (at most 64 characters, as stored).
+    /// A reason this server doesn't know (at most 64 characters, as stored), and own mode's
+    /// words from an older launcher (`android_credential`, `keyguard_not_disabled`, `bad_hash`).
     Other(String),
 }
 
 impl Inactive {
     pub fn parse(code: &str) -> Option<Inactive> {
         Some(match code {
-            "no_pin" => return None,
+            "no_pin" | "no_android_pin" => return None,
             "unmanaged" => Inactive::Unmanaged,
-            "android_credential" => Inactive::AndroidCredential,
-            "keyguard_not_disabled" => Inactive::KeyguardNotDisabled,
             "crash_guard" => Inactive::CrashGuard,
-            "bad_hash" => Inactive::BadHash,
             other => Inactive::Other(other.to_string()),
         })
     }
@@ -419,13 +413,13 @@ pub enum LockNote {
     CallsCantRing(String),
     /// No report yet from a launcher that has the lock.
     Waiting,
+    /// Design 132 §4.5: a Child PIN is stored, the phone has no Android PIN and none is on its
+    /// way - no lock at all (an orange line and Attention's `lock_off`). `stored`: this server
+    /// keeps a copy it can send again; else the parent saves the PIN again.
+    NoAndroidPin { stored: bool },
     /// The lock is on; whether the phone is locked right now, and whether Android's lock is the
     /// gate (design 59).
     On { locked: bool, android: bool },
-    /// Wrong Child PINs in a row.
-    WrongPins(i64),
-    /// Too many wrong PINs: the next try in about this many minutes.
-    Backoff { minutes: i64 },
     /// Times the lock stepped aside for a call, the emergency dialer or an alarm since the last
     /// report.
     SteppedAside(i64),
@@ -433,20 +427,14 @@ pub enum LockNote {
     /// warning. `label` is the app's name on this server (else its package), `when` the time as
     /// the device page shows times.
     RangOverLock { label: String, when: String },
-    /// Android's lock is chosen and the phone still runs Vibb One's: it starts the next time the
-    /// Child PIN is typed there, or when the PIN being sent (`sending`) arrives.
-    AndroidWaiting { sending: bool },
     /// The phone runs Android's lock with a PIN that isn't the Child PIN (changed on the phone);
     /// `stored`: this server keeps a copy it can send again.
     PinNotChildPin { stored: bool },
     /// The phone's lock still checks another Child PIN than the one saved here.
     PinBehind,
-    /// Android's lock is on without Vibb One's reset token: the PIN can't be changed or cleared
-    /// until the child unlocks the phone once.
+    /// Android's lock is on without Vibb One's reset token: the PIN can't be changed until the
+    /// child unlocks the phone once.
     NoResetToken,
-    /// Vibb One's lock is chosen again and the phone still runs Android's; `stuck`: without the
-    /// token (qa-59-revision N-C: `keyguard: android` with `inactive: android_credential`).
-    SwitchingBack { stuck: bool },
     /// Times Vibb One locked Android's lock under its own lock screen since the last report.
     Relocked(i64),
     /// The newest `set_kid_pin` ([pin_send]).
@@ -478,7 +466,8 @@ pub enum PinSend {
 pub enum PinAnswer {
     /// `pin set`: Android's PIN is the Child PIN now.
     Set,
-    /// `own lock`: Vibb One's lock was chosen again before the phone ran it.
+    /// `own lock`: Vibb One's lock was chosen again before the phone ran it (design 59; no launcher
+    /// sends it since design 132, kept for the stored answers).
     OwnLock,
     /// `refused: no_token`.
     NoToken,
@@ -495,7 +484,7 @@ impl PinAnswer {
         Some(match raw.trim() {
             "pin set" => PinAnswer::Set,
             "own lock" => PinAnswer::OwnLock,
-            "refused: no_token" => PinAnswer::NoToken,
+            NO_TOKEN_ANSWER => PinAnswer::NoToken,
             "refused: mismatch" => PinAnswer::Mismatch,
             "refused: no_pin" => PinAnswer::NoPin,
             "refused: failed" => PinAnswer::Failed,
@@ -631,38 +620,24 @@ impl LockNote {
                 w("device.lock.note.unmanaged_sub"),
                 None,
             ),
-            LockNote::Off(Inactive::AndroidCredential) => warning(
-                "device.lock.note.android_credential",
-                w("device.lock.note.android_credential_sub"),
-                Some(t_params(
-                    lang,
-                    "device.lock.note.android_credential_fix",
-                    &[("command", "adb shell locksettings clear --old <PIN>")],
-                )),
-            ),
-            LockNote::Off(Inactive::KeyguardNotDisabled) => warning(
-                "device.lock.note.keyguard",
-                w("device.lock.note.keyguard_sub"),
-                Some(t_params(
-                    lang,
-                    "device.lock.note.keyguard_fix",
-                    &[("command", "adb shell dpm list-owners")],
-                )),
-            ),
             LockNote::Off(Inactive::CrashGuard) => warning(
                 "device.lock.note.crash_guard",
                 w("device.lock.note.crash_guard_sub"),
                 None,
             ),
-            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
-            LockNote::Off(Inactive::BadHash) => Note {
-                sub: Some(w("device.lock.note.bad_hash_short")),
-                ..warning(
-                    "device.lock.note.bad_hash",
-                    w("device.lock.note.bad_hash_sub"),
-                    None,
-                )
-            },
+            // The fix behind the ⓘ alone (design 132 §4.4): send the kept copy again, or save the PIN again.
+            // Code QA L4: the same words as the setup step's no-PIN line, from one place ([no_pin_line]).
+            LockNote::NoAndroidPin { stored } => {
+                let (title, fix) = no_pin_line(true, *stored);
+                Note {
+                    warning: true,
+                    title: w(title),
+                    value: None,
+                    sub: None,
+                    detail: None,
+                    fix: Some(w(fix)),
+                }
+            }
             LockNote::Off(Inactive::Other(code)) => warning(
                 "device.attention.child_lock_off",
                 w("device.lock.note.other_sub"),
@@ -710,16 +685,6 @@ impl LockNote {
                         .then_some("device.lock.note.at_last_report"),
                 )
             }
-            LockNote::WrongPins(n) => row(w("device.lock.note.wrong_pins"), n.to_string(), None),
-            LockNote::Backoff { minutes } => row(
-                w("device.lock.note.next_try"),
-                t_params(
-                    lang,
-                    "device.lock.note.about_minutes",
-                    &[("minutes", &minutes.to_string())],
-                ),
-                Some("device.lock.note.backoff_sub"),
-            ),
             LockNote::SteppedAside(n) => row(
                 w("device.lock.note.stepped_aside"),
                 times(*n),
@@ -729,16 +694,6 @@ impl LockNote {
                 t_params(lang, "device.lock.note.calls_from", &[("app", label)]),
                 t_params(lang, "device.lock.note.rang", &[("at", when)]),
                 Some("device.lock.note.rang_sub"),
-            ),
-            LockNote::AndroidWaiting { sending: false } => row(
-                w("device.lock.android_lock"),
-                w("device.lock.note.waiting"),
-                Some("device.lock.note.android_waiting_sub"),
-            ),
-            LockNote::AndroidWaiting { sending: true } => row(
-                w("device.lock.android_lock"),
-                w("device.lock.note.sending"),
-                Some("device.lock.note.sending_sub"),
             ),
             LockNote::PinNotChildPin { stored } => warning(
                 "device.attention.child_pin_changed",
@@ -757,16 +712,6 @@ impl LockNote {
             LockNote::NoResetToken => warning(
                 "device.lock.note.no_token",
                 w("device.lock.note.no_token_sub"),
-                None,
-            ),
-            LockNote::SwitchingBack { stuck: false } => row(
-                w("device.lock.android_lock"),
-                w("device.lock.note.switching_back"),
-                Some("device.lock.note.switching_back_sub"),
-            ),
-            LockNote::SwitchingBack { stuck: true } => warning(
-                "device.lock.note.stuck",
-                w("device.lock.note.stuck_sub"),
                 None,
             ),
             LockNote::Relocked(n) => row(
@@ -859,11 +804,6 @@ pub fn rang_notes(
         .collect()
 }
 
-/// Design 59 §2.3: the parent chose Android's lock for this phone.
-pub fn android_requested(policy: &DevicePolicy) -> bool {
-    policy.kid_keyguard == KEYGUARD_ANDROID
-}
-
 /// What the phone's last report says about its lock, for [lock_card].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PhoneLock<'a> {
@@ -871,8 +811,11 @@ pub struct PhoneLock<'a> {
     pub state: Option<&'a LockState>,
     /// The reporting launcher has Android's lock ([ANDROID_KEYGUARD_CAPABILITY]).
     pub android_capable: bool,
-    /// A [SET_KID_PIN] waits to go out.
-    pub pin_waiting: bool,
+    /// Design 132 §4.5: a [SET_KID_PIN] of this enrolment is waiting or in flight ([on_its_way]).
+    pub pin_on_its_way: bool,
+    /// The report is this enrolment's (`reported_at >= devices.enrolled_at`, as the queue rule reads
+    /// it; qa-59-step2-code S2P-4): only then is "Send again" offered.
+    pub this_enrolment: bool,
     /// Design 114b (code QA L1): the report's `setup.child_pin` says the phone has no PIN at all - the setup step
     /// `child_pin` and Lock Screen & PINs' no-PIN line say it, so [LockNote::PinNotChildPin] doesn't too.
     pub no_pin: bool,
@@ -888,10 +831,19 @@ impl PhoneLock<'_> {
     }
 }
 
-/// The Child PIN group from the policy and the phone's report, and the safe-boot switch (QA 10 #7:
-/// safe mode skips our lock). Design 59 §2.3 adds Android's lock: what the parent chose
-/// ([android_requested]) against what the phone runs. `now_ms` for the backoff.
-pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockCard {
+/// Design 132 §4.5: the newest [SET_KID_PIN] is waiting or in flight - fetched and not answered, within the
+/// re-delivery window ([PinSend::Waiting], [PinSend::Sent], [PinSend::Taken]).
+pub fn on_its_way(newest: Option<&PinSend>) -> bool {
+    matches!(
+        newest,
+        Some(PinSend::Waiting | PinSend::Sent { .. } | PinSend::Taken { .. })
+    )
+}
+
+/// The Child PIN group from the policy and the phone's report (design 59 §2.3, design 132: Android's lock is the
+/// only lock). A phone with a Child PIN and no Android PIN ([LockState::no_android_pin]) is [LockNote::NoAndroidPin]
+/// unless the PIN is on its way (§4.5: then the `set_kid_pin` row alone says it).
+pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock) -> LockCard {
     let kid_lock = policy_kid_lock(policy);
     let mut card = LockCard {
         pin_set: kid_lock.is_some(),
@@ -903,22 +855,19 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
     }
     // Safe mode allowed (Block safe mode off) is the parent's choice, never a warning here (2026-11-18): the switch's
     // own ⓘ on Advanced says safe mode skips the lock.
-    let android = android_requested(policy);
     let Some(state) = phone.state else {
         card.notes.push(LockNote::Waiting);
         return card;
     };
     let runs_android = phone.runs_android();
-    // Android's own credential is no warning while the phone runs Android's lock: its gate is
-    // Android's PIN, and it reports the credential while a rollback waits for the token -
-    // "Switching back" says that (qa-59-revision N-C). A phone still on Vibb One's lock with an
-    // Android PIN it didn't set keeps the warning and the alarm, whichever lock is chosen
-    // (qa-59-step2-code S2P-2): Vibb One's lock is off there.
-    let credential = state.inactive.as_deref() == Some("android_credential");
-    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse)
-        && !(credential && runs_android)
-    {
+    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse) {
         card.notes.push(LockNote::Off(off));
+    }
+    if state.no_android_pin() && !phone.pin_on_its_way {
+        // Code QA L4: "send again below" only where the button is.
+        card.notes.push(LockNote::NoAndroidPin {
+            stored: offers_send_again(policy, phone),
+        });
     }
     card.notes.extend(
         state
@@ -927,23 +876,21 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
             .map(|package| LockNote::CallsCantRing(package.clone())),
     );
     if phone.android_capable {
-        if android && !runs_android {
-            card.notes.push(LockNote::AndroidWaiting {
-                sending: phone.pin_waiting,
-            });
-        }
-        if android && runs_android && state.pin_rev.is_none() && !phone.no_pin {
+        // No Android PIN at all is said once, above (the phone reports no rev then too). Without the reset token
+        // (Koble til on a phone with a screen lock, design 132 §7.1: `refused: no_token`) the PIN can't be put back
+        // yet - [LockNote::NoResetToken]'s "unlock once first" alone says it (phase D gate §6bt finding 4).
+        if runs_android
+            && state.pin_rev.is_none()
+            && state.reset_token
+            && !phone.no_pin
+            && !state.no_android_pin()
+        {
             card.notes.push(LockNote::PinNotChildPin {
                 stored: policy.kid_pin_sealed.is_some(),
             });
         }
-        if android && runs_android && !state.reset_token {
+        if runs_android && !state.reset_token {
             card.notes.push(LockNote::NoResetToken);
-        }
-        if !android && runs_android {
-            card.notes.push(LockNote::SwitchingBack {
-                stuck: !state.reset_token || credential,
-            });
         }
         if state.pin_rev.is_some_and(|rev| rev != policy.kid_pin_rev) {
             card.notes.push(LockNote::PinBehind);
@@ -958,65 +905,117 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
             android: runs_android,
         });
     }
-    if state.failures > 0 {
-        card.notes.push(LockNote::WrongPins(state.failures));
-    }
-    if let Some(until) = state.backoff_until_ms.filter(|&u| u > now_ms) {
-        card.notes.push(LockNote::Backoff {
-            minutes: (until - now_ms + 59_999) / 60_000,
-        });
-    }
     if state.exempt_yields > 0 {
         card.notes.push(LockNote::SteppedAside(state.exempt_yields));
     }
     card
 }
 
-/// A Child PIN is set, but the phone's own lock is off (design 31 L2, an Attention alarm): the
-/// phone reports it inactive for a reason [lock_card] warns about - the same notes, so the row and
-/// the page agree.
+/// Design 114b's line on Lock Screen & PINs while the phone reports no PIN at all, as keys (title, the fix behind the
+/// ⓘ): no Child PIN stored - "No Child PIN", choose one below; one stored - "The phone has no PIN", and the fix is
+/// "Send again below" where the button is ([offers_send_again]), else "Save the Child PIN again" (phase D gate §6bt
+/// finding 5: never "Choose a Child PIN below" while one is stored - a legacy PIN without a copy, until the phone's
+/// next report).
+pub fn no_pin_line(pin_set: bool, send_again: bool) -> (&'static str, &'static str) {
+    match (pin_set, send_again) {
+        (false, _) => ("device.lock.no_child_pin", "device.lock.no_pin_fix"),
+        (true, true) => ("device.lock.no_pin", "device.lock.no_pin_send"),
+        (true, false) => ("device.lock.no_pin", "device.lock.no_pin_save"),
+    }
+}
+
+/// A Child PIN is set, but the phone has no lock (design 31 L2, an Attention alarm): the phone reports it inactive
+/// for a reason [lock_card] warns about, or has no Android PIN with none on its way (design 132 §4.5) - the same
+/// notes, so the row and the page agree.
 pub fn lock_off(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
-    lock_card(policy, phone, 0)
+    lock_card(policy, phone)
         .notes
         .iter()
-        .any(|n| matches!(n, LockNote::Off(_)))
+        .any(|n| matches!(n, LockNote::Off(_) | LockNote::NoAndroidPin { .. }))
 }
 
 /// Design 59 §2.3: the phone runs Android's lock with a PIN that isn't the Child PIN - the Lock
 /// page's warning, and an Attention row.
 pub fn pin_changed_on_phone(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
-    lock_card(policy, phone, 0)
+    lock_card(policy, phone)
         .notes
         .iter()
         .any(|n| matches!(n, LockNote::PinNotChildPin { .. }))
 }
 
-/// "Send the Child PIN again" (design 59 §2.3): Android's lock is chosen, the phone can take the
-/// PIN, this server keeps a copy, the phone doesn't run the current one (it reports Vibb One's
-/// lock, a PIN changed on the phone or another rev) and no command is waiting or in flight - the
-/// newest was answered (a refusal, or a success the phone's report didn't follow), never
-/// confirmed, or there is none.
-pub fn offers_send_again(
-    policy: &DevicePolicy,
-    phone: &PhoneLock,
-    newest: Option<&PinSend>,
-) -> bool {
+/// "Send the Child PIN again" (design 59 §2.3): the phone can take the PIN (a report of this
+/// enrolment with [ANDROID_KEYGUARD_CAPABILITY]), this server keeps a
+/// copy, the phone doesn't run the current one (it has no Android PIN, a PIN changed on the phone
+/// or another rev) and no command is waiting or in flight - the newest was answered (a refusal, or
+/// a success the phone's report didn't follow), never confirmed, or there is none.
+pub fn offers_send_again(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
     let Some(state) = phone.state else {
         return false;
     };
-    let in_flight = matches!(
-        newest,
-        Some(PinSend::Waiting | PinSend::Sent { .. } | PinSend::Taken { .. })
-    );
     let current = state.keyguard.as_deref() == Some(KEYGUARD_ANDROID)
         && state.pin_rev == Some(policy.kid_pin_rev);
-    android_requested(policy)
-        && policy_kid_lock(policy).is_some()
+    policy_kid_lock(policy).is_some()
         && policy.kid_pin_sealed.is_some()
+        && phone.this_enrolment
         && phone.android_capable
-        && !phone.pin_waiting
-        && !in_flight
+        && !phone.pin_on_its_way
         && !current
+}
+
+/// The newest [SET_KID_PIN] of this enrolment as a [PinSend] (`zone` words its times).
+pub async fn newest_pin_send(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<PinSend>, sqlx::Error> {
+    let newest: Option<crate::models::DeviceCommand> = sqlx::query_as(&format!(
+        "SELECT * FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+         AND requested_at >= {} ORDER BY id DESC LIMIT 1",
+        crate::models::ENROLLED_AT
+    ))
+    .bind(device_id)
+    .bind(SET_KID_PIN)
+    .fetch_optional(db)
+    .await?;
+    Ok(newest.and_then(|newest| pin_send(&newest, zone, now)))
+}
+
+/// [on_its_way] for the newest [SET_KID_PIN] of this enrolment, for the Attention rows. A read that fails is "not
+/// on its way" (logged): the phone then shows its no-PIN line rather than none.
+pub async fn pin_on_its_way(db: &sqlx::SqlitePool, device_id: i64) -> bool {
+    let zone = crate::display_time::Zone::utc_fallback();
+    match newest_pin_send(db, device_id, &zone, chrono::Utc::now()).await {
+        Ok(newest) => on_its_way(newest.as_ref()),
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read the Child PIN's command");
+            false
+        }
+    }
+}
+
+/// Design 132 §4.2 (QA L1): the phones with a Child PIN saved before design 59 (no sealed copy), which the server can
+/// never send to Android's lock - the parent saves them again. Their ids, in order.
+pub async fn legacy_pins(db: &sqlx::SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT device_id FROM device_policy \
+         WHERE kid_pin_hash IS NOT NULL AND kid_pin_sealed IS NULL ORDER BY device_id",
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// [legacy_pins] as one `info` line at the start, only when there are any (never PIN material).
+pub async fn log_legacy_pins(db: &sqlx::SqlitePool) {
+    match legacy_pins(db).await {
+        Ok(ids) if ids.is_empty() => {}
+        Ok(ids) => tracing::info!(
+            device_ids = ?ids,
+            "legacy Child PINs without a copy: {}",
+            ids.len()
+        ),
+        Err(err) => tracing::warn!(%err, "can't count the legacy Child PINs"),
+    }
 }
 
 /// The Child PIN as this server keeps it (design 59 §2.1), read in one statement for the reveal.
@@ -1093,7 +1092,10 @@ pub fn shown_pin(
                 .filter(|_| kept.kid_pin_prev_rev == Some(rev))
                 .and_then(|prev| crate::kid_pin::open(key, device_id, prev)),
         ),
-        Some(None) if phone.runs_android() => PhoneHas::Changed,
+        // Design 132: no Android PIN at all isn't a changed one.
+        Some(None) if phone.runs_android() && !reported.is_some_and(LockState::no_android_pin) => {
+            PhoneHas::Changed
+        }
         _ => PhoneHas::This,
     };
     ShownPin::Pin {
@@ -1108,16 +1110,15 @@ pub fn flash_text(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
     let (key, refused) = match code {
         "saved" => ("device.lock.flash.saved", false),
         "saved_safe_boot" => ("device.lock.flash.saved_safe_boot", false),
-        // Design 59 §2.1: the key file couldn't be read at the start (the server log says why).
-        "saved_not_kept" => ("device.lock.flash.saved_not_kept", false),
-        "saved_safe_boot_not_kept" => ("device.lock.flash.saved_safe_boot_not_kept", false),
-        "cleared" => ("device.lock.flash.cleared", false),
-        // Design 59 §2.3: "Send the Child PIN again" and the lock switch.
+        // Design 132 §4.2: the key file couldn't be read at the start (the server log says why) - without a copy the
+        // PIN could never reach Android's lock, so nothing is saved.
+        "save_not_kept" => ("device.lock.flash.save_not_kept", true),
+        // Design 59 §2.3: "Send the Child PIN again".
         "pin_sent" => ("device.lock.flash.pin_sent", false),
         "pin_not_sent" => ("device.lock.flash.pin_not_sent", true),
         "pin_not_kept" => ("device.lock.flash.pin_not_kept", true),
-        // 2026-11-16: Remove Child PIN while Android's lock is chosen (a page from before the switch).
-        "keyguard_needs_pin" => ("device.lock.flash.keyguard_needs_pin", true),
+        // Design 132 Q1 (a): a Remove from a page before it - the Child PIN is changed, never removed.
+        "not_removed" => ("device.lock.flash.not_removed", true),
         "invalid" => ("device.lock.flash.invalid", true),
         "needs_override" => ("device.lock.flash.needs_override", true),
         "same_as_override" => ("device.lock.flash.same_as_override", true),
@@ -1180,6 +1181,7 @@ mod tests {
             "crash_guard",
             "bad_hash",
             "odd",
+            "no_android_pin",
         ] {
             assert!(
                 lock_off(&with_pin, &phone(Some(&inactive(Some(reason))))),
@@ -1245,9 +1247,16 @@ mod tests {
         p.hardening.disallow_safe_boot = true;
         for (inactive, typed) in [
             ("crash_guard", Inactive::CrashGuard),
-            ("android_credential", Inactive::AndroidCredential),
-            ("bad_hash", Inactive::BadHash),
-            ("keyguard_not_disabled", Inactive::KeyguardNotDisabled),
+            // Own mode's words from an older build (design 132): unknown here.
+            (
+                "android_credential",
+                Inactive::Other("android_credential".to_string()),
+            ),
+            ("bad_hash", Inactive::Other("bad_hash".to_string())),
+            (
+                "keyguard_not_disabled",
+                Inactive::Other("keyguard_not_disabled".to_string()),
+            ),
             ("unmanaged", Inactive::Unmanaged),
             ("odd", Inactive::Other("odd".to_string())),
         ] {
@@ -1255,7 +1264,7 @@ mod tests {
                 inactive: Some(inactive.to_string()),
                 ..Default::default()
             };
-            let card = lock_card(&p, &phone(Some(&state)), 0);
+            let card = lock_card(&p, &phone(Some(&state)));
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
             assert!(card.notes[0].note(Lang::En, None).warning, "{inactive}");
         }
@@ -1263,19 +1272,17 @@ mod tests {
             inactive: Some("no_pin".to_string()),
             ..Default::default()
         };
-        assert!(lock_card(&p, &phone(Some(&state)), 0).notes.is_empty());
+        assert!(lock_card(&p, &phone(Some(&state))).notes.is_empty());
         // No report yet.
-        assert_eq!(lock_card(&p, &phone(None), 0).notes, [LockNote::Waiting]);
+        assert_eq!(lock_card(&p, &phone(None)).notes, [LockNote::Waiting]);
 
         let state = LockState {
             active: true,
             locked: true,
-            failures: 6,
-            backoff_until_ms: Some(90_000),
             exempt_yields: 2,
             ..Default::default()
         };
-        let card = lock_card(&p, &phone(Some(&state)), 0);
+        let card = lock_card(&p, &phone(Some(&state)));
         assert_eq!(
             card.notes,
             [
@@ -1283,8 +1290,6 @@ mod tests {
                     locked: true,
                     android: false
                 },
-                LockNote::WrongPins(6),
-                LockNote::Backoff { minutes: 2 },
                 LockNote::SteppedAside(2),
             ]
         );
@@ -1301,8 +1306,6 @@ mod tests {
             words,
             [
                 ("On the phone".to_string(), Some("Locked".to_string())),
-                ("Wrong PINs in a row".to_string(), Some("6".to_string())),
-                ("Next try in".to_string(), Some("About 2 min".to_string())),
                 ("Stepped aside".to_string(), Some("2 times".to_string())),
             ]
         );
@@ -1312,10 +1315,7 @@ mod tests {
     fn warnings_are_short_and_keep_commands_behind_the_info() {
         let notes = [
             LockNote::Off(Inactive::Unmanaged),
-            LockNote::Off(Inactive::AndroidCredential),
-            LockNote::Off(Inactive::KeyguardNotDisabled),
             LockNote::Off(Inactive::CrashGuard),
-            LockNote::Off(Inactive::BadHash),
             LockNote::Off(Inactive::Other("odd".to_string())),
             LockNote::CallsCantRing("io.element.android.x".to_string()),
         ];
@@ -1324,16 +1324,8 @@ mod tests {
             assert!(words.warning, "{note:?}");
             // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
-            // Design 113 (QA M5): a short visible line only where the title alone doesn't carry
-            // the news; the sentence stays behind the ⓘ.
-            assert_eq!(
-                words.sub.is_some(),
-                matches!(note, LockNote::Off(Inactive::BadHash)),
-                "{note:?}"
-            );
-            if let Some(sub) = &words.sub {
-                assert!(sub.split_whitespace().count() <= 6, "{note:?}: {sub}");
-            }
+            // Design 113 (QA M5): the sentence stays behind the ⓘ.
+            assert!(words.sub.is_none(), "{note:?}");
             let detail = words.detail.unwrap();
             for hidden in [
                 "adb ",
@@ -1346,11 +1338,6 @@ mod tests {
                 assert!(!detail.contains(hidden), "{note:?}: {detail}");
             }
         }
-        let fix = LockNote::Off(Inactive::AndroidCredential)
-            .note(Lang::En, None)
-            .fix
-            .unwrap();
-        assert!(fix.contains("adb shell locksettings clear --old <PIN>"));
     }
 
     #[test]
@@ -1362,7 +1349,7 @@ mod tests {
             voip_fsi_denied: vec!["io.element.android.x".to_string()],
             ..Default::default()
         };
-        let card = lock_card(&p, &phone(Some(&state)), 0);
+        let card = lock_card(&p, &phone(Some(&state)));
         assert_eq!(
             card.notes,
             [
@@ -1419,14 +1406,14 @@ mod tests {
             serde_json::json!({ "package": "org.example.app3", "last_at_ms": now - 3_600_000 }),
         ]);
         let stored = sanitize_lock_state(
-            &serde_json::json!({ "active": true, "failures": 3, "voip_rang": entries }),
+            &serde_json::json!({ "active": true, "failures": 3, "backoff_until_ms": 9, "voip_rang": entries }),
             now,
         )
         .unwrap();
         let state: LockState = serde_json::from_str(&stored).unwrap();
-        // The rest of lock_state stays.
+        // The rest of lock_state stays; our keypad's fields from an older build are dropped (design 132 §4.3).
         assert!(state.active);
-        assert_eq!(state.failures, 3);
+        assert!(!stored.contains("failures") && !stored.contains("backoff"));
         let packages: Vec<&str> = state.voip_rang.iter().map(|r| r.package.as_str()).collect();
         assert_eq!(
             packages,
@@ -1487,7 +1474,8 @@ mod tests {
     }
 
     /// Design 59 §1: the keyguard's two words, a rev that isn't negative, relocks capped; an older
-    /// launcher's report reads as unknown, not as "own".
+    /// launcher's report reads as unknown, not as "own"; design 132: "own" and `no_android_pin` read
+    /// as no Android PIN.
     #[test]
     fn the_keyguard_fields_are_kept_typed() {
         let stored = |value: serde_json::Value| {
@@ -1511,9 +1499,16 @@ mod tests {
             (None, None, 0)
         );
         let older = stored(serde_json::json!({ "active": true }));
+        assert!(!older.no_android_pin());
         assert_eq!(
             (older.keyguard, older.pin_rev, older.reset_token),
             (None, None, false)
+        );
+        assert!(stored(serde_json::json!({ "keyguard": "own" })).no_android_pin());
+        assert!(stored(serde_json::json!({ "inactive": "no_android_pin" })).no_android_pin());
+        assert!(
+            !stored(serde_json::json!({ "keyguard": "android", "inactive": "crash_guard" }))
+                .no_android_pin()
         );
     }
 
@@ -1547,7 +1542,7 @@ mod tests {
             "Signal".to_string(),
         )]);
         let p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, &phone(Some(&state)), 0);
+        let card = lock_card(&p, &phone(Some(&state)));
         // Not in lock_card's own notes (the page adds them with the names).
         assert!(
             !card
@@ -1577,13 +1572,13 @@ mod tests {
             ]
         );
         // No Child PIN: nothing.
-        let card = lock_card(&DevicePolicy::default(), &phone(Some(&state)), 0);
+        let card = lock_card(&DevicePolicy::default(), &phone(Some(&state)));
         assert!(rang_notes(&card, Some(&state), &labels, &zone, now).is_empty());
     }
 
     #[test]
     fn no_pin_no_warnings() {
-        let card = lock_card(&DevicePolicy::default(), &phone(None), 0);
+        let card = lock_card(&DevicePolicy::default(), &phone(None));
         assert!(!card.pin_set);
         assert!(card.notes.is_empty());
     }
@@ -1593,7 +1588,8 @@ mod tests {
         PhoneLock {
             state: Some(state),
             android_capable: true,
-            pin_waiting: false,
+            pin_on_its_way: false,
+            this_enrolment: true,
             no_pin: false,
         }
     }
@@ -1609,53 +1605,117 @@ mod tests {
         }
     }
 
-    /// Design 59 §2.3, case by case: what the parent chose against what the phone runs.
+    /// Phase D gate §6bt finding 5: with a Child PIN stored, the no-PIN line never asks to choose one.
+    #[test]
+    fn the_no_pin_line_never_asks_for_a_child_pin_while_one_is_stored() {
+        assert_eq!(
+            no_pin_line(false, false),
+            ("device.lock.no_child_pin", "device.lock.no_pin_fix")
+        );
+        assert_eq!(
+            no_pin_line(true, true),
+            ("device.lock.no_pin", "device.lock.no_pin_send")
+        );
+        assert_eq!(
+            no_pin_line(true, false),
+            ("device.lock.no_pin", "device.lock.no_pin_save")
+        );
+        assert_eq!(
+            t(Lang::Nb, no_pin_line(true, false).1),
+            "Lagre barne-PIN på nytt."
+        );
+    }
+
+    /// Design 59 §2.3 and design 132 §4.5, case by case: what the phone runs against the stored Child PIN.
     #[test]
     fn the_card_words_android_lock_case_by_case() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
         p.hardening.disallow_safe_boot = true;
         p.kid_pin_rev = 4;
         p.kid_pin_sealed = Some("sealed".to_string());
-        let own = p.clone();
-        p.kid_keyguard = KEYGUARD_ANDROID.to_string();
         let on = |android| LockNote::On {
             locked: true,
             android,
         };
 
-        // Chosen, the phone still on Vibb One's: waiting for a PIN typed, or for the one sent.
-        let state = reported("own", Some(4), true);
-        let mut waiting = android_phone(&state);
-        assert_eq!(
-            lock_card(&p, &waiting, 0).notes,
-            [LockNote::AndroidWaiting { sending: false }, on(false)]
-        );
-        waiting.pin_waiting = true;
-        assert_eq!(
-            lock_card(&p, &waiting, 0).notes[0],
-            LockNote::AndroidWaiting { sending: true }
-        );
-        // Running it with the current PIN: just the state.
+        // Running it with the current PIN: just the state; `kid_lock.keyguard` is always "android".
+        assert_eq!(policy_kid_lock(&p).unwrap().keyguard, KEYGUARD_ANDROID);
         let state = reported("android", Some(4), true);
-        assert_eq!(lock_card(&p, &android_phone(&state), 0).notes, [on(true)]);
-        // A PIN changed on the phone: the warning, "send again" when a copy is kept.
-        let state = reported("android", None, true);
-        assert_eq!(
-            lock_card(&p, &android_phone(&state), 0).notes,
-            [LockNote::PinNotChildPin { stored: true }, on(true)]
-        );
-        assert!(pin_changed_on_phone(&p, &android_phone(&state)));
+        assert_eq!(lock_card(&p, &android_phone(&state)).notes, [on(true)]);
+        assert!(!lock_off(&p, &android_phone(&state)));
+        // §4.5: no Android PIN and nothing on its way - the orange line and the alarm, the fix behind the ⓘ: send the
+        // kept copy again, or save the PIN again without one; an older build's `keyguard: own` reads the same.
+        let mut none = reported("android", None, true);
+        none.active = false;
+        none.locked = false;
+        none.inactive = Some("no_android_pin".to_string());
+        let mut older = reported("own", Some(4), true);
+        older.active = false;
+        older.locked = false;
+        for state in [&none, &older] {
+            assert_eq!(
+                lock_card(&p, &android_phone(state)).notes,
+                [LockNote::NoAndroidPin { stored: true }],
+                "{state:?}"
+            );
+            assert!(lock_off(&p, &android_phone(state)), "{state:?}");
+            // Quiet while a set_kid_pin waits or is in flight: the command's own row says it.
+            let mut sending = android_phone(state);
+            sending.pin_on_its_way = true;
+            assert!(lock_card(&p, &sending).notes.is_empty(), "{state:?}");
+            assert!(!lock_off(&p, &sending), "{state:?}");
+        }
+        // ...also from a launcher without the capability (nothing can be sent to it).
+        assert!(lock_off(&p, &phone(Some(&none))));
         let mut unkept = p.clone();
         unkept.kid_pin_sealed = None;
         assert_eq!(
-            lock_card(&unkept, &android_phone(&state), 0).notes[0],
+            lock_card(&unkept, &android_phone(&none)).notes,
+            [LockNote::NoAndroidPin { stored: false }]
+        );
+        let words = |note: LockNote| {
+            let n = note.note(Lang::En, None);
+            assert!(n.warning && n.detail.is_none() && n.sub.is_none());
+            (n.title, n.fix.unwrap())
+        };
+        assert_eq!(
+            words(LockNote::NoAndroidPin { stored: true }),
+            (
+                "The phone has no PIN".to_string(),
+                "Send the Child PIN again below.".to_string()
+            )
+        );
+        assert_eq!(
+            words(LockNote::NoAndroidPin { stored: false }),
+            (
+                "The phone has no PIN".to_string(),
+                "Save the Child PIN again.".to_string()
+            )
+        );
+        // A PIN changed on the phone: the warning, "send again" when a copy is kept.
+        let state = reported("android", None, true);
+        assert_eq!(
+            lock_card(&p, &android_phone(&state)).notes,
+            [LockNote::PinNotChildPin { stored: true }, on(true)]
+        );
+        assert!(pin_changed_on_phone(&p, &android_phone(&state)));
+        assert_eq!(
+            lock_card(&unkept, &android_phone(&state)).notes[0],
             LockNote::PinNotChildPin { stored: false }
         );
+        // §6bt finding 4: Koble til on a phone with a screen lock - another PIN and no token yet (`refused:
+        // no_token`): only "unlock once first", never "not the Child PIN, send it again", and no Attention row.
+        let state = reported("android", None, false);
+        assert_eq!(
+            lock_card(&p, &android_phone(&state)).notes,
+            [LockNote::NoResetToken, on(true)]
+        );
+        assert!(!pin_changed_on_phone(&p, &android_phone(&state)));
         // Behind, without the token, locked again under the glance.
         let mut state = reported("android", Some(3), false);
         state.keyguard_relocks = 2;
         assert_eq!(
-            lock_card(&p, &android_phone(&state), 0).notes,
+            lock_card(&p, &android_phone(&state)).notes,
             [
                 LockNote::NoResetToken,
                 LockNote::PinBehind,
@@ -1663,44 +1723,20 @@ mod tests {
                 on(true)
             ]
         );
-        // Vibb One's chosen again, the phone still on Android's: switching back, stuck without
-        // the token - also as the pair with `android_credential` (qa-59-revision N-C), which is
-        // never own mode's "remove Android's lock", nor the lock-off alarm.
-        let state = reported("android", Some(4), true);
-        assert_eq!(
-            lock_card(&own, &android_phone(&state), 0).notes,
-            [LockNote::SwitchingBack { stuck: false }, on(true)]
-        );
-        let mut pair = reported("android", Some(4), true);
-        pair.inactive = Some("android_credential".to_string());
-        assert_eq!(
-            lock_card(&own, &android_phone(&pair), 0).notes,
-            [LockNote::SwitchingBack { stuck: true }, on(true)]
-        );
-        assert!(!lock_off(&own, &android_phone(&pair)));
-        // Own mode with Android's credential on a phone running Vibb One's: the old warning.
-        let mut credential = reported("own", Some(4), true);
+        // Own mode's old words from an older build: the generic warning, never their own.
+        let mut credential = reported("android", Some(4), true);
         credential.inactive = Some("android_credential".to_string());
-        credential.active = false;
         assert_eq!(
-            lock_card(&own, &android_phone(&credential), 0).notes,
-            [LockNote::Off(Inactive::AndroidCredential)]
-        );
-        assert!(lock_off(&own, &android_phone(&credential)));
-        // ...and with Android's lock chosen, while the phone still runs Vibb One's (S2P-2).
-        assert_eq!(
-            lock_card(&p, &android_phone(&credential), 0).notes,
+            lock_card(&p, &android_phone(&credential)).notes,
             [
-                LockNote::Off(Inactive::AndroidCredential),
-                LockNote::AndroidWaiting { sending: false }
+                LockNote::Off(Inactive::Other("android_credential".to_string())),
+                on(true)
             ]
         );
-        assert!(lock_off(&p, &android_phone(&credential)));
         // The words: warnings short, the commands nowhere; the rows' values.
         for note in [
             LockNote::PinNotChildPin { stored: true },
             LockNote::NoResetToken,
-            LockNote::SwitchingBack { stuck: true },
         ] {
             let words = note.note(Lang::En, None);
             assert!(words.warning, "{note:?}");
@@ -1798,57 +1834,55 @@ mod tests {
     #[test]
     fn send_again_is_offered_only_when_it_can_help() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
-        p.kid_keyguard = KEYGUARD_ANDROID.to_string();
         p.kid_pin_rev = 4;
         p.kid_pin_sealed = Some("sealed".to_string());
         let changed = reported("android", None, true);
-        let refused = PinSend::Answered {
-            answer: PinAnswer::NoToken,
-            at: "14:03".to_string(),
-        };
-        assert!(offers_send_again(&p, &android_phone(&changed), None));
-        assert!(offers_send_again(
-            &p,
-            &android_phone(&changed),
-            Some(&refused)
-        ));
-        for in_flight in [
-            PinSend::Waiting,
-            PinSend::Sent {
-                at: "14:02".to_string(),
-            },
-            PinSend::Taken {
-                sent: "14:02".to_string(),
-                taken: "14:03".to_string(),
-            },
-        ] {
-            assert!(!offers_send_again(
-                &p,
-                &android_phone(&changed),
-                Some(&in_flight)
-            ));
-        }
+        assert!(offers_send_again(&p, &android_phone(&changed)));
+        let mut sending = android_phone(&changed);
+        sending.pin_on_its_way = true;
+        assert!(!offers_send_again(&p, &sending));
         let current = reported("android", Some(4), true);
-        assert!(!offers_send_again(&p, &android_phone(&current), None));
-        // Behind, or still on Vibb One's lock: yes.
-        assert!(offers_send_again(
-            &p,
-            &android_phone(&reported("android", Some(3), true)),
-            None
-        ));
-        assert!(offers_send_again(
-            &p,
-            &android_phone(&reported("own", Some(4), true)),
-            None
-        ));
-        // Vibb One's lock chosen, no copy, an older launcher: no.
-        let mut own = p.clone();
-        own.kid_keyguard = KEYGUARD_OWN.to_string();
-        assert!(!offers_send_again(&own, &android_phone(&changed), None));
+        assert!(!offers_send_again(&p, &android_phone(&current)));
+        // Behind, no Android PIN, or an older build on its own lock: yes.
+        let mut none = reported("android", None, true);
+        none.inactive = Some("no_android_pin".to_string());
+        for state in [
+            reported("android", Some(3), true),
+            none,
+            reported("own", Some(4), true),
+        ] {
+            assert!(offers_send_again(&p, &android_phone(&state)), "{state:?}");
+        }
+        // No copy, an older launcher: no.
         let mut unkept = p.clone();
         unkept.kid_pin_sealed = None;
-        assert!(!offers_send_again(&unkept, &android_phone(&changed), None));
-        assert!(!offers_send_again(&p, &phone(Some(&changed)), None));
+        assert!(!offers_send_again(&unkept, &android_phone(&changed)));
+        assert!(!offers_send_again(&p, &phone(Some(&changed))));
+        // What is on its way: waiting, sent or taken; not an answered or a lost one.
+        let at = || "14:02".to_string();
+        for (send, way) in [
+            (PinSend::Waiting, true),
+            (PinSend::Sent { at: at() }, true),
+            (
+                PinSend::Taken {
+                    sent: at(),
+                    taken: at(),
+                },
+                true,
+            ),
+            (PinSend::Unconfirmed { at: at() }, false),
+            (PinSend::NoAnswer { taken: at() }, false),
+            (
+                PinSend::Answered {
+                    answer: PinAnswer::Failed,
+                    at: at(),
+                },
+                false,
+            ),
+        ] {
+            assert_eq!(on_its_way(Some(&send)), way, "{send:?}");
+        }
+        assert!(!on_its_way(None));
     }
 
     /// Design 59 §2.2: the shown PIN, the one the phone still has, and why nothing shows.

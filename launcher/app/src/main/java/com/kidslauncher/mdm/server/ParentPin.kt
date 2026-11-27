@@ -140,7 +140,7 @@ object ParentPin {
     private fun windowDuration(entry: ParentPinEntry): Long? = when (entry) {
         ParentPinEntry.PAUSE -> RESTRICTIONS_PAUSE_DURATION_MS
         ParentPinEntry.INSTALL_MODE -> INSTALL_MODE_DURATION_MS
-        ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> null
+        ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> null
     }
 
     /**
@@ -175,7 +175,7 @@ object ParentPin {
         when (entry) {
             ParentPinEntry.PAUSE -> RestrictionsPause.start(context, start)
             ParentPinEntry.INSTALL_MODE -> PlayRuntime.startInstallMode(context, start)
-            ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> Unit
+            ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> Unit
         }
     }
 }

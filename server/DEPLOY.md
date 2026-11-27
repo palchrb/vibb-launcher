@@ -502,7 +502,9 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   Settings › Software Updates shows this server's version and the newest release; it never updates anything itself.
   Before migrating the database, the new version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3
   are kept). A pre-migration copy keeps what the old schema held until it rotates out (e.g. 0126's dropped
-  `weather_places`, the cells' old place names).
+  `weather_places`, the cells' old place names; 0181's dropped `kid_keyguard`, each phone's choice between Android's
+  lock and Vibb One's own: a release without 0181 refuses a database that ran it, so a rollback past it starts from
+  this copy).
 - **Rolling back**: put the pre-migration copy back, then the old release (Watchtower must not pull `latest` meanwhile:
   pin `HANDY_VERSION`; with the timer below, `sudo systemctl disable --now handy-update.timer` first, or it moves
   forward again the next night):

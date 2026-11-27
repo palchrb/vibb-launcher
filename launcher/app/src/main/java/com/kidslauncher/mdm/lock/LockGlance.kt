@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  * PIN lock always comes up on the glance page - clock, date, the music tile while something plays,
  * up to eight notification rows (design r11; three before it), "Nødsamtale" - and the swipe up (design 59d step J; the
  * "Lås opp" button before it)
- * or a row leads to the keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
+ * or a row asks for the unlock. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
  * after the right code.
  *
  * It weakens nothing: the page's only actions are the music's play/pause, previous and next, the
@@ -31,13 +31,10 @@ import kotlin.math.roundToInt
  */
 
 /**
- * The lock's stages: the glance page, our keypad, or - as Android's face (design 59d step B, Q59d-6) - [ASK]: Android's
- * PIN pad is asked for from the glance page; our keypad is never visible or focusable there.
+ * The lock's stages: the glance page, or [ASK] (design 59d step B, Q59d-6): Android's PIN pad is asked for from the
+ * glance page. Design 132: no keypad stage of ours.
  */
-enum class LockStage { GLANCE, KEYPAD, ASK }
-
-/** Whether the glance page (its root, with its ground) is on screen: on the page and under Android's pad. */
-fun glancePageShown(stage: LockStage): Boolean = stage != LockStage.KEYPAD
+enum class LockStage { GLANCE, ASK }
 
 /**
  * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front for ~330 ms and slid away
@@ -47,10 +44,6 @@ fun glancePageShown(stage: LockStage): Boolean = stage != LockStage.KEYPAD
  * only what is drawn: when the glance leaves is still `faceStep`'s LEAVE alone.
  */
 fun glanceContentShown(leaving: Boolean): Boolean = !leaving
-
-/** Design 59d step B: the leave hides the page's content first - only as Android's face and with the glance in front
- * (`leaveInFront`); own mode's leave is unchanged. */
-fun glanceLeaveHides(androidFace: Boolean, inFront: Boolean): Boolean = androidFace && inFront
 
 /**
  * What a row opens after the code (memory only; redacted toString - a conversation key can be a
@@ -113,28 +106,21 @@ sealed interface GlanceStageEvent {
     /** A row: its target, or `null` when none may be taken (a time rule leaves the app unusable). */
     data class Row(val target: GlanceTarget?) : GlanceStageEvent
 
-    /** The keypad's back arrow; as the face also the pad's cancel, an error, the dead ask's recovery and STAY. */
+    /** The pad's cancel, an error, the dead ask's recovery and STAY. */
     data object Back : GlanceStageEvent
-
-    /** Design 59d step B: as the face with no Android credential at the tap (`FaceStep.OWN_KEYPAD`) - our keys, the
-     * target kept. */
-    data object OwnKeypad : GlanceStageEvent
 }
 
 /**
- * The stage machine (§1.1): every lock-up is the glance page, without a target; "Lås opp" and a
- * row lead to the keypad (a row with its target); the arrow back drops the target. Coming back
- * with the screen on (the emergency dialer, an alarm, a call) is no event: the stage and target stay.
- * Design 59d step B ([face]: the panel is Android's face, fixed for that glance): "Lås opp" and a row lead to
- * [LockStage.ASK] instead - a tap in ASK asks again (a row replaces the target); Back gives GLANCE, the target dropped;
- * [GlanceStageEvent.OwnKeypad] gives our keypad. Own mode never enters ASK.
+ * The stage machine (§1.1, design 59d step B): every lock-up is the glance page, without a target; "Lås opp" and a row
+ * lead to [LockStage.ASK] (a row with its target) - a tap in ASK asks again (a row replaces the target); Back gives
+ * GLANCE, the target dropped. Coming back with the screen on (the emergency dialer, an alarm, a call) is no event: the
+ * stage and target stay.
  */
-fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent, face: Boolean = false): GlanceStageState = when (event) {
+fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent): GlanceStageState = when (event) {
     GlanceStageEvent.LockUp -> GlanceStageState.GLANCE
-    GlanceStageEvent.Unlock -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, null)
-    is GlanceStageEvent.Row -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, event.target)
+    GlanceStageEvent.Unlock -> GlanceStageState(LockStage.ASK, null)
+    is GlanceStageEvent.Row -> GlanceStageState(LockStage.ASK, event.target)
     GlanceStageEvent.Back -> if (state.stage != LockStage.GLANCE) GlanceStageState.GLANCE else state
-    GlanceStageEvent.OwnKeypad -> if (state.stage == LockStage.ASK) state.copy(stage = LockStage.KEYPAD) else state
 }
 
 // ---- the swipe up (design 59d step J) ------------------------------------------------------------
@@ -153,7 +139,7 @@ enum class GlanceSwipe {
     /** Not (yet) a swipe: the touch goes on to the views. */
     NONE,
 
-    /** The swipe up: "Lås opp" as the button was - the ASK stage as the face, our keypad in own mode. */
+    /** The swipe up: "Lås opp" as the button was - the ASK stage. */
     UNLOCK,
 }
 
@@ -284,7 +270,7 @@ fun glanceBottomRoom(navBarPx: Int, tappablePx: Int, handleViewPx: Int): GlanceB
  * (dp, up positive), [dx] sideways (dp), [vy] the speed upwards at the lift (dp/s), [page] the page's height (dp),
  * [lifted] the finger is up. UNLOCK for a drag past a third of the page (also before the lift), or at the lift for a
  * fling of at least [GLANCE_SWIPE_FLING_DP] at [GLANCE_SWIPE_FLING_DPS]; always mostly vertical; never for a touch that
- * [startedOnTappable] ([glanceSwipeBlocked]). It only asks: what opens is still `faceStep`'s verdict (or our keypad).
+ * [startedOnTappable] ([glanceSwipeBlocked]). It only asks: what opens is still `faceStep`'s verdict.
  */
 fun glanceSwipeStep(dy: Float, vy: Float, startedOnTappable: Boolean, dx: Float = 0f, page: Float, lifted: Boolean): GlanceSwipe {
     if (startedOnTappable || dy <= kotlin.math.abs(dx)) return GlanceSwipe.NONE
@@ -295,7 +281,7 @@ fun glanceSwipeStep(dy: Float, vy: Float, startedOnTappable: Boolean, dx: Float 
 
 /**
  * The user's rule (2026-10-24): the page starts at the top whenever the glance is the visible face again - here, a stage
- * step back onto the glance page from our keypad or Android's pad ([from] -> [to]). The lock-up, a resume that is no
+ * step back onto the glance page from Android's pad ([from] -> [to]). The lock-up, a resume that is no
  * lock-up and the VoIP ring card going reset it in the glue (`GlancePanel.backToTop`).
  */
 fun glanceBackToTop(from: LockStage, to: LockStage): Boolean = from != LockStage.GLANCE && to == LockStage.GLANCE
@@ -749,9 +735,9 @@ fun glanceNextFits(scrollerDp: Float, thirdRowTopDp: Float?, lineDp: Float): Boo
  * there too (22.4 dp left). */
 const val GLANCE_ROW_MIN_IN_SIGHT_DP = 16f
 
-// ---- the keypad's prompt -------------------------------------------------------------------------
+// ---- the lock's prompt -------------------------------------------------------------------------
 
-/** A label in the keypad's hint is cut to this many characters (QA Low 5: the parent's label can be
+/** A label in the lock's hint is cut to this many characters (QA Low 5: the parent's label can be
  * 100 characters; the prompt keeps to two lines). */
 const val GLANCE_PROMPT_LABEL_MAX = 20
 
@@ -763,24 +749,11 @@ fun glancePromptLabel(label: String): String {
     return trimmed.substring(0, end).trimEnd() + "…"
 }
 
-/** Which prompt the keypad shows (§1.1): the usual wait/wrong/checking/unusable texts first; else the
- * target's hint; else the plain prompt. UNUSABLE ("Only the parent code works right now": our kid hash can't be used)
- * only in own mode - as Android's face ([androidFace]) the kid PIN opens Android's pad, which holds its own credential,
- * so the stand-in shows the normal hint (r10 run F1, `docs/testing/2026-10-25-r10-keystore-run.md`). */
-enum class GlancePrompt { UNUSABLE, WAIT, CHECKING, WRONG, OPEN_APP, SEE_MISSED, PLAIN }
+/** Which prompt the lock reads out (§1.1): the target's hint, else the plain prompt. Design 132: our keypad's
+ * wait/wrong/checking/unusable texts went with it - Android's pad has its own. */
+enum class GlancePrompt { OPEN_APP, SEE_MISSED, PLAIN }
 
-fun glancePrompt(
-    usable: Boolean,
-    waiting: Boolean,
-    checking: Boolean,
-    wrong: Boolean,
-    target: GlanceTarget?,
-    androidFace: Boolean,
-): GlancePrompt = when {
-    !usable && !androidFace -> GlancePrompt.UNUSABLE
-    waiting -> GlancePrompt.WAIT
-    checking -> GlancePrompt.CHECKING
-    wrong -> GlancePrompt.WRONG
+fun glancePrompt(target: GlanceTarget?): GlancePrompt = when {
     target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp || target is GlanceTarget.Day ||
         target is GlanceTarget.Thread -> GlancePrompt.OPEN_APP
     target is GlanceTarget.MissedCalls -> GlancePrompt.SEE_MISSED
@@ -793,7 +766,7 @@ fun glancePrompt(
  * Whether a row's tap takes its target (§1.4 with the decision on QA Q1): always without a time
  * rule; under one ([timeRule]) only when the rule leaves it usable - the row's app among the time
  * lock's usable apps ([usableUnderRule]), a missed-call row when the rule allows calls and calls are
- * managed (the time-rule screen's phone book). Otherwise the row just opens the keypad.
+ * managed (the time-rule screen's phone book). Otherwise the row just asks for the unlock.
  */
 fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !timeRule || usableUnderRule
 

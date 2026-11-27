@@ -397,20 +397,17 @@ data class NotificationCancelEntry(
 )
 
 /**
- * `StatusReportRequest.lockState`: whether handy's PIN lock is [active] (else [inactive] says why:
- * "no_pin", "unmanaged", "android_credential", "keyguard_not_disabled", "crash_guard"; "bad_hash"
- * keeps it active - only the parent code opens it), [locked] now, wrong PINs in a row, the end of
- * the wait (wall clock), and how often it stepped aside for a call/the emergency dialer/an alarm
- * since the last report; design 59's gate ([keyguard], [pinRev], [resetToken], [keyguardRelocks]). Never unlock
- * times or PIN material (privacy).
+ * `StatusReportRequest.lockState`: whether the lock (the glance as Android's face) is [active] (else [inactive] says
+ * why: "no_pin", "unmanaged", "no_android_pin", "crash_guard" - design 132), [locked] now, and how often it stepped
+ * aside for a call/the emergency dialer/an alarm since the last report; design 59's gate ([keyguard], [pinRev],
+ * [resetToken], [keyguardRelocks]). Never unlock times or PIN material (privacy). Design 132: no `failures` or
+ * `backoff_until_ms` (our keypad's wait went; Android's Gatekeeper holds its own).
  */
 @Serializable
 data class LockStateReport(
     val active: Boolean,
     val inactive: String?,
     val locked: Boolean,
-    val failures: Int,
-    val backoffUntilMs: Long?,
     val exemptYields: Int,
     /** Design 17 (QA #11): allowed VoIP apps whose last ring had no full-screen intent - Android
      * dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't ring over the lock. Package
@@ -420,11 +417,10 @@ data class LockStateReport(
      * phone locked) in the last 7 days, newest first, at most 8. Package names and times only;
      * always sent (`[]`). */
     val voipRang: List<VoipRang>,
-    /** Design 59 §1: the gate - `"android"` while Android's PIN is it (our glance its face, or a rollback waiting
-     * for the token: then [inactive] is `android_credential`), else `"own"`. Always sent (no default). */
+    /** Design 59 §1: the gate - always `"android"` since design 132. Always sent (no default). */
     val keyguard: String,
-    /** The server's `kid_lock.pin_rev` the gate enforces - own: committed with the hash in use; android: the one
-     * Android's PIN was set from. `null` = unknown (changed on the phone) or no Child PIN. Never PIN material. */
+    /** The server's `kid_lock.pin_rev` Android's PIN was set from. `null` = unknown (changed on the phone), not set
+     * by us, or no Child PIN. Never PIN material. */
     val pinRev: Long?,
     /** Our reset token is active (Vibb One can change or clear Android's PIN). */
     val resetToken: Boolean,

@@ -2,48 +2,37 @@ package com.kidslauncher.mdm.lock
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.kidslauncher.mdm.server.Sealed
-import com.kidslauncher.mdm.server.SealedPrefs
-import com.kidslauncher.mdm.server.Secrets
-import java.security.MessageDigest
+import android.util.Log
 
 /**
- * The PIN lock's persisted state, in credential-encrypted prefs `pin_lock_state` (never device-
- * protected storage: the kid PIN's hash must not be readable before the first unlock, QA 10 #12;
- * excluded from backup and device transfer - `allowBackup="false"` plus the backup rules). Every
- * write is a synchronous `commit()`: a wrong PIN counted just before a kill or reboot must stay
- * counted (QA 10 #3).
+ * The lock's persisted state, in credential-encrypted prefs `pin_lock_state` (excluded from backup and device transfer -
+ * `allowBackup="false"` plus the backup rules). Every write is a synchronous `commit()`.
  *
- * Design r10: the kid PIN's hash and salt are on disk only sealed ([SealedPrefs], AAD `pin_lock_state/<key>`), the
- * one copy (the cached policy's is redacted); a plaintext left by an older build is sealed at its first background read.
+ * Design 132: no PIN material on the phone - Android holds the Child PIN; the keypad's sealed hash and salt, its
+ * wrong-PIN count and back-off, `keyguard_requested` and the boot mark's count are removed once ([dropOldKeys]).
  *
- * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED - except, with Android's lock as
- * the gate (design 59 §3.1), the boot's first CE start, which only the typed Child PIN can bring.
+ * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED - except the boot's first CE start
+ * (design 59 §3.1), which only the typed Child PIN can bring.
  */
 object PinLockStore {
     private const val PREFS = "pin_lock_state"
 
     private const val ACTIVE = "active"
     private const val INACTIVE = "inactive"
-    private const val PIN_HASH = "pin_hash"
-    private const val PIN_SALT = "pin_salt"
-    private const val HASH_AAD = "pin_lock_state/pin_hash"
-    private const val SALT_AAD = "pin_lock_state/pin_salt"
-    private const val PIN_LENGTH = "pin_length"
-    private const val FAILURES = "failures"
-    private const val HASH_FP = "hash_fingerprint"
-    private const val BO_WALL = "backoff_wall_start"
-    private const val BO_ELAPSED = "backoff_elapsed_start"
-    private const val BO_BOOT = "backoff_boot"
-    private const val BO_DURATION = "backoff_duration"
     private const val GUARD_CRASHES_KEY = "guard_crashes"
     private const val GUARD_TRIPPED = "guard_tripped_at"
-    private const val MARK_BOOT = "boot_mark_boot_count"
 
-    // Design 59 (M-1): what the policy asks and what we own are two flags, so an android -> own apply never
-    // erases the rollback's edge.
-    private const val PIN_REV = "pin_rev"
-    private const val KEYGUARD_REQUESTED = "keyguard_requested"
+    /** Design 132 (QA L5): the keys only our own keypad lock wrote - removed once, never read. */
+    internal val OLD_KEYS = listOf(
+        "pin_hash", "pin_salt", "pin_length", "pin_rev", "failures", "hash_fingerprint", "backoff_wall_start",
+        "backoff_elapsed_start", "backoff_boot", "backoff_duration", "keyguard_requested", "boot_mark_boot_count",
+    )
+
+    /** Code QA L3: the keyguard cover's flag in KeyguardCover's CE prefs `keyguard_cover` (its `cover_added` stays:
+     * Android's lock's bits). */
+    internal val OLD_COVER_KEYS = listOf("cover_written")
+
+    // Design 59 (M-1): we own Android's credential.
     private const val KEYGUARD_ANDROID = "keyguard_android"
     private const val ANDROID_PIN_REV = "android_pin_rev"
     private const val ANDROID_BOOT = "android_boot_count"
@@ -55,80 +44,34 @@ object PinLockStore {
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** The kid PIN as the last apply saw it ([KidLockConfig.usable] may be false: bad hash); `null` when none is
-     * stored or it doesn't open (design r10: unreadable). */
-    fun config(context: Context): KidLockConfig? = configFrom(prefs(context), Secrets.prefs)
-
-    internal fun configFrom(p: SharedPreferences, sealed: SealedPrefs): KidLockConfig? {
-        val hash = sealed.read(p, HASH_AAD, PIN_HASH) as? Sealed.Value ?: return null
-        val salt = when (val read = sealed.read(p, SALT_AAD, PIN_SALT)) {
-            is Sealed.Value -> read.plain
-            Sealed.Absent -> ""
-            Sealed.Unreadable -> return null
-        }
-        return KidLockConfig(hash.plain, salt, kidPinLength(p.getInt(PIN_LENGTH, 4)), p.getLong(PIN_REV, 0L))
+    /**
+     * Design 132 (QA L5): the one-shot at the process start, before the first apply - the keys of our own keypad lock
+     * (the sealed hash and salt, the back-off, `keyguard_requested`, the boot mark) are removed with `commit()` and logged
+     * once. No migration: nothing is read from them.
+     */
+    fun dropOldKeys(context: Context) {
+        val app = context.applicationContext
+        dropOldKeysFrom(prefs(app))?.let { Log.i("PinLock", "The own lock's stored keys removed (${it.first}): ${it.second}") }
+        val cover = app.getSharedPreferences("keyguard_cover", Context.MODE_PRIVATE)
+        dropOldKeysFrom(cover, OLD_COVER_KEYS)?.let { Log.i("PinLock", "The keyguard cover's flag removed: ${it.second}") }
     }
 
-    /** A kid PIN is stored (sealed or not, readable or not) - no Keystore call (Home's pre-check, QA R10-7). */
-    fun pinStored(context: Context): Boolean = prefs(context).contains(PIN_HASH)
+    /** [keys] found in [p] removed in one commit: how many, and whether it committed; `null` = none was there. */
+    internal fun dropOldKeysFrom(p: SharedPreferences, keys: List<String> = OLD_KEYS): Pair<Int, Boolean>? {
+        val found = keys.filter { p.contains(it) }
+        if (found.isEmpty()) return null
+        val editor = p.edit()
+        for (key in found) editor.remove(key)
+        return found.size to editor.commit()
+    }
 
     fun active(context: Context): Boolean = prefs(context).getBoolean(ACTIVE, false)
 
     fun inactive(context: Context): String? = prefs(context).getString(INACTIVE, null)
 
-    /** Design 59: the policy asks for Android's lock (`kid_lock.keyguard`, committed with the hash by [saveConfig]). */
-    fun keyguardRequested(context: Context): Boolean = prefs(context).getBoolean(KEYGUARD_REQUESTED, false)
-
-    /** [write]'s PIN fields, `active`/`inactive` and - design 59 - [requested] in one commit (Q59-5: every rev names
-     * the hash it came with). [requested] `null` keeps the stored value (the crash guard's save). */
-    fun saveConfig(context: Context, write: PinWrite, active: Boolean, inactive: LockInactive?, requested: Boolean? = null): Boolean =
-        saveConfigTo(prefs(context), Secrets.prefs, write, active, inactive, requested)
-
-    /**
-     * Design r10 §3.2: [PinWrite.Write] seals the hash and salt; [PinWrite.Remove] removes the fields; [PinWrite.Keep]
-     * writes `active`/`inactive` only. A failed seal (QA R10-3) commits `active`/`inactive` and **removes** the PIN
-     * fields - never keeps the old ones (a changed PIN may be the leaked one): the next start is `BAD_HASH` until a sync.
-     */
-    internal fun saveConfigTo(
-        p: SharedPreferences,
-        sealed: SealedPrefs,
-        write: PinWrite,
-        active: Boolean,
-        inactive: LockInactive?,
-        requested: Boolean?,
-    ): Boolean {
-        fun base(e: SharedPreferences.Editor) {
-            e.putBoolean(ACTIVE, active).putString(INACTIVE, inactive?.wire)
-            if (requested != null) e.putBoolean(KEYGUARD_REQUESTED, requested)
-        }
-        // Code QA Q-7: a Keep touches no sealed key, so it commits a plain editor without SealedPrefs' LOCK - the crash
-        // guard's save on the main thread never waits for a seal's keygen (N6).
-        if (write == PinWrite.Keep) {
-            val editor = p.edit()
-            base(editor)
-            return editor.commit()
-        }
-        fun removePin(e: SealedPrefs.Editor) {
-            e.remove(HASH_AAD, PIN_HASH).remove(SALT_AAD, PIN_SALT)
-            e.raw.remove(PIN_LENGTH).remove(PIN_REV)
-        }
-        val ok = sealed.edit(p) { e ->
-            base(e.raw)
-            when (write) {
-                is PinWrite.Write -> {
-                    e.putSealed(HASH_AAD, PIN_HASH, write.config.hashHex).putSealed(SALT_AAD, PIN_SALT, write.config.saltHex)
-                    e.raw.putInt(PIN_LENGTH, write.config.length).putLong(PIN_REV, write.config.pinRev)
-                }
-                PinWrite.Remove -> removePin(e)
-                PinWrite.Keep -> Unit
-            }
-        }
-        if (ok || write !is PinWrite.Write) return ok
-        return sealed.edit(p) { e ->
-            base(e.raw)
-            removePin(e)
-        }
-    }
+    /** `active`/`inactive` in one commit. */
+    fun saveConfig(context: Context, active: Boolean, inactive: LockInactive?): Boolean =
+        prefs(context).edit().putBoolean(ACTIVE, active).putString(INACTIVE, inactive?.wire).commit()
 
     /** Design 59 (M-1): we own Android's credential - set before a reset, cleared only once no credential is left. */
     fun keyguardAndroid(context: Context): Boolean = prefs(context).getBoolean(KEYGUARD_ANDROID, false)
@@ -166,36 +109,14 @@ object PinLockStore {
 
     /**
      * Design 59 (L-4): the boot count the last CE process start saw, [boot] stored in its place - at **every** CE
-     * process start in every mode ([PinLockRuntime.decide]), so a migration later in a boot never makes a crash
-     * restart its "first". Not [MARK_BOOT] (the boot mark's, written only when it is due).
+     * process start ([PinLockRuntime.decide]), so a `set_kid_pin` later in a boot never makes a crash restart its
+     * "first".
      */
     fun swapAndroidBoot(context: Context, boot: Int): Int? {
         val p = prefs(context)
         val stored = p.getInt(ANDROID_BOOT, -1).takeIf { it >= 0 }
         bootSwap(stored, boot)?.let { p.edit().putInt(ANDROID_BOOT, it).commit() }
         return stored
-    }
-
-    fun backoff(context: Context): BackoffState {
-        val p = prefs(context)
-        val window = if (p.getLong(BO_DURATION, 0L) > 0L) {
-            BackoffWindow(p.getLong(BO_WALL, 0L), p.getLong(BO_ELAPSED, 0L), p.getInt(BO_BOOT, -1), p.getLong(BO_DURATION, 0L))
-        } else {
-            null
-        }
-        return BackoffState(p.getInt(FAILURES, 0), window, p.getString(HASH_FP, null))
-    }
-
-    fun saveBackoff(context: Context, state: BackoffState): Boolean {
-        val w = state.window
-        return prefs(context).edit()
-            .putInt(FAILURES, state.failures)
-            .putString(HASH_FP, state.hashFingerprint)
-            .putLong(BO_WALL, w?.wallStartMs ?: 0L)
-            .putLong(BO_ELAPSED, w?.elapsedStartMs ?: 0L)
-            .putInt(BO_BOOT, w?.bootCount ?: -1)
-            .putLong(BO_DURATION, w?.durationMs ?: 0L)
-            .commit()
     }
 
     fun guard(context: Context): CrashGuard {
@@ -210,33 +131,16 @@ object PinLockStore {
         saveGuard(context, guardOnCrash(guard(context), System.currentTimeMillis()))
     }
 
-    /**
-     * Design 16e: the boot count the last process start saw ([bootMarkDue]); [boot] is stored in its
-     * place when known and new - with `commit()` like every write here, once per boot, so no restart
-     * in the same boot ever finds it missing (qa-16e-code #4).
-     */
-    fun swapMarkBoot(context: Context, boot: Int): Int? {
-        val p = prefs(context)
-        val stored = p.getInt(MARK_BOOT, -1).takeIf { it >= 0 }
-        if (boot >= 0 && boot != stored) p.edit().putInt(MARK_BOOT, boot).commit()
-        return stored
-    }
-
     fun saveGuard(context: Context, guard: CrashGuard): Boolean = prefs(context).edit()
         .putString(GUARD_CRASHES_KEY, guard.crashes.joinToString(","))
         .putLong(GUARD_TRIPPED, guard.trippedAtMs ?: 0L)
         .commit()
 }
 
-/** `PolicyResponse.kidLock` as the lock uses it. */
+/** `PolicyResponse.kidLock`'s hash, as `set_kid_pin`'s check uses it ([commandPinVerifies]) - never stored. */
 data class KidLockConfig(val hashHex: String, val saltHex: String, val length: Int, val pinRev: Long = 0) {
     /** Never the hash or the salt (code QA N-c). */
     override fun toString() = "KidLockConfig(length=$length, pinRev=$pinRev, usable=$usable)"
 
     val usable: Boolean get() = com.kidslauncher.mdm.server.PinHash.usable(hashHex, saltHex)
-
-    /** Identifies this PIN for the backoff reset without keeping a second copy of the hash. */
-    val fingerprint: String
-        get() = MessageDigest.getInstance("SHA-256").digest("$saltHex:$hashHex".toByteArray())
-            .take(8).joinToString("") { "%02x".format(it) }
 }

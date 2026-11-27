@@ -41,7 +41,7 @@ import kotlinx.serialization.Serializable
  * goes into the status report; `null` reads as on request ([com.kidslauncher.mdm.server.enforcedLocationPolicy]). Kept
  * by [com.kidslauncher.mdm.server.LastEnforcedPlan] (security review P-M1).
  * A 0.19 server's `push` (FCM, removed in design 19) is an unknown key and ignored.
- * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
+ * [kidLock]: the Child PIN (step 10; design 132: Android's lock holds it, set by `set_kid_pin`).
  */
 @Serializable
 data class PolicyResponse(
@@ -202,9 +202,9 @@ data class PolicyResponse(
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
- * [com.kidslauncher.mdm.server.PinHash]); [pinLength] 4-6, the keypad submits at the last digit.
- * Design 59 §1: [keyguard] `"android"` = Android's own lock screen holds the Child PIN; anything
- * else, missing included, is Vibb One's own lock. [pinRev] the server's counter
+ * [com.kidslauncher.mdm.server.PinHash]); `set_kid_pin`'s PIN is checked against it, never stored. [pinLength] 4-6.
+ * Design 132: [keyguard] is always `"android"` and no longer read (every field stays: PolicyResponseCompatTest).
+ * [pinRev] the server's counter
  * of Child PIN saves, sent with this hash: the phone reports the rev its gate enforces, never PIN
  * material (0 when missing). */
 @Serializable

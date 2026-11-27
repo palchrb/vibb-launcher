@@ -1,5 +1,7 @@
 # Step 10: own PIN lock screen + redesigned incoming/in-call screens
 
+Superseded in part by design 132 (`132-phase-d-android-lock-only.md`): Android's PIN lock is the only lock.
+
 > **Status 2026-10-26 (main 8d8ba426): built 2026-10-05, being superseded by design 59.** The own lock described here
 > is still in the code and is still what a phone runs unless its switch says `kid_lock.keyguard = "android"` (design 59
 > steps 1-4, merged 2026-10-22: `e8c9013b`, `f51d9901`, `2a727685`, `f4972ced`). Phase D, which deletes the own lock,

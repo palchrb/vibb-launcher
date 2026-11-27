@@ -14,18 +14,22 @@ An independent protobuf encoder (standard library only) writes:
 - `apple`: fake answers of Apple's service, each with what the server must read from it. Documentation MACs only (RFC
   7042, 00:00:5e:00:53:xx), made-up coordinates; no real capture is ever committed.
 - `health`: failure histories and whether the orange "Apple lookups aren't working" shows.
-- `golden_cells` (design 125b C6): the cell call for one GSM, one LTE and one NR cell on the test network 001-01
-  (ITU-T E.212's, never a real cell): GrapheneOS's towers (`GsmCellTower` 1, `LteCellTower` 25, `Nr5GCellTower` 29,
-  `{mcc 1, mnc 2, cell_id 3, lac_id/tac_id 4}`), each standard's count of surrounding towers (3, 26, 30:
-  max(1, (25 - 19) x its share)) and `meta`, field-number order. The protoc check, as for `golden`:
-      printf 'gsm_cell_towers { mcc: 1 mnc: 1 cell_id: 5001 lac_id: 1001 } number_of_surrounding_gsm_cells: 2
-      lte_cell_towers { mcc: 1 mnc: 1 cell_id: 12345678 tac_id: 4711 } number_of_surrounding_lte_cells: 2
-      nr5g_cell_towers { mcc: 1 mnc: 1 cell_id: 4294967297 tac_id: 1048577 } number_of_surrounding_nr5g_cells: 2
+- `golden_cells` (design 125b C6, design 137 N2): the cell call for one GSM, one LTE and one NR cell on the test
+  network 001-01 (ITU-T E.212's, never a real cell): GrapheneOS's towers (`GsmCellTower` 1, `LteCellTower` 25,
+  `Nr5GCellTower` 29, `{mcc 1, mnc 2, cell_id 3, lac_id/tac_id 4}`), each standard's count of surrounding towers (3, 26,
+  30: max(1, 12 x its share)) and `meta`, field-number order. The protoc check, as for `golden` (by hand before the
+  first release with design 137):
+      printf 'gsm_cell_towers { mcc: 1 mnc: 1 cell_id: 5001 lac_id: 1001 } number_of_surrounding_gsm_cells: 4
+      lte_cell_towers { mcc: 1 mnc: 1 cell_id: 12345678 tac_id: 4711 } number_of_surrounding_lte_cells: 4
+      nr5g_cell_towers { mcc: 1 mnc: 1 cell_id: 4294967297 tac_id: 1048577 } number_of_surrounding_nr5g_cells: 4
       meta { software_build: "macOS15.4/24E248" product_id: "arm64" }' |
       protoc --encode=app.grapheneos.networklocation.proto.ALSLocationRequest apple_wps.proto | xxd -p
   (the field names as GrapheneOS's .proto spells them).
 - `apple_cells`: fake answers of a cell call, each with the towers the server must read ([canonical cell, lat, lng,
-  acc_m] or [canonical cell, null] = unknown) or malformed. Test network 001-01 only, made-up coordinates.
+  acc_m] or [canonical cell, null] = unknown, then {"ch", "pci"} when either is read - design 137 N1) or malformed.
+  Test network 001-01 only, made-up coordinates, channels and PCIs. Design 137's rows have the shape of the probe of
+  2026-11-25 (an asked LTE cell with location fields 4, 11 and 12 and no channel; surrounding LTE towers with EARFCN 6
+  and PCI 7; id-less areas with cid -1 at 149 km) - never its cells, positions, channels or PCIs.
 
     python3 -I scripts/wifi-lookup-fixtures.py --write     # writes the file
     python3 -I scripts/wifi-lookup-fixtures.py --selftest  # the committed file is exactly what this writes
@@ -267,12 +271,41 @@ def tower(cell, loc=None, skip=(), extra=b""):
     return body + extra
 
 
-def answer_tower(cell, loc=None, skip=(), field=None):
-    return ld(field or RADIOS[cell[0]][2], tower(cell, loc, skip))
+def answer_tower(cell, loc=None, skip=(), field=None, extra=b""):
+    return ld(field or RADIOS[cell[0]][2], tower(cell, loc, skip, extra))
 
 
-def known_cell(cell, lat, lng, acc):
-    return [canonical(cell), deg(lat), deg(lng), acc]
+def known_cell(cell, lat, lng, acc, ch=None, pci=None):
+    row = [canonical(cell), deg(lat), deg(lng), acc]
+    return row + near_fields(ch, pci)
+
+
+def near_fields(ch, pci):
+    """Design 137 N1: what the server reads of a tower's channel and PCI, when either."""
+    fields = {}
+    if ch is not None:
+        fields["ch"] = ch
+    if pci is not None:
+        fields["pci"] = pci
+    return [fields] if fields else []
+
+
+# Design 137: the channel and PCI fields of each radio read (N1).
+NEAR_FIELDS = {"lte": (6, 7), "wcdma": (11, 12)}
+
+
+def radio_fields(radio, ch=None, pci=None):
+    channel_field, pci_field = NEAR_FIELDS.get(radio, (11, 12))
+    out = b""
+    if ch is not None:
+        out += vi(channel_field, ch)
+    if pci is not None:
+        out += vi(pci_field, pci)
+    return out
+
+
+def lte(cid, tac=4711):
+    return ("lte", 1, 1, tac, cid)
 
 
 def golden_cells():
@@ -284,7 +317,7 @@ def golden_cells():
         for c in mine:
             message += ld(towers_field, tower(c))
         if mine:
-            message += vi(count_field, max(1, (25 - 19) * len(mine) // len(cells)))
+            message += vi(count_field, max(1, 12 * len(mine) // len(cells)))
     message += ld(33, ld(1, b"macOS15.4/24E248") + ld(2, b"arm64"))
     head = (1).to_bytes(2, "big")
     for text in (b"en-US_US", b"com.apple.locationd", b"15.4.24E248"):
@@ -329,7 +362,127 @@ def apple_cell_rows():
             known_cell(far, H[0] - 1_500_000, H[1] + 2_000_000, 2500),
         ],
         "the contract's cells: LTE and NR known (Apple's MNC 1 for the asked 01; the NR cid over 32 bits), GSM "
-        "unknown; two surrounding LTE towers cached, never answered",
+        "unknown; two surrounding LTE towers, kept in the asked cells' lists (design 137)",
+    )
+    # Design 137: the probe's shape, made up. The asked LTE cell at H (1500 m) with location fields 4, 11 and 12 and
+    # no channel; 14 surrounding LTE towers, 12 overlapping it (9 with EARFCN and PCI, 2 with neither, 1 with the
+    # EARFCN alone) and 2 that don't; 20 id-less areas (cid -1, 149 km) on top, dropped. Offsets in 0.001 degrees.
+    neighbours = [
+        # (cell, dlat, dlng, acc, ch, pci)
+        (lte(12345679), 3, 10, 1400, 6200, 13),  # a sibling sector, ~0.65 km
+        (lte(12345602), 12, -5, 1400, 6200, 101),
+        (lte(12345603), -15, 20, 1400, 6300, 202),
+        (lte(12345604), 20, 25, 1400, 6300, 250),
+        (lte(12345605), -6, -30, 1400, 3100, 333),
+        (lte(12345606), 8, 40, 1400, 6200, 404),
+        (lte(12345607), -22, -10, 1400, 3100, 471),
+        (lte(12345608), 2, -45, 1400, 6300, 14),
+        (lte(12345609), -9, 5, 1400, 6200, 12),
+        (lte(12345610), 15, 30, 1400, None, None),
+        (lte(12345611), -25, 12, 6500, None, None),
+        (lte(12345612), 5, 15, 1400, 3100, None),
+        (lte(12345690), 36, 0, 1000, 6300, 55),  # ~4.0 km, past 1500 + 1000: cut
+        (lte(12345691), -80, 40, 6500, None, None),  # ~9.2 km, past 1500 + 6500: cut
+    ]
+    order = [3, 0, 12, 6, 9, 1, 11, 4, 13, 8, 2, 10, 5, 7]
+
+    def at(dlat, dlng):
+        return H[0] + dlat * 100_000, H[1] + dlng * 100_000
+
+    asked_extra = vi(4, 0) + vi(11, 700) + vi(12, 4000)
+    body = [answer_tower(LTE, location(H[0], H[1], 1500, extra=asked_extra))]
+    towers = [known_cell(LTE, H[0], H[1], 1500)]
+    for i in order:
+        cell, dlat, dlng, acc, ch, pci = neighbours[i]
+        lat, lng = at(dlat, dlng)
+        body.append(answer_tower(cell, location(lat, lng, acc), extra=radio_fields("lte", ch, pci)))
+        towers.append(known_cell(cell, lat, lng, acc, ch, pci))
+    for k in range(20):
+        lat, lng = at(k - 10, 2 * k - 20)
+        body.append(answer_tower(("lte", 1, 1, 4800 + k, -1), location(lat, lng, 149_000)))
+    row(
+        "cells_near",
+        answer(*body),
+        towers,
+        "the probe's shape: the asked LTE cell (location fields 4, 11, 12; no EARFCN or PCI), 14 surrounding towers - "
+        "12 overlap it (9 with EARFCN and PCI, 2 with neither, 1 with the EARFCN alone), 2 don't - and 20 id-less "
+        "areas (cid -1, 149 km) dropped",
+    )
+    edge = [
+        (lte(301, 4720), vi(6, 6200) + vi(7, -1), 6200, None, "PCI -1 (a ten-byte varint): unknown"),
+        (lte(302, 4720), vi(6, 6300) + vi(7, 504), 6300, None, "PCI 504: unknown"),
+        (lte(303, 4720), ld(6, b"\x01\x02") + vi(7, 7), None, 7, "EARFCN length-delimited: unknown"),
+        (lte(304, 4720), vi(6, 262144) + vi(7, 503), None, 503, "EARFCN 262144: unknown; PCI 503 kept"),
+        (lte(305, 4720), vi(6, 262143) + vi(7, 0), 262143, 0, "EARFCN 262143 and PCI 0 kept"),
+        (lte(306, 4720), key(6, 5) + bytes(4) + vi(7, 9), None, 9, "EARFCN as fixed32: unknown"),
+        (lte(307, 4720), vi(6, 6200) + vi(6, 6300) + vi(7, 1) + vi(7, 2), 6300, 2, "sent twice: the last counts"),
+        (lte(308, 4720), vi(6, 1 << 31) + vi(11, 5) + vi(12, 5), None, None, "EARFCN past int32; WCDMA's fields"),
+        (("nr", 1, 1, 1048577, 4294967300), vi(6, 500000) + vi(7, 3), None, None, "NR's field 6 not read"),
+        (("wcdma", 1, 1, 2001, 70002), vi(11, 10700) + vi(12, 300), 10700, 300, "WCDMA's UARFCN 11 and PSC 12"),
+        (("wcdma", 1, 1, 2001, 70003), vi(11, 16384) + vi(12, 512), None, None, "UARFCN 16384, PSC 512: unknown"),
+        (("gsm", 1, 1, 1001, 5002), vi(11, 70) + vi(12, 40), None, None, "GSM's 11 and 12 not read"),
+        (lte(310, 4720), key(6, 3) + vi(1, 6200) + key(6, 4) + vi(7, 8), None, 8, "EARFCN as a group: unknown"),
+        (
+            lte(311, 4720),
+            key(9, 3) + key(10, 3) + vi(1, 1) + ld(2, b"x") + key(10, 4) + key(9, 4) + vi(6, 6200) + vi(7, 4),
+            6200,
+            4,
+            "a nested group in an unknown field skipped",
+        ),
+    ]
+    body, towers = [], []
+    for n, (cell, extra, ch, pci, _) in enumerate(edge):
+        lat, lng = at(n, 0)
+        body.append(answer_tower(cell, location(lat, lng, 1000), extra=extra))
+        towers.append(known_cell(cell, lat, lng, 1000, ch, pci))
+    row(
+        "cells_near_fields",
+        answer(*body),
+        towers,
+        "design 137 N1: " + "; ".join(e[4] for e in edge) + " - every tower kept with its position",
+    )
+    body = [answer_tower(LTE, location(H[0], H[1], 1500))]
+    towers = [known_cell(LTE, H[0], H[1], 1500)]
+    for n in range(12):
+        cell = lte(12345701 + n)
+        lat, lng = at(n - 6, 6 - n)
+        body.append(answer_tower(cell, location(lat, lng, 1400), extra=radio_fields("lte", 6200, 20 + n)))
+        towers.append(known_cell(cell, lat, lng, 1400, 6200, 20 + n))
+    for k in range(5):
+        body.append(answer_tower(("lte", 1, 1, 4900 + k, -1), location(*at(k, k), 149_000)))
+    row(
+        "cells_thirteen",
+        answer(*body),
+        towers,
+        "13 towers to one cell asked with a count of 12 (and 5 id-less areas, dropped): no throttle",
+    )
+    body = [answer_tower(LTE, location(H[0], H[1], 900))]
+    towers = [known_cell(LTE, H[0], H[1], 900)]
+    for n in range(119):
+        cell = lte(12346001 + n)
+        body.append(answer_tower(cell, location(H[0], H[1], 900)))
+        towers.append(known_cell(cell, H[0], H[1], 900))
+    row("cells_flood", answer(*body), towers, "120 towers: more than asked, throttled")
+    # Two asked cells, A (the LTE) and B 2.2 km north, both 1200 m; X near A only, Y between, Z near B only.
+    b, x, y, z = lte(12345650), lte(12345651), lte(12345652), lte(12345653)
+    two = [
+        (LTE, 0, 1200, None, None),
+        (b, 200, 1200, None, None),
+        (x, -100, 800, None, None),
+        (y, 95, 800, 6200, 21),
+        (z, 300, 800, 6300, 22),
+    ]
+    body, towers = [], []
+    for cell, dlat, acc, ch, pci in two:
+        # dlat in 0.0001 degrees.
+        lat, lng = H[0] + dlat * 10_000, H[1]
+        body.append(answer_tower(cell, location(lat, lng, acc), extra=radio_fields("lte", ch, pci)))
+        towers.append(known_cell(cell, lat, lng, acc, ch, pci))
+    row(
+        "cells_two",
+        answer(*body),
+        towers,
+        "two asked cells 2.2 km apart and three neighbours: X overlaps only A, Y both, Z only B",
     )
     row(
         "cells_kinds",
@@ -402,6 +555,31 @@ def apple_cell_rows():
         "201 towers: the first 200 read",
     )
     row("cells_wrong_wire", answer(key(22, 0) + varint(5)), None, "a tower as a varint")
+    # Code QA L1: a group inside a tower is skipped to its end tag; one that doesn't close, or closes another, is not.
+    row(
+        "cells_group_unclosed",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=key(9, 3) + vi(1, 1))),
+        None,
+        "a group in a tower without its end tag",
+    )
+    row(
+        "cells_group_mismatched",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=key(9, 3) + key(8, 4))),
+        None,
+        "a group in a tower closed by another field's end tag",
+    )
+    row(
+        "cells_group_in_mcc",
+        answer(ld(22, key(1, 3) + key(1, 4) + vi(2, 1) + vi(3, 7) + vi(4, 7) + ld(5, location(H[0], H[1], 500)))),
+        None,
+        "the MCC as a group: fields 1-5 keep the strict rule",
+    )
+    row(
+        "cells_group_too_deep",
+        answer(answer_tower(LTE, location(H[0], H[1], 500), extra=b"".join(key(9, 3) for _ in range(9)) + b"".join(key(9, 4) for _ in range(9)))),
+        None,
+        "groups nested nine deep in a tower",
+    )
     row("cells_short_header", bytes(9), None, "nine bytes")
     return rows
 
@@ -459,7 +637,8 @@ def build():
         "the APs the server reads ([bssid, lat, lng, acc_m], [bssid, null] = unknown) or malformed. health: failure "
         "histories (hours from the first) to the orange line, through the pause steps and integration_health. "
         "golden_cells: the cell call for three cells (design 125b). apple_cells: fake answers of a cell call with "
-        "the towers the server reads ([canonical cell, lat, lng, acc_m], [cell, null] = unknown) or malformed.",
+        "the towers the server reads ([canonical cell, lat, lng, acc_m], [cell, null] = unknown; then {\"ch\", \"pci\"} "
+        "when either is read, design 137) or malformed.",
         "golden": golden(),
         "apple": apple_rows(),
         "health": HEALTH,

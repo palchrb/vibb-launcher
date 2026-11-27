@@ -629,24 +629,15 @@
     <string name="notification_install_mode_end">End now</string>
     <string name="play_link_blocked_title">The Play Store is closed</string>
     <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
-    <!-- Handy's own PIN lock and the call screens (step 10, design 10-lock-and-call-ui.md). -->
+    <!-- The lock's glance and the call screens (step 10, design 10-lock-and-call-ui.md; design 132: no keypad). -->
     <string name="pin_lock_prompt">Enter your code</string>
     <!-- Design 59 §3.2: Android's lock screen after a restart (written at the shutdown, cleared at the first unlock). -->
     <string name="android_lock_restart_line">Type your PIN to start the phone</string>
     <!-- Design 25: after a glance row was tapped (%1$s = the app's name, at most 20 characters). -->
     <string name="pin_lock_prompt_open">Enter your code to open %1$s</string>
     <string name="pin_lock_prompt_missed">Enter your code to see missed calls</string>
-    <string name="pin_lock_wrong">Wrong code</string>
-    <string name="pin_lock_wait">Try again in %1$s</string>
-    <string name="pin_lock_checking">Checking…</string>
-    <string name="pin_lock_unusable">Only the parent code works right now</string>
     <string name="pin_lock_emergency">Emergency call</string>
-    <string name="pin_lock_parent_code">Parent code</string>
-    <string name="pin_lock_parent_wrong">That isn\'t the parent code.</string>
-    <string name="pin_lock_parent_locked_out">Too many wrong codes. Try again in %1$s, or save a new parent PIN on the parent page.</string>
-    <string name="pin_lock_parent_not_set">No parent code has been set for this phone.</string>
     <string name="pin_lock_delete">Delete</string>
-    <string name="pin_lock_dots">%1$d of %2$d digits</string>
     <!-- Design 17: the lock's ring screen for a VoIP call (no caller name). -->
     <string name="voip_ring_via">Calling you in %1$s</string>
     <string name="voip_ring_failed">Couldn\'t open the call. Try again.</string>
@@ -687,7 +678,6 @@
     <string name="lock_timer_stop">Stop</string>
     <string name="lock_timer_described">%1$s, %2$s</string>
     <string name="lock_torch_off">Off</string>
-    <string name="lock_media_back">Back</string>
     <!-- Design 25: the lock's glance page - its notification rows and the "more" line. -->
     <plurals name="glance_messages">
         <item quantity="one">%1$d message</item>

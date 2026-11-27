@@ -342,6 +342,12 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   empty) and worded where shown or pushed by `parent_events::told` (the inbox's and Activity's `inbox_row`, the
   sender's `send_due`); every older kind keeps its stored words. Pushed only while news (the confirming fix under 30
   min old), kept with the phone's location history, not 90 days. All of it in `zones.md`.
+- **Design 135 (0182): every crossing is stored; each parent filters the push.** No switch decides whether there is
+  an event any more. `push::queue_as` adds one condition for a zone kind, read from the event itself
+  (`ZONE_ALERTS_ON`): no delivery to a subscriber whose `zone_alerts` row for the event's `params.zone_id` (the link)
+  has that direction off. Queued once at the raise (a retry re-sends, a later switch recalls nothing); zone kinds have
+  no push budget. A new parent starts with every link on; a removed parent gets no push. `zones.md`, "Zones shared by
+  the family".
 - **A summary that is only the row's own clock is dropped** where the row shows its time anyway (the summary's
   Activity, `activity::without_own_clock`: "15:42" or "Yesterday 15:42" against the row's `when`), and both row
   templates leave out an empty summary's " · ". A zone event's summary is just its time; an emergency call or a

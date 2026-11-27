@@ -194,15 +194,12 @@ pub struct DevicePolicy {
     pub location_mode: String,
     /// Minutes between active location fixes in "interval" mode.
     pub location_interval_minutes: i64,
-    /// The kid's PIN for handy's own lock screen (migrations/0030, handy step 10), hashed like
-    /// the override PIN. `None` = lock off. Sent as `PolicyResponse.kid_lock`.
+    /// The Child PIN (migrations/0030, handy step 10), hashed like the override PIN; Android's PIN
+    /// lock is set from it (design 59, design 132). `None` = no lock. Sent as `PolicyResponse.kid_lock`.
     pub kid_pin_hash: Option<String>,
     pub kid_pin_salt: Option<String>,
-    /// 4-6; the keypad submits at the last digit.
+    /// 4-6, sent as `kid_lock.pin_length` (no longer read by the phone, design 132).
     pub kid_pin_length: Option<i64>,
-    /// Design 59 (migrations/0085): "own" (Vibb One's lock) or "android" (Android's PIN is the
-    /// Child PIN), sent as `kid_lock.keyguard` ([crate::kid_lock::policy_kid_lock]).
-    pub kid_keyguard: String,
     /// The Child PIN sealed (`kid_pin`), `None` for a PIN saved before 0085 or without the key.
     /// (`kid_pin_prev_sealed`/`kid_pin_prev_rev`, the PIN the phone last confirmed, are written by
     /// the save and the status intake and read by the reveal, not through this struct.)
@@ -229,9 +226,10 @@ pub struct DevicePolicy {
     /// Device › Weather's "Weather on the lock screen" (design 75, migrations/0122, default off), sent as
     /// `launcher_ui.lock_weather`.
     pub lock_weather: bool,
-    /// The zone whose centre stands in for the weather when the phone has no fresh fix (design 75 D5, migrations/0122):
-    /// one of this phone's zones, `None` by default. Never in the policy JSON.
-    pub weather_zone_id: Option<i64>,
+    /// The zone whose centre stands in for the weather when the phone has no fresh fix (design 75 D5): since design 135
+    /// (migrations/0182) a family zone, linked to this phone or not; `None` by default. Never in the policy JSON. The
+    /// old `weather_zone_id` (0122) stays in the table, NULL and unread.
+    pub weather_family_zone_id: Option<i64>,
     /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,
     /// entries are kept `retention::DNS_LOG_RETENTION_DAYS`.
     pub dns_log_enabled: bool,
@@ -1492,7 +1490,8 @@ pub struct KidLock {
     pub pin_hash: String,
     pub pin_salt: String,
     pub pin_length: i64,
-    /// Design 59 §1: "own" | "android" - always sent; an older launcher ignores it (own).
+    /// Design 59 §1, always sent; always "android" since design 132 (an older launcher never falls back to its own
+    /// lock).
     pub keyguard: &'static str,
     /// The rev of this hash ([DevicePolicy::kid_pin_rev]): the phone names "which PIN" by it.
     pub pin_rev: i64,

@@ -210,22 +210,14 @@ async fn a_fresh_fix_is_one_met_request_shared_by_the_cell() {
     assert_eq!(res.headers.get(header::CONTENT_ENCODING).unwrap(), "gzip");
 }
 
+/// A zone linked to `device`: the family zone's id (design 135: the weather's zone is the family zone).
 async fn zone(app: &TestApp, device: i64, name: &str, lat: f64, lon: f64) -> i64 {
-    sqlx::query_scalar(
-        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
-         VALUES (?, ?, ?, ?, 150) RETURNING id",
-    )
-    .bind(device)
-    .bind(name)
-    .bind(lat)
-    .bind(lon)
-    .fetch_one(&app.db)
-    .await
-    .unwrap()
+    let link = super::zones::insert_zone(app, device, name, lat, lon, 150).await;
+    super::zones::zone_of(app, link).await
 }
 
 async fn set_zone(app: &TestApp, device: i64, zone: Option<i64>) {
-    sqlx::query("UPDATE device_policy SET weather_zone_id = ? WHERE device_id = ?")
+    sqlx::query("UPDATE device_policy SET weather_family_zone_id = ? WHERE device_id = ?")
         .bind(zone)
         .bind(device)
         .execute(&app.db)
@@ -1229,7 +1221,7 @@ async fn the_weather_group_saves_on_its_anchors() {
 
     // No zones yet: the row says so and links to Locate's zones.
     let html = group(&app.get_page(&page(id), &cookie).await.text());
-    assert!(html.contains("This phone has no zones yet."), "{html}");
+    assert!(html.contains("No zones yet."), "{html}");
     assert!(html.contains(&format!("href=\"/devices/{id}/zones\"")));
     let home = zone(&app, id, "Hjemme", 59.9399, 10.7601).await;
     let html = group(&app.get_page(&page(id), &cookie).await.text());
@@ -1264,10 +1256,16 @@ async fn the_weather_group_saves_on_its_anchors() {
             &line.replace("ID", &id.to_string())
         );
     }
-    // A zone of another phone, or none at all: 400, nothing written.
+    // Design 135: a zone the family has but this phone doesn't use is a place too - it is listed and taken.
     let (other, _) = app.enrolled_device("other").await;
     let theirs = zone(&app, other, "Skolen", 59.95, 10.77).await;
-    for value in [theirs.to_string(), "9999".to_string(), "x".to_string()] {
+    let html = group(&app.get_page(&page(id), &cookie).await.text());
+    assert!(
+        html.contains(&format!(r#"<option value="{theirs}">Skolen</option>"#)),
+        "{html}"
+    );
+    // No zone at all: 400, nothing written.
+    for value in ["9999".to_string(), "x".to_string()] {
         let res = app
             .request_form(
                 Method::POST,
@@ -1279,7 +1277,7 @@ async fn the_weather_group_saves_on_its_anchors() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{value}");
     }
     let stored: Option<i64> =
-        sqlx::query_scalar("SELECT weather_zone_id FROM device_policy WHERE device_id = ?")
+        sqlx::query_scalar("SELECT weather_family_zone_id FROM device_policy WHERE device_id = ?")
             .bind(id)
             .fetch_one(&app.db)
             .await
@@ -1359,7 +1357,7 @@ async fn deleting_the_weather_zone_clears_it_and_nudges_the_phone() {
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{id}/zones/{home}/delete"),
+            &format!("/zones/{home}/delete"),
             Some(&cookie),
             &[],
         )
@@ -1367,7 +1365,7 @@ async fn deleting_the_weather_zone_clears_it_and_nudges_the_phone() {
     assert!(res.status.is_redirection(), "{}", res.text());
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let stored: Option<i64> =
-        sqlx::query_scalar("SELECT weather_zone_id FROM device_policy WHERE device_id = ?")
+        sqlx::query_scalar("SELECT weather_family_zone_id FROM device_policy WHERE device_id = ?")
             .bind(id)
             .fetch_one(&app.db)
             .await

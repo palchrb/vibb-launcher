@@ -248,9 +248,9 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN, Screen, Lock screen, Weather (design 75, since
   2026-11-03), Notifications on the lock screen (Parent PIN's "Recent use" went on 2026-11-03, the user's ask).
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
-  and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
-  `clear_kid_pin` - with Vibb One's lock chosen only; with Android's a row says the lock needs a PIN instead
-  (2026-11-16, `hardening-and-pins.md`, "Android's lock by default"); the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
+  and a Save button (a PIN is typed, not toggled); the Child PIN is changed, never removed (design 132 Q1 (a): no
+  Remove, a stale `clear_kid_pin` refused, `hardening-and-pins.md`, "Phase D"); the Parent PIN's "Remove it instead" is a
+  checkbox in its form, shown only without a Child PIN. "Turn off after" and
   "Background" are inline `select.pick`s, each app a `select.pick` too since 2026-10-21 (below) - all
   `data-autosave` with a `<noscript>` Save.
 - **One select per app on the lock** (2026-10-21, the user's pick of the mockup's variant B): "Notifications on the
@@ -299,16 +299,15 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   `lock_glance::the_buzz_switch_becomes_the_alert_choice` (the migration), the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
-  `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
-  `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
+  `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin` (design 59's `kid-lock/keyguard` and its row went with design 132),
+  Show Child PIN → the page
   itself, posted to its own row `/lock#show-pin` (the fragment never reaches the server), `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
   → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-alert`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`, `#lock-alert`,
   `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off
   and (design 59) "Phone's PIN isn't the Child PIN" → `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Android's lock in the Child PIN group** (design 59 step 2; `docs/notes/server/hardening-and-pins.md`, "Android's
-  lock screen"): under the Child PIN row, the **Lock** select ("Vibb One's lock" / "Android's lock", sub-line "Test
-  phase: Android's lock will replace Vibb One's", disabled without a Child PIN; `POST /devices/{id}/kid-lock/keyguard`
-  back to its row `#lock-keyguard`), **Show Child PIN…** (a `<details>` with the password; it posts to
+  lock screen"): under the Child PIN row (design 59's **Lock** select went with design 132: Android's lock is the only
+  lock), **Show Child PIN…** (a `<details>` with the password; it posts to
   `/devices/{id}/lock#show-pin`, `action=reveal_kid_pin`, and is answered with the page itself - no redirect, the PIN
   in no address; without JS the answer lands on the row, with JS `scroll-restore.js` keeps the place; the GET page and
   the answer are `no-store`, `admin_auth::no_store_path`; the answer shows the PIN in a plain cell, not a
@@ -318,11 +317,12 @@ family's one backup row (`backups::backup_state`, `#backup-warning`, to `/backup
   `history.replaceState`, so a reload, Back or Forward loads the page without the PIN and never posts the password
   again; without JS the browser asks before posting it again, like any form's answer - the PIN can't go through a
   redirect, so post/redirect/get is out; qa-59-step2-code S2P-5/6; "Hide now" is a link to `?hidden=pin#show-pin`), the state rows and warnings, **Send the Child PIN again** (`POST
-  /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The footer and its ⓘ
-  follow the parent's choice (Android's lock: nothing can locate, ring or erase it and alarms may not ring before the
-  first unlock after a restart, the Parent PIN doesn't open it - Show Child PIN does; Vibb One's lock: the back-off, the
-  Parent PIN as "Parent code", it doesn't encrypt the data, some bank apps won't work). The Parent PIN's ⓘ: up to two
-  hours on a time lock, never Calls or Restrictions, a new PIN ends a lockout once the phone checks in. The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
+  /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The group's one ⓘ (design 132: no
+  footer) says Android's lock is the PIN pad and a fingerprint if one is added, and that nothing can locate, ring or
+  erase the phone and alarms may not ring before the first unlock after a restart, the Parent PIN doesn't open it - Show
+  Child PIN does. No Android PIN on the phone with nothing on its way is the orange "Telefonen har ingen PIN"
+  (`hardening-and-pins.md`, "Phase D"). The Parent PIN's ⓘ: up to two
+  hours on a time lock, never Calls or Restrictions, a new PIN ends a lockout once the phone checks in. The summary's row reads "PIN on". "Send again" and the reveal's "the
   phone still has" read only a report since the phone's enrolment (`device_pages::since_enrolment`, as the queue rule;
   S2P-4).
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
@@ -1559,7 +1559,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   once the first locations settled (code QA Q-7), and a span without points shows the zones (one zone: its centre at
   zoom 15; several: their centres fitted) instead of the world; the span pick doesn't touch the circles.
   `zones.json` is `[{id, name, latitude, longitude, radius_m}]`, a 404 for an unknown phone.
-- **The zone's page** (`handlers::zones`, `device_zone.html`, tab Locate, `no_store_path` `["devices", _, "zones",
+- **The zone's page** (`handlers::zones`, `family_zone.html` since design 135 - was `device_zone.html` -, tab Locate, `no_store_path` `["devices", _, "zones",
   ..]`): one form `#zone-form` with the time rule's sticky editor bar (`.nav-back` "Locate" to
   `/devices/locate?device={id}#zones`, **Add** / **Save** at the right, a refusal's "Not saved. …" in the bar), the
   large title (the zone's stored name, "New Zone"; *since design 84 all of it on the editor's band, `band::editor`,
@@ -1600,12 +1600,97 @@ man er inne på en device". Branch `pwa-fixes-b`.
   zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=5`),
   `jstest/zones.test.js`, `jstest/locate.test.js`.
 - **The zone's Wi-Fi group** (design 138, `#zone-wifi`, after the zone's form, a stored zone only; `zones.md`, "A
-  zone's confirmed Wi-Fi"): each confirmed name a "Fjern…" confirm (every router of that name goes); the phone's
-  network as a row with Bekreft when its newest report with `wifi` is at most an hour old, its router isn't confirmed
+  zone's confirmed Wi-Fi"; since design 135 on the family zone's editor `/zones/{zone_id}`, below "Telefoner" - a
+  confirmation is the zone's, for every phone using it): each confirmed name a "Fjern…" confirm (every router of that
+  name goes); each linked phone's network (one row per router, the phone's name its quiet value) as a row with Bekreft when its newest report with `wifi` is at most an hour old, its router isn't confirmed
   (the name and the five octets or the multi-link address) and no fix of the last hour is surely outside the zone; at
   most one orange line, "Sett et annet sted" (a blocked row), with its (i) - no "Ukjent ruter" (revision 3); one (i)
-  on the group. Every form lands on `?wifi=saved|changed|full#zone-wifi`
+  on the group. Every form lands on `?wifi=saved|changed|full|outside#zone-wifi`
   (a remove of a row gone already too), the flash in the group; no JS. `zone_networks::view_of` is the pure part.
+
+## Zones shared by the family (design 135, migration 0182, `docs/design/135-family-zones.md` §5; data in `zones.md`)
+
+The section above is design 64's per-phone pages; since design 135 the zones are the family's and each phone picks the
+ones it uses. Every page is in Locate's tab, `no_store_path` (`["zones", ..]`, `["devices", _, "zones", ..]`), full
+auth and CSRF; a save never lands at the top. Words checked against "Words in the UI": explanations behind the (i),
+no orange line for a choice (a zone no phone uses is "no phone", quiet).
+
+- **Where the list is**: Locate's all-phones view (`#all`) ends with a group, one row "Zones" (the family's count,
+  `data-row="family-zones"`, `AllView.zones`) to `/zones`; a phone's Zones page ends with "Add Zone"
+  (`/zones/new?device=N`) and "All Zones" (`/zones?device=N`, `data-row="all-zones"`).
+- **`/zones`** (`handlers::zones::list_page`, `family_zones.html`, `band::sub`): a row per family zone, oldest first,
+  `id="zone-N"`, to its editor (`?device=N` carried on); the sub-line "150 m · Telefon 1, Telefon 2" or "150 m · no
+  phone" (`locate.zones.family_sub`, `no_phone`) tells two zones of one name apart. "Add Zone", at 50 the note "50 zones
+  is the most" (`MAX_FAMILY_ZONES`). The (i): "Zones are the family's. Pick the ones each phone uses on its Zones page."
+  (`footer_empty` with none). Back goes to Locate, or with `?device=N` to that phone's Zones page. No coordinates.
+- **The editor** `/zones/new`, `/zones/{id}` (`family_zone.html`, was `device_zone.html`; `band::editor` with Back to
+  the page it came from): the map, Name, Latitude, Longitude, Radius and the slider as before; one "Use {phone}'s
+  location" per phone with a fix, the `device` phone first (`data-use-phone`, `zones.js?v=4` wires every one); a new
+  zone opens at the `device` phone's newest fix, else any phone's newest. The place's (i) adds "The zone is shared. A
+  change applies to every phone that uses it." Then **Phones** (`#zone-phones`): a checkbox per phone
+  (`phone_<id>`), ticked as linked (a new zone from `?device=N` has that phone ticked). Arrive/Leave are gone from here
+  (they are each parent's, on the phone's page). Hidden `was_name`, `was_latitude`, `was_longitude`, `was_radius_m`
+  and `was_phone_<id>` (1/0) carry what the page was drawn with, and `device` the page it came from (kept only for a
+  real phone).
+  - **Save** (`save_zone`, one `BEGIN IMMEDIATE`): writes a field only where it differs from its `was_` value (the
+    centre is one field), links or unlinks only the phones whose tick differs from `was_phone_<id>` (and only when
+    that still changes something now); `start_over` on new links, and on every link when the circle changed; nudges
+    the phones whose policy changed (a rename nudges none). The name's rules apply only to a changed name.
+  - **Landing**: from a phone `/devices/N/zones?zone=added|saved&zone_id=Z#zone-Z`, else `/zones?…#zone-Z`; a save
+    that changed nothing lands on the row with no line.
+  - **Refusals** (400 at `#zone-form`, as typed, nothing written): a field (the name only when changed; "The family
+    already has a zone with that name."), the 51st zone (the bar: "Not saved. 50 zones is the most"), a ticked phone
+    at 10 links (under Phones, `aria-invalid`: "Telefon 1 already has 10 zones.").
+  - **Delete Zone…** (`<details class="confirm">`): "Delete Hjem? Used by Telefon 1 and Telefon 2." / "Delete Hjem?";
+    `POST /zones/{id}/delete` cascades (links, alerts, the weather) and lands on `#zones` of the page it came from.
+- **A phone's Zones page** (`/devices/{id}/zones`, `device_zones.html`, `locate::show_zones`): one form
+  `POST /devices/{id}/zones#zones` (`handlers::zones::save_phone`), every control `data-autosave` with a `<noscript>`
+  Save, as the calendar page's per-calendar switches. A cell per family zone in the family's order (`id="zone-Z"`, Z
+  the family zone; a toggle never reorders): the name over "150 m" (and "· Here now" / "· Last seen at Hjem 14:02"
+  while linked), a switch (`use_Z`, on = linked; no `aria-label`: the row's label - the zone's name - names it,
+  code QA L2); while linked "Arrive" and "Leave" (`arrive_L`,
+  `leave_L`, L the link): the **signed-in parent's** pushes (`zone_alerts`, no row = on). Hidden `zone=Z`,
+  `was_use_Z`, and for linked cells `alerts=L`, `was_arrive_L`, `was_leave_L`. The handler: links/unlinks only cells
+  whose switch differs from `was_use_` (a zone deleted meanwhile skipped, one the form doesn't name never touched),
+  writes this parent's arrive/leave only where they differ from `was_` and only for a link that is still this phone's
+  (an unlink-and-relink meanwhile doesn't match). An 11th link refuses the whole post: a 303 to
+  `?refused=full&zone_id=Z#zone-Z` (`settings_log::refused`), "10 zones is the most" under that cell. A change of
+  links nudges the phone and logs `zone_linked`/`zone_unlinked`; alerts alone are a `settings_saved` line. Lands on
+  the first zone that changed (`?zone=saved&zone_id=Z#zone-Z`), else (nothing changed: a stale page whose change was
+  made already) on the first zone the post named, with no line (code QA L5), else on `#zones`. The form is marked
+  `data-diff`: when one of its switches is flipped again while its save is out, `scroll-restore.js` (`?v=12`,
+  `postedAsWas`) sets the `was_` fields to what the first save posted before it sends the second, so the second diffs
+  against the server's new state and the page ends at the parent's last tap (code QA M1; a refusal sent again the
+  browser's way keeps the page's own `was_` values). The group's (i) adds "Arrive and
+  Leave are your own notifications for this phone."; the warnings, the watch line and Locate Regularly are as before
+  ("while the phone has zones" now means links). No family zones: no cells, the two rows, `footer_empty`.
+- **Locate's one-phone view**: the Zones row's value counts the phone's links (`ZonesView.linked`), "3 · Here now:
+  Hjem" as before; `zones.json` is the phone's links (`id` = the link's).
+- **Lock Screen & PINs › Weather**: the zone picker lists the family's zones (`weather_family_zone_id`); "No zones
+  yet." with a link to the phone's Zones page when the family has none.
+- **Gone**: `/devices/{id}/zones/new`, `/devices/{id}/zones/{zone_id}`, `…/delete`, design 138's `…/wifi` and
+  `…/wifi/{network_id}/delete` (now `/zones/{zone_id}/wifi…`) (no redirect: push targets are
+  `/devices/locate?device=N#location`); `locate.zones.sub`/`notify.*`, `locate.zone.notify_title`/`notify_footer`.
+- Tests: `tests::family_zones`, `tests::zones`, `locate_page::every_form_on_the_locate_pages_returns_to_its_group` (the
+  autosave form), `shell::every_form_on_every_page_lands_on_its_own_group` (`/zones`, `/zones/new?device=N`,
+  `/zones/1`), `admin_auth::tests::no_store_paths`, `i18n_pages` (the three pages in nb), `jstest/zones.test.js`.
+
+## A CalDAV account belongs to a phone (design 136, migration 0184, `docs/design/136-caldav-per-phone.md` §5; data in `calendar.md`)
+
+Device › Calendar's CalDAV account is the phone's that added it; "Delt i familien" (`#sharing`, an autosave switch with
+its `<noscript>` Save, the owner's page only) shows it on every phone's page. The details are in `calendar.md`, "CalDAV
+accounts"; what matters for the PWA's rules:
+
+- **Words**: the switch's label is the owner's own words, its (i) says who writes; the states are quiet ("· delt", "·
+  delt fra {owner}", "Hører til · ingen"); nothing about sharing is orange - it is a choice. The add refusal "Kontoen
+  hører til {phone}." sits under Brukernavn with the fix behind its (i).
+- **No jump**: every form posts to its own group - `#calendars`, `#sharing`, `#test`, Kalender's `#dagen` -, "Fjern
+  konto…" leaves for `#sources` (its refusal comes back to `#remove`, the confirm open); a refusal is a 303 with
+  `settings_log::Refused`, never counted as a save.
+- **Stale forms** (design 135 decision 12's rule): the ticks post `was_on_<id>`, the switch and "Fjern konto…" post
+  `was_shared`; a save applies only what the parent changed.
+- Tests: `tests::caldav_per_phone`, `shell::every_form_on_every_page_lands_on_its_own_group` (the owner's page, another
+  phone's shared account, a shared account no phone owns).
 
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
 

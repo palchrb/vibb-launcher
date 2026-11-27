@@ -22,7 +22,8 @@ pub struct Family {
     /// Enrolled never: Connect This Phone.
     pub liv: i64,
     pub rule: i64,
-    pub zone: i64,
+    /// The family zone Hjemme (design 135: its editor's page).
+    pub family_zone: i64,
     pub app: i64,
     pub launcher: i64,
     pub entry: i64,
@@ -156,28 +157,29 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         .await
         .unwrap();
 
-    // A zone on Anna.
+    // A zone: a family zone ticked for the first phone (design 135).
     let made = app
         .request_form(
             Method::POST,
-            &format!("/devices/{anna}/zones"),
+            "/zones",
             Some(&cookie),
             &[
                 ("name", "Hjemme"),
                 ("latitude", "59.91417"),
                 ("longitude", "10.7522"),
                 ("radius_m", "150"),
-                ("notify_arrive", "on"),
-                ("notify_leave", "on"),
+                ("device", &anna.to_string()),
+                (&format!("phone_{anna}"), "on"),
             ],
         )
         .await;
     assert!(made.status.is_redirection(), "{}", made.text());
-    let zone: i64 = sqlx::query_scalar("SELECT id FROM device_zones WHERE device_id = ?")
-        .bind(anna)
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    let (zone, family_zone): (i64, i64) =
+        sqlx::query_as("SELECT id, zone_id FROM device_zones WHERE device_id = ?")
+            .bind(anna)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
 
     // Anna: a rich report.
     let today = crate::display_time::Zone::load(&app.db, lang)
@@ -472,7 +474,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         .unwrap();
     }
 
-    // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
+    // Ola: a Parent and a Child PIN through their forms (worded security lines), and the
     // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.
     for (path, field, pin) in [
         ("parent-pin", "new_pin", "246810"),
@@ -488,12 +490,6 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             .await;
         assert!(res.status.is_redirection(), "{path}: {}", res.text());
     }
-    sqlx::query("UPDATE device_policy SET kid_keyguard = 'android' WHERE device_id IN (?, ?)")
-        .bind(ola)
-        .bind(anna)
-        .execute(&app.db)
-        .await
-        .unwrap();
     sqlx::query(
         "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, first_delivered_at, \
          deliveries, received_at, acknowledged_at, result, succeeded) VALUES \
@@ -539,11 +535,12 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     .unwrap();
     let caldav: i64 = sqlx::query_scalar(
         "INSERT INTO caldav_accounts (server_url, username, password_sealed, password_nonce, password_key_fp, \
-         hosts, principal, calendars_json, state) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
+         hosts, principal, calendars_json, state, owner_device_id) VALUES ('https://dav.example.net/', 'forelder', x'00', x'00', '', \
          '[\"dav.example.net\"]', '/p/', \
-         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok') \
+         '[{\"id\":\"0123456789abcdef\",\"href\":\"https://dav.example.net/c/hjem/\",\"name\":\"Hjem\"}]', 'ok', ?) \
          RETURNING id",
     )
+    .bind(anna)
     .fetch_one(&app.db)
     .await
     .unwrap();
@@ -576,7 +573,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         ola,
         liv,
         rule,
-        zone,
+        family_zone,
         app: tracked,
         launcher,
         entry,
