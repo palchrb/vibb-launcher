@@ -2086,8 +2086,8 @@ Rows:
 - §6bw d, e on `0a00aa512` - not run.
 - §6bw k: the cell veto - no placed cell 5 km off (no fake Apple answer, §6bk).
 - §6bw o on 14: the measured 15-minute off gap - not measured (§6by finding 1).
-- §6bw p on 14 and 16: a coarse fix that isn't surely outside decides nothing - no placed cell (§6by); being run
-  2026-11-27.
+- §6bw p on 14: a coarse fix that isn't surely outside decides nothing (passed on 16 2026-11-27, §6cb; 14 waits for a
+  run - the cell needs three trusted occasions 30 min apart in real time).
 - §6bw o, p and the device row (the redacted BSSID's background read) - Jelly Star.
 - §6bw - Android 17.
 - §6bx: the relearning on the phone - Jelly Star (§6by).
