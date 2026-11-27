@@ -375,3 +375,6 @@ Code QA (2026-11-27, 0H 1M 4L), all taken:
 - **L3** the stuck line names the answer of the pass that scheduled the check, not the last pass's.
 - **L4** the order scan also checks that a step other than EMPTY returns before `setLockTaskPackages` and that
   `HomeRootStop.kioskOn()` is in the pin branch.
+
+Night gate on 16 (`docs/testing/emulator.md` §6ch F1): row 9's call screen did not come back - `KidInCallService` had no
+`onBringToForeground`; since branch `incall-front` it starts `InCallActivity` while a call is live (re-run owed on 14 and 16).

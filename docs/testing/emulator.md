@@ -2103,6 +2103,8 @@ Rows:
 - §6cd/§6ce 6 on 14 and 16: the setup hold's last stretch (revision 6, counted from the hold's end) - re-run owed.
 - §6cd/§6ce 15: moot, not owed - it can't occur on a Vibb phone: the maximum time to lock is the screen timeout
   (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout; the fold's rule stays unit-tested.
+- §6cf/§6ch: design 141 row 9 re-run on 14 and 16 (the call screen comes back) - `KidInCallService.onBringToForeground`,
+  branch `incall-front` (§6ch F1); the gap race in mind (the start after the posted stop, or the retry ends a root it made).
 
 ## 6s. The plain series cover, skip 15/15, the one "Favoritter" tile (design r12)
 

@@ -214,6 +214,19 @@ class KidInCallService : InCallService() {
         false
     }
 
+    /**
+     * Telecom asks the dialer's in-call UI to come to the front (`TelecomManager.showInCallScreen`): ATMS after every
+     * `stopLockTask` - the kiosk's end from Home's root (design 141) clears the call screen's locked task with the
+     * rest, and this brings it back (emulator.md §6ch F1) -, and Android's lock screen's "Return to call". Only while a
+     * call of ours is live; started as for a new call (our package is a lock-task package, the screen shows over
+     * Android's lock). [showDialpad] is ignored: the call screen has no keypad (design 10, QA 10 #16).
+     */
+    override fun onBringToForeground(showDialpad: Boolean) {
+        if (!OngoingCalls.hasLiveCall) return
+        Log.i(LOG_TAG, "Telecom asks for the call screen in front")
+        startInCallUi()
+    }
+
     private fun retryIfHidden(call: Call) {
         if (call !in OngoingCalls.calls || InCallActivity.resumed) return
         Log.w(LOG_TAG, "In-call screen not in front over the PIN lock - retrying once")
