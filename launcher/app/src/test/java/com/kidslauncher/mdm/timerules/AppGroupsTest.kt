@@ -310,6 +310,47 @@ class AppGroupsTest {
         assertFalse(x in fold(listOf(ev(20_000, x, UsageKind.STOPPED), ev(20_400, y, UsageKind.RESUMED)), carryOn(x)).onPkgs())
     }
 
+    /** §6cg F2 (design 139 §18): kiosk off, X's Main opens its B, Main's late STOPPED, then split screen with Chrome
+     * within 2 s - Main's STOPPED is a move inside X (B is resumed), never a kill; X counts on in its half. */
+    @Test
+    fun `a STOPPED of a class X isn't resumed in is a move inside X, never a kill (gate 6cg F2)`() {
+        val chrome = "com.android.chrome"
+        val main = "$x.Main"
+        // Home goes off under X: X is alone on screen, as in the gate (the fallback's condition).
+        val start = listOf(ev(999, home, UsageKind.PAUSED), ev(1_000, x, UsageKind.RESUMED, main), ev(1_400, home, UsageKind.STOPPED))
+        val opened = start + listOf(ev(10_000, x, UsageKind.PAUSED, main), ev(10_005, x, UsageKind.RESUMED, "$x.B"))
+        // The gate's two runs: Main STOPPED, Chrome RESUMED 731 and 537 ms later; and the pair's window too.
+        for (gap in listOf(731L, 537L, 0L, KILL_PAIR_MS)) {
+            val out = fold(opened + listOf(ev(10_240, x, UsageKind.STOPPED, main), ev(10_240 + gap, chrome, UsageKind.RESUMED)), carryOn(home))
+            assertEquals("+$gap", 99_000, out.ms())
+            assertEquals("+$gap", setOf(x, chrome), out.onPkgs())
+            assertTrue(out.carry.pending.isEmpty())
+        }
+        // Across folds: B's RESUMED in one, Main's STOPPED and the split in the next - the class rides in carry, and the
+        // STOPPED at a read's end isn't left pending.
+        val one = next(opened, carryOn(home), 0, 10_200)
+        assertEquals("$x.B", one.carry.on.single { it.pkg == x }.resumedClass)
+        val all = opened + ev(10_240, x, UsageKind.STOPPED, main)
+        val two = next(all, one.carry, 10_200, 10_250)
+        assertTrue(two.carry.pending.isEmpty())
+        val three = next(all + ev(10_971, chrome, UsageKind.RESUMED), two.carry, 10_250, 70_000)
+        assertTrue(x in three.onPkgs())
+        assertEquals(70_000L - 1_000L, one.ms() + two.ms() + three.ms())
+        // A real kill afterwards: the STOPPED of B, the class X was resumed in, still ends it - by the fallback alone.
+        val killed = fold(
+            opened + listOf(ev(10_240, x, UsageKind.STOPPED, main), ev(40_000, x, UsageKind.STOPPED, "$x.B"), ev(40_400, chrome, UsageKind.RESUMED)),
+            carryOn(home),
+        )
+        assertEquals(39_000, killed.ms())
+        assertFalse(x in killed.onPkgs())
+        // And a kill in the class X resumed in, the cold-start partner's rows (gate row 13): unchanged.
+        for (gap in listOf(0L, 299L, 815L, KILL_FALLBACK_MS)) {
+            val out = fold(start + listOf(ev(20_000, x, UsageKind.STOPPED, main), ev(20_000 + gap, y, UsageKind.RESUMED)), carryOn(home))
+            assertEquals("+$gap", 19_000, out.ms())
+            assertEquals(setOf(y), out.onPkgs() - home)
+        }
+    }
+
     // ---- A pending STOPPED across reads (QA L6) ---------------------------------------------------------------------
 
     @Test
@@ -367,7 +408,8 @@ class AppGroupsTest {
         assertNull(planRead(point, nowWall = 12_000, nowElapsed = 3_000, bootCount = 3, checkedClock = true))
 
         val atFrom = ev(10_000, x, UsageKind.RESUMED)
-        val atTo = ev(18_000, x, UsageKind.STOPPED, "$x.Z")
+        // The class X was resumed in (§6cg F2: a STOPPED of another class is a move inside X, never a kill).
+        val atTo = ev(18_000, x, UsageKind.STOPPED)
         val first = groupScreenMs(listOf(atFrom, atTo), p, unlocked, listOf(g), live = false, count = true)
         assertEquals(8_000, first.ms())
         assertEquals(listOf(10_000L), first.appliedKeys.map { it.first })

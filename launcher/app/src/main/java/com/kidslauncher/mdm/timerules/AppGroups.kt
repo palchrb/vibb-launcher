@@ -67,9 +67,11 @@ data class UsageEv(val timeMs: Long, val pkg: String, val cls: String?, val kind
     val key: String get() = "$timeMs|$pkg|$cls|$kind"
 }
 
-/** A package that isn't off: on, or on-paused ([paused]) by the PAUSED of class [pausedClass] (QA M1). */
+/** A package that isn't off: on, or on-paused ([paused]) by the PAUSED of class [pausedClass] (QA M1). [resumedClass]:
+ * the class of its last RESUMED while on (`null` = not known) - a STOPPED of another class is a move inside the app,
+ * never a kill (emulator.md §6cg F2). */
 @Serializable
-data class OnPackage(val pkg: String, val paused: Boolean = false, val pausedClass: String? = null)
+data class OnPackage(val pkg: String, val paused: Boolean = false, val pausedClass: String? = null, val resumedClass: String? = null)
 
 /** A STOPPED of an on package at [atMs] whose kill rule window (to [atMs] + [KILL_FALLBACK_MS], inclusive) wasn't wholly
  * before the read's `to` (QA L6): still counted as on, settled by a later fold. [alone]: it was the only package on
@@ -276,7 +278,7 @@ fun groupScreenMs(
         // A later event of a package resolves its pending STOPPED; the event applies as usual.
         pending.removeAll { it.pkg == e.pkg }
         when (e.kind) {
-            UsageKind.RESUMED -> on[e.pkg] = OnPackage(e.pkg)
+            UsageKind.RESUMED -> on[e.pkg] = OnPackage(e.pkg, resumedClass = e.cls)
             UsageKind.PAUSED -> on[e.pkg] = OnPackage(e.pkg, paused = true, pausedClass = e.cls)
             UsageKind.STOPPED -> {
                 val state = on[e.pkg]
@@ -284,6 +286,9 @@ fun groupScreenMs(
                     state == null -> {}
                     // QA M1: an on-paused package ends only at the STOPPED of the PAUSED's class.
                     state.paused -> if (state.pausedClass == e.cls) on.remove(e.pkg)
+                    // Revision 6, §6cg F2: the late STOPPED of an activity the app left for another of its own (Main ->
+                    // B) - neither the pair nor the fallback; a dead app's STOPPED is of the activity it was resumed in.
+                    state.resumedClass != null && state.resumedClass != e.cls -> {}
                     // The kill rule (QA L1, L2).
                     else -> {
                         val alone = on.size == 1
@@ -350,7 +355,8 @@ private enum class Partner { YES, NO, OPEN }
  * - The pair: another package's RESUMED in the same ms (either report order), or after it up to [KILL_PAIR_MS].
  * - The fallback (revision 6), only when [alone] (X was the only package on or on-paused at the STOPPED): the first
  *   RESUMED of another package with no event of it before in the window, up to [KILL_FALLBACK_MS] after it. In split
- *   screen the other half is on, so X's late STOPPED after a move inside X never pairs with that half's new app.
+ *   screen the other half is on, so it never pairs with that half's new app. X's late STOPPED after a move inside X
+ *   (its class isn't the one X was last RESUMED in) never comes here (§6cg F2: split screen entered after it).
  * Any event of [pkg] after the STOPPED ends the search ([Partner.NO]). [Partner.OPEN] while the window reaches [to]
  * (QA L6).
  */

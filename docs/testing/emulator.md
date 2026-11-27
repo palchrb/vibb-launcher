@@ -1934,7 +1934,8 @@ Written, not run as a whole:
 - §6bk - Apple's cell lookup (design 125b) - never run; its §9 rows (neighbours, NR, a second SIM, Apple's answer) are
   the Jelly Star's with a SIM.
 - §6bz - Storytel books sealed on the phone (design 117) - never run.
-- §6cf - the kiosk ends from its root (design 141) - never run; its rows on Android 17 are owed (no API 37 image).
+- §6cf - the kiosk ends from its root (design 141) - run on 14 (§6cg) and 16 (§6ch); its rows on Android 17 are owed
+  (no API 37 image).
 
 Rows:
 - §6: the row-count change - an untick uninstalls the app.
@@ -2095,12 +2096,13 @@ Rows:
 - §6bw o, p and the device row (the redacted BSSID's background read) - Jelly Star.
 - §6bw - Android 17.
 - §6bx: the relearning on the phone - Jelly Star (§6by).
-- §6cd/§6ce 13 on 14 and 16: the kill rule's 2 s fallback (design 139 revision 6, branch `app-groups-gatefix`) - re-run
-  owed (Z's process gone first, `kill -9` and `am crash`); on 14 also the control of design 139 §8 row 13: X moves to
-  a second activity inside itself, then split screen with another app within 2 s - X keeps counting.
-- §6cd/§6ce 18 on 14 and 16: the 30 s overlap (revision 6) - re-run owed; pause starts and a reboot, the debug
-  `late event` line now means an event older than the overlap.
-- §6cd/§6ce 6 on 14 and 16: the setup hold's last stretch (revision 6, counted from the hold's end) - re-run owed.
+- §6cg 13's split-screen control on 14 (design 139 §18, F2's fix, branch `night-fixes`): X moves to a second activity
+  inside itself, its first activity's STOPPED comes, then split screen with another app within 2 s - X keeps counting;
+  and once more a kill of X in the class it was resumed in (`kill -9`, `am crash`) - it ends. (§6cd/§6ce 13, 18 and 6
+  passed on 14 and 16 in §6cg/§6ch.)
+- §6cg design 141 rows 2, 3 and 12 re-run on 14, 10+ times each (F1's fix, `HomeRootStop.settle`, design 141 §3.5,
+  branch `night-fixes`): a leftover, then the kiosk's end - never stuck, Home's task kept; the `lock task ended ... ms
+  after Home's stop` line's times, and no `still LOCKED` line.
 - §6cd/§6ce 15: moot, not owed - it can't occur on a Vibb phone: the maximum time to lock is the screen timeout
   (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout; the fold's rule stays unit-tested.
 
