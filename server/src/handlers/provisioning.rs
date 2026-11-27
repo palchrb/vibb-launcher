@@ -211,6 +211,8 @@ impl ProvisionQrTemplate {
         let zone = Zone::load(&state.db, lang).await;
         let now = chrono::Utc::now();
         let (back_href, back_label) = crate::handlers::devices::setup_back(lang, &device);
+        // Design 140 §6: a result `releases/latest` moved away from is checked again first.
+        crate::launcher_check::refresh_if_moved(state).await;
         let launcher =
             crate::launcher_check::line(state, lang, &zone, Some(device.id), auto_reload);
         // A read that fails counts as no PIN: no code is made then (fail closed).

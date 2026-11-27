@@ -317,6 +317,9 @@ pub enum Reason {
     Unreadable,
     /// The app's "Ask me before every update" is on.
     AlwaysAsk,
+    /// Ours, and it needs a newer server than this one (design 140, [needs_server]): no parent
+    /// answer, out by itself at the start of a server that is new enough.
+    Server,
 }
 
 impl Reason {
@@ -325,6 +328,7 @@ impl Reason {
             Reason::Permissions => "permissions",
             Reason::Unreadable => "unreadable",
             Reason::AlwaysAsk => "always_ask",
+            Reason::Server => "server",
         }
     }
 
@@ -333,6 +337,7 @@ impl Reason {
             "permissions" => Some(Reason::Permissions),
             "unreadable" => Some(Reason::Unreadable),
             "always_ask" => Some(Reason::AlwaysAsk),
+            "server" => Some(Reason::Server),
             _ => None,
         }
     }
@@ -398,6 +403,65 @@ pub fn ours(app: &TrackedApp, our_repos: &[String]) -> bool {
             && app.source_type == "github"
             && app.release_tag_prefix.as_deref() == Some(crate::config::MUSIC_RELEASE_TAG_PREFIX)
             && our_repos.contains(&app.github_repo))
+}
+
+/// Design 140 §4.1: the versionCode of the first launcher tag that carries
+/// `apk::MIN_SERVER_ENTRY` (`contracts/music/min_server.json`'s `launcher_first`, read by
+/// `launcher_tag_codes.json`'s rule): a release of ours at or above it without a readable value is
+/// refused; one below it carries none and is served as before.
+pub const LAUNCHER_MIN_SERVER_FIRST_CODE: i64 = 430008;
+/// The same for the music app (`music_first`).
+pub const MUSIC_MIN_SERVER_FIRST_CODE: i64 = 80005;
+
+/// What [needs_server] says of a release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerNeed {
+    Serve,
+    /// Held until this server is at least this version.
+    Hold((u64, u64, u64)),
+    /// Refused like an unreadable APK (fail closed, design 140 §7).
+    Refuse,
+}
+
+/// Design 140 §4.1, pure: whether a release a server `own` may serve. Not ours: served (the value
+/// is ours alone). A value above `own`: held; at or below: served. No value below the app's
+/// `first_code`: served (a build from before the value); no value at or above it, no value with no
+/// versionCode, or a value that can't be read: refused. Compared as Software Updates compares
+/// versions (`handlers::system_update::parse_version`'s triples).
+pub fn needs_server(
+    ours: bool,
+    min_server: crate::apk::MinServer,
+    version_code: Option<i64>,
+    first_code: i64,
+    own: (u64, u64, u64),
+) -> ServerNeed {
+    use crate::apk::MinServer;
+    if !ours {
+        return ServerNeed::Serve;
+    }
+    match min_server {
+        MinServer::Version(needed) if needed > own => ServerNeed::Hold(needed),
+        MinServer::Version(_) => ServerNeed::Serve,
+        MinServer::Absent if version_code.is_some_and(|code| code < first_code) => {
+            ServerNeed::Serve
+        }
+        MinServer::Absent | MinServer::Unreadable => ServerNeed::Refuse,
+    }
+}
+
+/// The first versionCode of the app that carries the value: the launcher's row, else the music
+/// app's ([needs_server]'s `first_code`; only ours are judged).
+pub fn min_server_first_code(app: &TrackedApp) -> i64 {
+    if app.is_launcher {
+        LAUNCHER_MIN_SERVER_FIRST_CODE
+    } else {
+        MUSIC_MIN_SERVER_FIRST_CODE
+    }
+}
+
+/// A version triple as the pages and the stored `min_server` write it (`0.95.1`).
+pub fn version_text((x, y, z): (u64, u64, u64)) -> String {
+    format!("{x}.{y}.{z}")
 }
 
 /// The app's wait in hours (§17.3 M2): its column for a GitHub or F-Droid row, `None` (no wait,
@@ -558,6 +622,77 @@ pub fn parse_wait(lang: Lang, input: &str) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Design 140 §4.1: [needs_server]'s table, the comparison by Software Updates' parser, and
+    /// the first codes are the contract's tags.
+    #[test]
+    fn needs_server_table() {
+        use crate::apk::MinServer::{Absent, Unreadable, Version};
+        let own = (0, 95, 0);
+        let first = LAUNCHER_MIN_SERVER_FIRST_CODE;
+        let need = |ours, min, code| needs_server(ours, min, code, first, own);
+        assert_eq!(need(false, Unreadable, None), ServerNeed::Serve);
+        assert_eq!(
+            need(false, Version((9, 0, 0)), Some(first)),
+            ServerNeed::Serve
+        );
+        assert_eq!(
+            need(true, Version((0, 95, 0)), Some(first)),
+            ServerNeed::Serve
+        );
+        assert_eq!(
+            need(true, Version((0, 94, 9)), Some(first)),
+            ServerNeed::Serve
+        );
+        assert_eq!(
+            need(true, Version((0, 95, 1)), Some(first)),
+            ServerNeed::Hold((0, 95, 1))
+        );
+        assert_eq!(
+            need(true, Version((1, 0, 0)), None),
+            ServerNeed::Hold((1, 0, 0))
+        );
+        assert_eq!(need(true, Absent, Some(first - 1)), ServerNeed::Serve);
+        assert_eq!(need(true, Absent, Some(first)), ServerNeed::Refuse);
+        assert_eq!(need(true, Absent, None), ServerNeed::Refuse);
+        assert_eq!(need(true, Unreadable, Some(1)), ServerNeed::Refuse);
+        // The compare is on the parsed triples, as Software Updates': 0.100.0 is after 0.99.9.
+        let parsed = |v| crate::handlers::system_update::parse_version(v).unwrap();
+        assert_eq!(
+            needs_server(
+                true,
+                Version(parsed("0.100.0")),
+                None,
+                first,
+                parsed("v0.99.9")
+            ),
+            ServerNeed::Hold((0, 100, 0))
+        );
+        assert_eq!(
+            needs_server(
+                true,
+                Version(parsed("0.99.9")),
+                None,
+                first,
+                parsed("v0.100.0")
+            ),
+            ServerNeed::Serve
+        );
+        assert_eq!(version_text((0, 100, 3)), "0.100.3");
+
+        let contract: serde_json::Value =
+            serde_json::from_str(crate::contracts::contract!("music/min_server.json")).unwrap();
+        let code = |key: &str, prefix: &str| {
+            let tag = contract[key].as_str().unwrap();
+            let rest = tag.strip_prefix(prefix).unwrap();
+            crate::install_now::launcher_tag_version_code(&format!("launcher-v{rest}")).unwrap()
+        };
+        assert_eq!(
+            code("launcher_first", "launcher-v"),
+            LAUNCHER_MIN_SERVER_FIRST_CODE
+        );
+        assert_eq!(code("music_first", "music-v"), MUSIC_MIN_SERVER_FIRST_CODE);
+    }
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()

@@ -25,6 +25,12 @@ use crate::i18n::{Lang, t, t_params};
 /// failed.
 const RESULT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
+/// Design 140 §6 (QA M4): a result older than this is compared with the newest stable launcher
+/// release before a page shows it, the release list read at most this often - `releases/latest`
+/// may serve another APK the moment a stable release is published.
+const FRESH_FOR: Duration = Duration::from_secs(5 * 60);
+/// The freshness compare's list read at most (a page waits for it).
+const FRESHNESS_TIMEOUT: Duration = Duration::from_secs(5);
 /// The whole check - the download and the release list - at most: the catalog's download limit.
 const CHECK_TIMEOUT: Duration = crate::handlers::tracked_apps::DOWNLOAD_TOTAL_TIMEOUT;
 /// How long "Check again" waits for the answer before it goes back to the page.
@@ -52,6 +58,9 @@ pub enum Verdict {
     /// Design 129b D13: older than the first Vibb One that sends an enrolment attempt
     /// ([ENROL_ATTEMPT_FIRST_CODE]) - this server never enrols it: no QR is made.
     TooOld { version: String },
+    /// Design 140 §6 (Q1 (a)): it names a newer server than this one (`server`, "0.96.0") - a
+    /// phone set up with it would enrol against routes this server doesn't have: no QR is made.
+    NeedsServer { version: String, server: String },
 }
 
 /// Design 129b D13: the first launcher versionCode that speaks design 129b's enrolment (`attempt`, `key_error`, the
@@ -92,6 +101,10 @@ struct CheckState {
     /// When the next check is due; `None` = now.
     due: Option<Instant>,
     running: bool,
+    /// When the result was stored, and when the freshness compare last read the release list
+    /// (design 140 §6).
+    stored_at: Option<Instant>,
+    listed_at: Option<Instant>,
 }
 
 /// What a page shows.
@@ -133,6 +146,34 @@ impl LauncherCheck {
             };
             check.due = Some(Instant::now() + wait);
             check.result = Some(checked);
+            check.stored_at = Some(Instant::now());
+        }
+    }
+
+    /// The version of the result for `key` when it is older than [FRESH_FOR] and the release list
+    /// wasn't read in the last [FRESH_FOR] (the read is marked now); `None` otherwise.
+    fn due_for_freshness(&self, key: &Key) -> Option<Option<String>> {
+        let mut check = self.0.lock().unwrap();
+        let old = |at: Option<Instant>| at.is_none_or(|at| at.elapsed() >= FRESH_FOR);
+        if check.key.as_ref() != Some(key)
+            || check.running
+            || check.result.is_none()
+            || !old(check.stored_at)
+            || !old(check.listed_at)
+        {
+            return None;
+        }
+        check.listed_at = Some(Instant::now());
+        check.result.as_ref().map(|checked| checked.version.clone())
+    }
+
+    /// The freshness compare found another release at the address: the result for `key` goes,
+    /// and the next look starts a check.
+    fn forget_if(&self, key: &Key) {
+        let mut check = self.0.lock().unwrap();
+        if check.key.as_ref() == Some(key) {
+            check.result = None;
+            check.due = None;
         }
     }
 
@@ -152,8 +193,74 @@ impl LauncherCheck {
                 result: Some(checked),
                 due: Some(Instant::now() + RESULT_MAX_AGE),
                 running: false,
+                stored_at: Some(Instant::now()),
+                listed_at: None,
             };
         }
+    }
+
+    /// The tests' clock: the result and the last list read as if made `ago`.
+    #[cfg(test)]
+    pub(crate) fn age(&self, ago: Duration) {
+        let mut check = self.0.lock().unwrap();
+        let then = Instant::now().checked_sub(ago);
+        check.stored_at = then;
+        check.listed_at = check.listed_at.and(then);
+    }
+}
+
+/// Design 140 §6 (QA M4): before a page shows the QR, a result older than [FRESH_FOR] is compared
+/// with the newest stable `launcher-v*` release (read at most once per [FRESH_FOR]); when that
+/// isn't the checked APK's version, `releases/latest` serves another APK now, so the result goes
+/// and the page reads "Checking" (no QR) until the new one is checked. Only for a
+/// `github.com/<owner>/<repo>/releases/latest/...` address (a release's own address never moves);
+/// a failed read keeps the result - the APK check is the gate, the list only says it moved.
+pub async fn refresh_if_moved(state: &AppState) {
+    let Some(key) = key_of(&state.config) else {
+        return;
+    };
+    let url = &state.config.launcher_apk_url;
+    let Some(repo) = crate::handlers::tracked_apps::launcher_repo_from_url(url) else {
+        return;
+    };
+    if !url.contains(&format!("/{repo}/releases/latest/")) {
+        return;
+    }
+    let Some(checked_version) = state.launcher_check.due_for_freshness(&key) else {
+        return;
+    };
+    let releases = match tokio::time::timeout(FRESHNESS_TIMEOUT, release_list(&state.config, &repo))
+        .await
+    {
+        Ok(Ok(releases)) => releases,
+        Ok(Err(err)) => {
+            tracing::warn!("the setup QR's freshness check couldn't list {repo}'s releases: {err}");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "the setup QR's freshness check couldn't list {repo}'s releases in time"
+            );
+            return;
+        }
+    };
+    let prefix = crate::handlers::tracked_apps::LAUNCHER_ROW_TAG_PREFIX;
+    let newest = releases
+        .iter()
+        .filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with(prefix))
+        .filter_map(|r| {
+            crate::install_now::launcher_tag_version_code(&r.tag_name).map(|code| (code, r))
+        })
+        .max_by_key(|(code, _)| *code)
+        .map(|(_, r)| shown_tag(&r.tag_name, prefix));
+    if let Some(newest) = newest
+        && checked_version.as_deref() != Some(newest.as_str())
+    {
+        tracing::info!(
+            "the setup QR's launcher moved to {newest} (checked {}) - checking it again",
+            checked_version.as_deref().unwrap_or("?")
+        );
+        state.launcher_check.forget_if(&key);
     }
 }
 
@@ -322,6 +429,9 @@ pub(crate) struct Known {
     /// The lowest versionCode a phone can enrol with ([ENROL_ATTEMPT_FIRST_CODE] in a running server; the tests'
     /// fixtures, codes 1 and 2, set their own).
     pub(crate) min_code: i64,
+    /// This server's version (design 140 §6): the APK's `min_server` is judged against it; `None`
+    /// (the tests' default) doesn't judge it.
+    pub(crate) own_server: Option<(u64, u64, u64)>,
 }
 
 #[derive(Deserialize)]
@@ -329,6 +439,8 @@ struct Release {
     tag_name: String,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
     published_at: Option<DateTime<Utc>>,
 }
 
@@ -355,6 +467,7 @@ async fn known_releases(state: &AppState) -> Known {
         } else {
             ENROL_ATTEMPT_FIRST_CODE
         },
+        own_server: Some(state.server_version),
         ..Known::default()
     };
     let mut offer = |version: String, code: i64| {
@@ -490,6 +603,25 @@ pub(crate) fn judge(
         Verdict::TooOld {
             version: version.clone().unwrap_or_default(),
         }
+    } else if let Some(verdict) = known.own_server.and_then(|own| {
+        // Design 140 §6: a Vibb One that needs a newer server, or from the first tag that carries
+        // the value without a readable one (fail closed), makes no QR.
+        match crate::catalog_holds::needs_server(
+            true,
+            identity.min_server,
+            identity.version_code,
+            crate::catalog_holds::LAUNCHER_MIN_SERVER_FIRST_CODE,
+            own,
+        ) {
+            crate::catalog_holds::ServerNeed::Serve => None,
+            crate::catalog_holds::ServerNeed::Hold(needed) => Some(Verdict::NeedsServer {
+                version: version.clone().unwrap_or_default(),
+                server: crate::catalog_holds::version_text(needed),
+            }),
+            crate::catalog_holds::ServerNeed::Refuse => Some(Verdict::NotAnApk),
+        }
+    }) {
+        verdict
     } else {
         match (identity.version_code, &known.newest) {
             (Some(code), Some((newest, newest_code))) if code < *newest_code => Verdict::Older {
@@ -508,7 +640,7 @@ pub(crate) fn judge(
 
 /// The row the pages show (`partials/launcher_check.html`, as `launcher`).
 pub struct Line {
-    /// "checking", "works", "older" or "refused".
+    /// "checking", "works", "older", "needs_server" (design 140, orange) or "refused".
     pub state: &'static str,
     pub text: String,
     /// The short visible line under a warning: "A phone would refuse it. No QR code until it's fixed." (design 113).
@@ -528,7 +660,7 @@ pub struct Line {
 impl Line {
     /// No QR is made: a phone would refuse the launcher, or the check hasn't ended.
     pub fn blocks_qr(&self) -> bool {
-        matches!(self.state, "checking" | "refused")
+        matches!(self.state, "checking" | "refused" | "needs_server")
     }
 }
 
@@ -697,6 +829,21 @@ fn words(
             t(lang, "settings.provisioning.launcher.unreachable").to_string(),
             refused(),
             address(),
+        ),
+        // Design 140 §6: orange, the short line in view, the fix behind the (i).
+        Verdict::NeedsServer { server, .. } => (
+            "needs_server",
+            t_params(
+                lang,
+                "settings.provisioning.launcher.needs_server",
+                &[("server", server)],
+            ),
+            Some(t(lang, "settings.provisioning.launcher.needs_server_short").to_string()),
+            Some(t_params(
+                lang,
+                "settings.provisioning.launcher.needs_server_sub",
+                &[("server", server)],
+            )),
         ),
         // Design 129b D13: the fix behind the (i).
         Verdict::TooOld { .. } => (
@@ -940,6 +1087,7 @@ mod tests {
             newest: Some(("0.0.0-rc.2".to_string(), 2)),
             published: Vec::new(),
             min_code: 0,
+            own_server: None,
         };
         assert_eq!(
             judge(&identity, &config, KEY1_CHECKSUM, &known).verdict,
@@ -972,5 +1120,237 @@ mod tests {
             judge(&no_package, &config, KEY1_CHECKSUM, &known).verdict,
             Verdict::NotAnApk
         );
+    }
+
+    /// Design 140 §6 (Q1 (a)): a Vibb One that names a newer server makes no QR (orange, its short line and the fix
+    /// behind the (i)); one that names this server works; one past the first tag with no value is no readable Vibb
+    /// One.
+    #[test]
+    fn a_launcher_that_needs_a_newer_server_makes_no_qr() {
+        use crate::apk::MinServer;
+        let config = {
+            let mut config = ForkConfig::for_tests();
+            config.launcher_admin_component = "me.vibb.testfixture/x.Admin".to_string();
+            config
+        };
+        let known = Known {
+            own_server: Some((0, 95, 0)),
+            ..Known::default()
+        };
+        let with = |min_server, code| ApkIdentity {
+            min_server,
+            version_code: code,
+            ..crate::apk::read_identity(std::path::Path::new("testdata/apk/fixture-key1.apk"))
+                .unwrap()
+        };
+        let needs = judge(
+            &with(MinServer::Version((0, 96, 0)), Some(1)),
+            &config,
+            KEY1_CHECKSUM,
+            &known,
+        );
+        assert_eq!(
+            needs.verdict,
+            Verdict::NeedsServer {
+                version: "1".to_string(),
+                server: "0.96.0".to_string()
+            }
+        );
+        assert!(needs.verdict.blocks_qr());
+        let (state, text, sub, fix) =
+            words(Lang::En, &Zone::utc_fallback(), &needs, "https://x/y.apk");
+        assert_eq!(state, "needs_server");
+        assert_eq!(text, "Vibb One in the QR code needs server 0.96.0");
+        assert_eq!(
+            sub.as_deref(),
+            Some("No QR code until the server is updated.")
+        );
+        assert_eq!(
+            fix.as_deref(),
+            Some(
+                "Update this server to 0.96.0 or newer, or point LAUNCHER_APK_URL at an older release."
+            )
+        );
+        let line = Line {
+            state,
+            text,
+            sub,
+            fix,
+            needs: None,
+            device_id: None,
+            auto_reload: false,
+        };
+        assert!(line.blocks_qr());
+        assert_eq!(
+            judge(
+                &with(MinServer::Version((0, 95, 0)), Some(1)),
+                &config,
+                KEY1_CHECKSUM,
+                &known
+            )
+            .verdict,
+            Verdict::Works
+        );
+        assert_eq!(
+            judge(
+                &with(
+                    MinServer::Absent,
+                    Some(crate::catalog_holds::LAUNCHER_MIN_SERVER_FIRST_CODE)
+                ),
+                &config,
+                KEY1_CHECKSUM,
+                &known
+            )
+            .verdict,
+            Verdict::NotAnApk
+        );
+        assert_eq!(
+            judge(
+                &with(MinServer::Unreadable, Some(1)),
+                &config,
+                KEY1_CHECKSUM,
+                &known
+            )
+            .verdict,
+            Verdict::NotAnApk
+        );
+        // Before the first tag that carries it: as today.
+        assert_eq!(
+            judge(
+                &with(MinServer::Absent, Some(1)),
+                &config,
+                KEY1_CHECKSUM,
+                &known
+            )
+            .verdict,
+            Verdict::Works
+        );
+        // Ranked after the signer: a wrong key is still said first.
+        assert_eq!(
+            judge(
+                &with(MinServer::Version((0, 96, 0)), Some(1)),
+                &config,
+                KEY2_CHECKSUM,
+                &known
+            )
+            .verdict,
+            Verdict::WrongSigner
+        );
+    }
+
+    /// Design 140 §6 (QA M4): a result older than [FRESH_FOR] is compared with the newest stable launcher release -
+    /// another one forgets it (the page reads "Checking", no QR); the same one, a failed list read, a result younger
+    /// than [FRESH_FOR] or an address that isn't `releases/latest` keep it. The list is read at most once per
+    /// [FRESH_FOR].
+    #[tokio::test]
+    async fn a_moved_latest_release_is_checked_again() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = std::sync::Arc::new(AtomicUsize::new(0));
+        let stable = std::sync::Arc::new(std::sync::Mutex::new("launcher-v0.43.0".to_string()));
+        let router = {
+            let (reads, stable) = (reads.clone(), stable.clone());
+            axum::Router::new().route(
+                "/repos/palchrb/vibb-launcher/releases",
+                axum::routing::get(move || {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    let stable = stable.lock().unwrap().clone();
+                    async move {
+                        axum::Json(serde_json::json!([
+                            {"tag_name": "launcher-v0.44.0-rc.1", "prerelease": true},
+                            {"tag_name": "launcher-v0.45.0", "draft": true},
+                            {"tag_name": stable, "prerelease": false},
+                            {"tag_name": "launcher-v0.42.0", "prerelease": false},
+                        ]))
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut config = ForkConfig::for_tests();
+        config.launcher_apk_url =
+            "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk"
+                .to_string();
+        config.launcher_signature_checksum = Some(KEY1_CHECKSUM.to_string());
+        config.github_api = base;
+        let app = TestApp::with_config(config.clone()).await;
+        let state = &app.state;
+        let result = |version: &str| Checked {
+            verdict: Verdict::Works,
+            version: Some(version.to_string()),
+            published: None,
+            min_sdk: None,
+        };
+        let has_result = || state.launcher_check.0.lock().unwrap().result.is_some();
+
+        // Younger than FRESH_FOR: no list read.
+        state.launcher_check.set(&config, result("0.42.0"));
+        refresh_if_moved(state).await;
+        assert!(has_result());
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        // Older, the same release: it stands, and the list isn't read again for FRESH_FOR.
+        state.launcher_check.set(&config, result("0.43.0"));
+        state.launcher_check.age(FRESH_FOR + Duration::from_secs(1));
+        refresh_if_moved(state).await;
+        assert!(has_result());
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        refresh_if_moved(state).await;
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        // A newer stable release out: forgotten - the next look checks it, the page reads "Checking".
+        *stable.lock().unwrap() = "launcher-v0.44.0".to_string();
+        state.launcher_check.age(FRESH_FOR + Duration::from_secs(1));
+        refresh_if_moved(state).await;
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        assert!(!has_result());
+
+        // A failed list read keeps the result.
+        let mut down = config.clone();
+        down.github_api = "http://127.0.0.1:9".to_string();
+        let down_app = TestApp::with_config(down.clone()).await;
+        down_app.state.launcher_check.set(&down, result("0.40.0"));
+        down_app
+            .state
+            .launcher_check
+            .age(FRESH_FOR + Duration::from_secs(1));
+        refresh_if_moved(&down_app.state).await;
+        assert!(
+            down_app
+                .state
+                .launcher_check
+                .0
+                .lock()
+                .unwrap()
+                .result
+                .is_some()
+        );
+
+        // A release's own address never moves: no list read.
+        let mut pinned = config.clone();
+        pinned.launcher_apk_url =
+            "https://github.com/palchrb/vibb-launcher/releases/download/launcher-v0.40.0/kids-launcher-mdm.apk"
+                .to_string();
+        let pinned_app = TestApp::with_config(pinned.clone()).await;
+        pinned_app
+            .state
+            .launcher_check
+            .set(&pinned, result("0.40.0"));
+        pinned_app
+            .state
+            .launcher_check
+            .age(FRESH_FOR + Duration::from_secs(1));
+        let before = reads.load(Ordering::SeqCst);
+        refresh_if_moved(&pinned_app.state).await;
+        assert!(
+            pinned_app
+                .state
+                .launcher_check
+                .0
+                .lock()
+                .unwrap()
+                .result
+                .is_some()
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), before);
     }
 }

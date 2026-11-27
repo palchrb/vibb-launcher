@@ -135,6 +135,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   A page a GET drew reloads itself while it checks (`auto-reload.js`); one a POST drew shows Check Again instead. Tests: `launcher_check::tests` (a fake GitHub on
   loopback serving `testdata/apk/`), `provisioning::the_launcher_check_decides_the_qr`,
   `check_again_comes_back_to_the_row`; `TestApp` sets `Works` for its own config, so no test downloads anything.
+  Design 140 §6 (Q1 (a)): `NeedsServer { version, server }` (after `WrongPackage`/`WrongSigner`/`TooOld`) when the
+  APK's `assets/vibb/min_server` names a newer server than this one (`catalog_holds::needs_server`, `Known.own_server`;
+  no readable value from `LAUNCHER_MIN_SERVER_FIRST_CODE` on is `NotAnApk`): orange (`needs_server`), "No QR code
+  until the server is updated.", the fix behind the (i); `Line::blocks_qr`. A result older than 5 minutes
+  (`FRESH_FOR`) is compared before Phone Setup or the Connect page shows it (`refresh_if_moved`, awaited, at most 5 s)
+  with the newest stable `launcher-v*` release of a `github.com/<owner>/<repo>/releases/latest/...` address (the list
+  read at most once per 5 minutes): another version forgets the result, so the page reads Checking and makes no QR
+  until the APK `releases/latest` now serves is checked; a failed list read keeps it. Tests:
+  `launcher_check::tests::a_launcher_that_needs_a_newer_server_makes_no_qr`, `a_moved_latest_release_is_checked_again`.
   For a launcher a phone would take the row adds the Android it needs, from the APK's `<uses-sdk minSdkVersion>`
   (`apk::ApkIdentity::min_sdk`, `launcher_check::android_release`). The QR also carries
   `PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED: true` (AOSP's default false disables the phone's own apps with a

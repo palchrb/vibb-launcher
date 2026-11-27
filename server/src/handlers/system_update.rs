@@ -43,7 +43,7 @@ fn newest_server_version(releases: &[Release]) -> Option<String> {
 }
 
 /// `vX.Y.Z` (or `X.Y.Z`) as a comparable triple; anything else is `None`.
-fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     let mut parts = version.strip_prefix('v').unwrap_or(version).split('.');
     let mut next = || -> Option<u64> {
         let p = parts.next()?;

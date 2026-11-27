@@ -523,3 +523,45 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   `a_release_asking_for_more_is_held_until_superseded`), `tests::catalog_holds` (Approve, its refusal, Keep and Ask
   Again, the wait and the switch, the upload, the backfill, migration 0141), the redirect table in
   `tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page`.
+
+## A release that needs a newer server (design 140, `docs/design/140-launcher-needs-server.md`, migration `0187_held_for_server.sql`)
+
+The owner (2026-11-27): stop the launcher's auto-update when the server is too old for it. Every launcher and music
+build carries `assets/vibb/min_server` (`X.Y.Z` and a newline; Gradle writes it, a release tag's value from
+`scripts/min-server.sh`; `contracts/music/min_server.json`; `docs/notes/ci.md`, "The server a release needs").
+
+- **Reading it** (`apk.rs`): `ApkIdentity.min_server: MinServer` - `Absent`, `Unreadable` (more than 32 bytes, read
+  through `take(33)`, or anything but `X.Y.Z` with 1-4 digits a part, no leading zero but `0`, and at most one
+  trailing `\n`) or `Version`. Read for every APK, used only for ours.
+- **The rule** (`catalog_holds::needs_server`, pure): not ours `Serve`; a value above this server `Hold`, at or below
+  `Serve`; no value under the app's first code (`LAUNCHER_MIN_SERVER_FIRST_CODE`/`MUSIC_MIN_SERVER_FIRST_CODE`, the
+  contract's `launcher_first`/`music_first` by `launcher_tag_codes.json`'s rule) `Serve` (a build from before);
+  no value at or above it, no value with no versionCode, or unreadable: `Refuse`. This server's version is
+  `AppState.server_version` (`crate::server_version()`, `APP_VERSION` by `system_update::parse_version`, the
+  compare on its triples).
+- **The sync** (`sync_release`, `server_need`): after the pins, before the first-release short-circuit - so a first
+  release is held too and the row serves nothing. `Refuse` is `apps.sync.unreadable`, remembered as refused (not
+  downloaded again every hour), nothing stored or held. `Hold` goes through design 90's `hold_release` with reason
+  `server` and `tracked_app_held_releases.min_server` (0187): kept next to the served file, the same release "nothing
+  to do", a newer held one replaces it, a newer served one supersedes it; `hold_release` raises no
+  `app_update_held` for it - no inbox row, no push. Ours have no wait, so only the newest listed release is judged
+  (QA L8): one held keeps the phones on the served release even if an older one in between could be served.
+- **Out by itself** (`release_server_holds`, at start after the backfills, before the hourly sync's first pass): a
+  `server` hold no longer ahead of the served release goes (row and file); one whose stored `min_server` and whose
+  file's own value are both at or below this server's version is moved as Approve moves it (`approve`: pins,
+  SHA-256, one transaction, the old file removed), the phones nudged, Security Log `catalog_release_server_ready`, no
+  inbox row; anything else stays held.
+- **Approve and Keep** never show for it; their POSTs answer `stale`. **A manual upload** of ours that needs a newer
+  server (`apps.app.upload_needs_server`) or whose need can't be read (`apps.app.upload_no_min_server`) is refused
+  at once on the upload group (400, nothing stored).
+- **The pages** (one helper, `tracked_apps::held_line`; `HeldView.server`): the catalog app's `#update` group (shown
+  for ours only for this hold: `data-update="held-server"`, the orange line, its (i) - `apps.update.server_info`, or
+  `server_info_first` with nothing served), a phone's app page (the same), Device › Apps (the line, the launcher's
+  row included), the Apps tab's badge "Waits for the server" (`apps.list.waits_server`), Software Updates (one orange
+  line per held app, `server_hold_lines`, `data-row="held-for-server"`). The setup QR: `connectivity.md`.
+- A server rolled back below a release it served: nothing is pulled back or shown.
+- Tests: `apk::tests::the_min_server_entry_is_read` (`apk::tests::with_min_server` adds the entry to a fixture and
+  keeps its signing block), `catalog_holds::tests::needs_server_table`,
+  `handlers::tracked_apps::tests::a_release_of_ours_that_needs_a_newer_server_is_held` and
+  `a_release_held_for_the_server_goes_out_at_the_start_of_a_newer_one`, `tests::min_server` (the pages, `stale`, the
+  upload, 0187), `tests::app_page::an_update_held_for_the_server_has_no_answer`.

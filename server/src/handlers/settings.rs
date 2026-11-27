@@ -209,6 +209,8 @@ pub async fn provisioning_settings_form(
         saved: saved == Some("country-code"),
         error: None,
     };
+    // Design 140 §6: a result `releases/latest` moved away from is checked again first.
+    crate::launcher_check::refresh_if_moved(&state).await;
     render(
         &state,
         StatusCode::OK,

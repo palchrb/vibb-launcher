@@ -54,6 +54,14 @@
     <div class="group" id="update" data-group="update">
         {% if let Some((text, ok)) = u.flash %}<p class="flash{% if !ok %} flash-warn{% endif %}" role="status" data-flash="update">{{ text }}</p>{% endif %}
         {% if let Some(h) = u.held %}
+        {% if h.server %}
+        {#- Design 140 §4.3: a release of ours that needs a newer server - one orange line, how it goes out behind its
+            (i), no Approve or Keep. -#}
+        <details class="info cell" data-update="held-server">
+            <summary class="row"><span class="row-label"><span class="tone-orange">{{ h.release.title }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ h.sub }}</p></div>
+        </details>
+        {% else %}
         {#- Design 113: the row is its own (i) - what the release asks for behind it; the buttons follow on a row
             of their own (a form isn't allowed inside a <summary>). -#}
         <details class="info cell" data-update="held">
@@ -75,6 +83,7 @@
                 <button type="submit" class="button-small button-secondary">{{ h.keep }}</button>
             </form>
         </div>
+        {% endif %}
         {% endif %}
         {% if let Some(w) = u.waiting %}
         <details class="info cell" data-update="waiting">

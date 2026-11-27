@@ -305,13 +305,19 @@ fn the_min_server_script_runs_in_both_server_workflows() {
         .nth(1)
         .and_then(|rest| rest.split('\'').next())
         .unwrap();
-    assert!(regex::Regex::new(pattern)
-        .unwrap()
-        .is_match("scripts/min-server.sh"));
+    assert!(
+        regex::Regex::new(pattern)
+            .unwrap()
+            .is_match("scripts/min-server.sh")
+    );
     let changes = block(ci, "  server-changes:", "  server-build:");
     assert!(changes.contains("run: scripts/min-server.sh --selftest"));
     let release = include_str!("../../../.github/workflows/server-release.yml");
-    let test_job = block(release, "  server-release-test:", "      - name: Install Rust");
+    let test_job = block(
+        release,
+        "  server-release-test:",
+        "      - name: Install Rust",
+    );
     let guard = test_job
         .find("../scripts/min-server.sh --check-server-tag")
         .expect("the tag guard");

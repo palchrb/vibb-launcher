@@ -46,6 +46,13 @@
             </form>
             {% endif %}
             {% if let Some(h) = held %}
+            {% if h.server %}
+            {#- Design 140 §4.3: a release of ours that needs a newer server - no Approve or Keep. -#}
+            <details class="info cell" data-update="held-server">
+                <summary class="row"><span class="row-label"><span class="tone-orange">{{ h.release.title }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ h.sub }}</p></div>
+            </details>
+            {% else %}
             <details class="info cell" data-update="held">
                 <summary class="row"><span class="row-label"><span class="tone-orange">{{ h.release.title }}</span><span class="row-sub">{{ h.sub }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
@@ -65,6 +72,7 @@
                     <button type="submit" class="button-small button-secondary">{{ h.keep }}</button>
                 </form>
             </div>
+            {% endif %}
             {% endif %}
             {% endif %}
         </div>

@@ -1474,6 +1474,107 @@ pub async fn remove_orphan_files(state: &AppState) {
     }
 }
 
+/// Design 140 §4.2: at start (after the backfills, before the hourly sync's first pass), every
+/// release of ours held for the server. One no longer ahead of the served release (an upload or a
+/// newer release overtook it) goes, row and file. One whose stored `min_server` and whose file's
+/// own value are both at or below this server's version is served as Approve serves a release -
+/// without the parent: the file read and checked again, moved into the served release in one
+/// transaction, the old file removed, the phones nudged; Security Log
+/// `catalog_release_server_ready`, no inbox row or push. Any other stays held. The version only
+/// changes with a restart, so the start is enough.
+pub async fn release_server_holds(state: &AppState) {
+    let ids: Vec<i64> = match sqlx::query_scalar(
+        "SELECT tracked_app_id FROM tracked_app_held_releases WHERE reason = 'server'",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the releases held for the server");
+            return;
+        }
+    };
+    for id in ids {
+        let Some(guard) = state.app_syncs.start(id) else {
+            continue;
+        };
+        let app: Option<TrackedApp> = sqlx::query_as("SELECT * FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+        let held = held_release(state, id).await.ok().flatten();
+        let (Some(app), Some(held)) = (app, held) else {
+            continue;
+        };
+        let Some(stored) = held_for_server(&held) else {
+            continue;
+        };
+        if app.latest_release_tag.is_some()
+            && !release_ahead(&app, &held.release_tag, held.asset_id)
+        {
+            tracing::info!(
+                app_id = id,
+                release = %held.release_tag,
+                "the release held for the server isn't ahead of the served one any more - dropped"
+            );
+            drop_held(state, id, &held).await;
+            continue;
+        }
+        let ready = crate::handlers::system_update::parse_version(stored)
+            .is_some_and(|needed| needed <= state.server_version);
+        if !ready {
+            continue;
+        }
+        // The file's own value too: a row and a file that disagree stay held (fail closed).
+        let file_ready = match apk_identity(&held.file_path).await {
+            Ok(identity) => {
+                server_need(state, &app, &identity) == crate::catalog_holds::ServerNeed::Serve
+            }
+            Err(_) => false,
+        };
+        if !file_ready {
+            tracing::warn!(
+                app_id = id,
+                release = %held.release_tag,
+                "the held release's file doesn't say this server is new enough - it stays held"
+            );
+            continue;
+        }
+        match approve(state, &app, &held).await {
+            Ok(identity) => {
+                drop(guard);
+                let version = version_of(&held.release_tag, app.release_tag_prefix.as_deref());
+                let own = crate::catalog_holds::version_text(state.server_version);
+                crate::security::record_security_event(
+                    &state.db,
+                    "catalog_release_server_ready",
+                    None,
+                    None,
+                    Some(crate::security::Detail::words(
+                        "security.detail.catalog_release_server_ready",
+                        &[("app", &app.name), ("version", &version), ("server", &own)],
+                    )),
+                )
+                .await;
+                store_pins(state, &app, &identity).await;
+                crate::handlers::device_api::nudge_phones_with_app(state, id).await;
+                tracing::info!(app_id = id, release = %held.release_tag, "held for the server - now served");
+            }
+            Err(failure) => {
+                tracing::warn!(
+                    app_id = id,
+                    "the release held for the server wasn't served: {failure}"
+                );
+                drop_held(state, id, &held).await;
+                guard.finish(&Err(failure));
+            }
+        }
+    }
+}
+
 /// Which apps are syncing right now, and how each one's last sync ended (shown on its page). One
 /// sync per app at a time (qa-catalog #1): "Check now" and the hourly loop never download the same
 /// app twice in parallel, and a slower sync that saw an older release can't finish last and roll
@@ -2481,6 +2582,47 @@ async fn sync_release(
         }
     };
 
+    // Design 140 §4.2: a release of ours names the oldest server it needs. One newer than this
+    // server is held until a server that new starts (no parent answer, no inbox row); one from the
+    // first tag that carries the value without a readable one is refused as unreadable. Before the
+    // first-release rule below (QA L1): a first release is held too.
+    match server_need(state, app, &identity) {
+        crate::catalog_holds::ServerNeed::Serve => {}
+        crate::catalog_holds::ServerNeed::Refuse => {
+            tokio::fs::remove_file(&file_path).await.ok();
+            let refused = Failure::new(
+                Unreadable,
+                format!(
+                    "refused: no readable {} (design 140)",
+                    crate::apk::MIN_SERVER_ENTRY
+                ),
+            );
+            state
+                .app_syncs
+                .set_refused(app.id, Some((tag.to_string(), asset.id, refused.clone())));
+            return Err(refused);
+        }
+        crate::catalog_holds::ServerNeed::Hold(needed) => {
+            let release = HeldRelease {
+                release_tag: tag.to_string(),
+                asset_id: asset.id,
+                file_path,
+                asset_name: Some(asset.name.clone()),
+                asset_size: Some(i64::try_from(downloaded.size).unwrap_or(i64::MAX)),
+                sha256: downloaded.sha256,
+                version_code: identity.version_code,
+                permissions: identity
+                    .permissions
+                    .as_deref()
+                    .map(crate::catalog_holds::names_json),
+                reason: crate::catalog_holds::Reason::Server.key().to_string(),
+                new_permissions: "[]".to_string(),
+                held_at: utc_now(),
+                min_server: Some(crate::catalog_holds::version_text(needed)),
+            };
+            return hold_release(state, app, held, release).await;
+        }
+    }
     // The app's first release seeds the set the parent accepted (design 90 §5) and is never held:
     // it reaches no phone until the parent ticks the app, and its page shows what it asks for.
     let first = app.latest_release_tag.is_none();
@@ -2511,6 +2653,7 @@ async fn sync_release(
             reason: reason.key().to_string(),
             new_permissions: crate::catalog_holds::names_json(&new),
             held_at: utc_now(),
+            min_server: None,
         };
         return hold_release(state, app, held, release).await;
     }
@@ -2600,6 +2743,23 @@ pub(crate) struct HeldRelease {
     /// The sensitive names it newly asks for (JSON array).
     pub new_permissions: String,
     pub held_at: String,
+    /// Reason `server` (design 140, 0187): the server version it needs (`X.Y.Z`).
+    pub min_server: Option<String>,
+}
+
+/// [crate::catalog_holds::needs_server] for a release of `app` this server read (design 140).
+fn server_need(
+    state: &AppState,
+    app: &TrackedApp,
+    identity: &crate::apk::ApkIdentity,
+) -> crate::catalog_holds::ServerNeed {
+    crate::catalog_holds::needs_server(
+        crate::catalog_holds::ours(app, &our_repos(state)),
+        identity.min_server,
+        identity.version_code,
+        crate::catalog_holds::min_server_first_code(app),
+        state.server_version,
+    )
 }
 
 /// The app's held release, if any.
@@ -2609,7 +2769,7 @@ pub(crate) async fn held_release(
 ) -> Result<Option<HeldRelease>, sqlx::Error> {
     sqlx::query_as(
         "SELECT release_tag, asset_id, file_path, asset_name, asset_size, sha256, version_code, \
-         permissions, reason, new_permissions, held_at FROM tracked_app_held_releases \
+         permissions, reason, new_permissions, held_at, min_server FROM tracked_app_held_releases \
          WHERE tracked_app_id = ?",
     )
     .bind(id)
@@ -2671,7 +2831,7 @@ async fn hold_release(
     let written = sqlx::query(
         "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, \
          asset_name, asset_size, sha256, version_code, permissions, reason, new_permissions, \
-         held_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12 \
+         held_at, min_server) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?21 \
          WHERE EXISTS (SELECT 1 FROM tracked_apps WHERE id = ?1 AND source_type = ?13 \
          AND github_repo = ?14 AND fdroid_repo IS ?15 AND fdroid_package IS ?16 \
          AND asset_pattern IS ?17 AND release_tag_prefix IS ?18 AND include_prereleases = ?19 \
@@ -2681,7 +2841,8 @@ async fn hold_release(
          asset_name = excluded.asset_name, asset_size = excluded.asset_size, \
          sha256 = excluded.sha256, version_code = excluded.version_code, \
          permissions = excluded.permissions, reason = excluded.reason, \
-         new_permissions = excluded.new_permissions, held_at = excluded.held_at",
+         new_permissions = excluded.new_permissions, held_at = excluded.held_at, \
+         min_server = excluded.min_server",
     )
     .bind(app.id)
     .bind(&release.release_tag)
@@ -2705,6 +2866,7 @@ async fn hold_release(
     .bind(&app.release_tag_prefix)
     .bind(app.include_prereleases)
     .bind(&app.signer_sha256)
+    .bind(&release.min_server)
     .execute(&state.db)
     .await;
     match written {
@@ -2725,6 +2887,17 @@ async fn hold_release(
         remove_unless_served(state, app.id, &previous.file_path).await;
     }
     clear_waiting_if(state, app.id, &release.release_tag, release.asset_id).await;
+    // Design 140 QA M1: a release held for the server waits for no answer - the pages show it, no
+    // inbox row and no push.
+    if release.reason == crate::catalog_holds::Reason::Server.key() {
+        tracing::info!(
+            app_id = app.id,
+            release = %release.release_tag,
+            min_server = release.min_server.as_deref().unwrap_or_default(),
+            "release held until this server is updated"
+        );
+        return Ok(());
+    }
     let prefix = app.release_tag_prefix.as_deref();
     let to = version_of(&release.release_tag, prefix);
     let from = app
@@ -3357,14 +3530,15 @@ pub(crate) async fn avatars_by_id(state: &AppState, ids: &[i64]) -> HashMap<i64,
 }
 
 /// The catalog row of `app`, which `phones` phones have ticked; the launcher is on every one of
-/// the `set_up` phones; `held`: a release waits for the parent (design 90 §9.2). In `lang`.
+/// the `set_up` phones; `held`: a release waits for the parent (design 90 §9.2), `Some(true)` for
+/// the server (design 140 §4.3). In `lang`.
 #[allow(clippy::too_many_arguments)]
 fn catalog_row(
     state: &AppState,
     app: &TrackedApp,
     phones: i64,
     set_up: i64,
-    held: bool,
+    held: Option<bool>,
     logos: &HashMap<String, String>,
     lang: Lang,
 ) -> CatalogRow {
@@ -3386,8 +3560,13 @@ fn catalog_row(
     });
     let badge = if !app.enabled {
         Some((t(lang, "common.off").to_string(), "badge"))
-    } else if held {
-        Some((t(lang, "apps.list.waits").to_string(), "badge badge-warn"))
+    } else if let Some(for_server) = held {
+        let key = if for_server {
+            "apps.list.waits_server"
+        } else {
+            "apps.list.waits"
+        };
+        Some((t(lang, key).to_string(), "badge badge-warn"))
     } else if state.app_syncs.status(app.id).last_error.is_some() {
         Some((
             t(lang, "apps.list.update_failed").to_string(),
@@ -3534,14 +3713,16 @@ pub async fn list_apps(
             tracing::error!(%err, "can't read the apps' logos");
             HashMap::new()
         });
-    // Design 90 §9.2: the apps with a release waiting for the parent.
-    let held: std::collections::HashSet<i64> =
-        sqlx::query_scalar("SELECT tracked_app_id FROM tracked_app_held_releases")
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+    // Design 90 §9.2: the apps with a release waiting for the parent - or, design 140, for the
+    // server.
+    let held: HashMap<i64, bool> = sqlx::query_as::<_, (i64, bool)>(
+        "SELECT tracked_app_id, reason = 'server' FROM tracked_app_held_releases",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
     let mut apps: Vec<CatalogRow> = tracked
         .iter()
         .map(|app| {
@@ -3550,7 +3731,7 @@ pub async fn list_apps(
                 app,
                 counts.get(&app.id).copied().unwrap_or(0),
                 set_up,
-                held.contains(&app.id),
+                held.get(&app.id).copied(),
                 &logos,
                 lang,
             )
@@ -4369,7 +4550,35 @@ pub(crate) struct HeldView {
     /// Every permission it declares, as named.
     pub(crate) names: Vec<String>,
     pub(crate) keeps: String,
+    /// Held for the server (design 140 §4.3): the title is the orange line, `sub` the text behind
+    /// its (i); no Approve or Keep.
+    pub(crate) server: bool,
 }
+
+/// The orange line of a held release (design 140 §4.3), the one helper for every page: "2.0
+/// waits for you", or for a release of ours that needs a newer server "2.0 waits for server
+/// 0.96.0".
+pub(crate) fn held_line(lang: Lang, version: &str, min_server: Option<&str>) -> String {
+    match min_server {
+        Some(server) => t_params(
+            lang,
+            "apps.update.server_title",
+            &[("version", version), ("server", server)],
+        ),
+        None => t_params(lang, "apps.update.held_title", &[("version", version)]),
+    }
+}
+
+/// The server a held release waits for, when it is held for the server (reason `server`).
+pub(crate) fn held_for_server(held: &HeldRelease) -> Option<&str> {
+    (held.reason == crate::catalog_holds::Reason::Server.key())
+        .then_some(held.min_server.as_deref())
+        .flatten()
+}
+
+/// A held release's row as the version lines read it: the app id or name, the tag, the app's tag
+/// prefix, and (design 140) the reason or label and the server it waits for.
+type HeldRow<K> = (K, String, Option<String>, String, Option<String>);
 
 /// The release that waits: its row and the sub-line.
 struct WaitingView {
@@ -4425,6 +4634,40 @@ pub(crate) fn held_view(app: &TrackedApp, held: &HeldRelease, lang: Lang) -> Hel
         .map(|tag| version_of(tag, prefix))
         .unwrap_or_default();
     let version = version_of(&held.release_tag, prefix);
+    if let Some(server) = held_for_server(held) {
+        let sub = if app.latest_release_tag.is_some() {
+            t_params(
+                lang,
+                "apps.update.server_info",
+                &[
+                    ("served", &served),
+                    ("server", server),
+                    ("version", &version),
+                ],
+            )
+        } else {
+            t_params(
+                lang,
+                "apps.update.server_info_first",
+                &[("server", server), ("version", &version)],
+            )
+        };
+        return HeldView {
+            release: ReleaseView {
+                tag: held.release_tag.clone(),
+                asset_id: held.asset_id,
+                title: held_line(lang, &version, Some(server)),
+            },
+            sub,
+            keep: String::new(),
+            about: t(lang, "common.more_info").to_string(),
+            new_lines: Vec::new(),
+            had: None,
+            names: Vec::new(),
+            keeps: String::new(),
+            server: true,
+        };
+    }
     let new = crate::catalog_holds::read_names(Some(&held.new_permissions)).unwrap_or_default();
     let new_groups = crate::catalog_holds::groups(&new);
     let declared = crate::catalog_holds::read_names(held.permissions.as_deref());
@@ -4483,6 +4726,7 @@ pub(crate) fn held_view(app: &TrackedApp, held: &HeldRelease, lang: Lang) -> Hel
         }),
         names: declared.unwrap_or_default(),
         keeps: t_params(lang, "apps.update.keeps_until", &[("version", &served)]),
+        server: false,
     }
 }
 
@@ -4502,18 +4746,60 @@ pub(crate) async fn held_for_page(
     Ok(app.map(|app| held_view(&app, &held, lang)))
 }
 
-/// Every held release's version, by catalog app (design 127 §2.2: the list's orange "7.25.0 venter på deg").
-pub(crate) async fn held_versions(state: &AppState) -> Result<HashMap<i64, String>, sqlx::Error> {
-    let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
-        "SELECT h.tracked_app_id, h.release_tag, t.release_tag_prefix \
+/// Every held release's version, and the server it waits for when held for the server (design
+/// 140), by catalog app (design 127 §2.2: the list's orange "7.25.0 venter på deg", [held_line]).
+pub(crate) async fn held_versions(
+    state: &AppState,
+) -> Result<HashMap<i64, (String, Option<String>)>, sqlx::Error> {
+    let rows: Vec<HeldRow<i64>> = sqlx::query_as(
+        "SELECT h.tracked_app_id, h.release_tag, t.release_tag_prefix, h.reason, h.min_server \
          FROM tracked_app_held_releases h JOIN tracked_apps t ON t.id = h.tracked_app_id",
     )
     .fetch_all(&state.db)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, tag, prefix)| (id, version_of(&tag, prefix.as_deref())))
+        .map(|(id, tag, prefix, reason, min_server)| {
+            let server = (reason == crate::catalog_holds::Reason::Server.key())
+                .then_some(min_server)
+                .flatten();
+            (id, (version_of(&tag, prefix.as_deref()), server))
+        })
         .collect())
+}
+
+/// Software Updates' orange lines (design 140 §4.3): "{app} {version} waits for server {server}"
+/// for every release of ours held for the server, by the app's name; a failed read shows none.
+pub(crate) async fn server_hold_lines(state: &AppState, lang: Lang) -> Vec<String> {
+    let rows: Vec<HeldRow<String>> = match sqlx::query_as(
+        "SELECT t.name, h.release_tag, t.release_tag_prefix, COALESCE(t.display_label, ''), \
+             h.min_server \
+             FROM tracked_app_held_releases h JOIN tracked_apps t ON t.id = h.tracked_app_id \
+             WHERE h.reason = 'server' ORDER BY t.is_launcher DESC, t.name",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(%err, "can't read the releases held for the server");
+            return Vec::new();
+        }
+    };
+    rows.into_iter()
+        .map(|(name, tag, prefix, label, server)| {
+            let app = if label.trim().is_empty() { name } else { label };
+            t_params(
+                lang,
+                "apps.update.server_line",
+                &[
+                    ("app", &app),
+                    ("version", &version_of(&tag, prefix.as_deref())),
+                    ("server", server.as_deref().unwrap_or_default()),
+                ],
+            )
+        })
+        .collect()
 }
 
 /// The `#update` group's content; `None` when nothing is held, waiting or declined and no answer
@@ -4528,7 +4814,14 @@ fn update_group(
     now: chrono::DateTime<chrono::Utc>,
     lang: Lang,
 ) -> Option<UpdateGroup> {
-    let wait = wait?;
+    // Ours have no wait and no parent hold (design 90), only a hold for the server (design 140).
+    let wait = match wait {
+        Some(wait) => wait,
+        None => {
+            held.filter(|held| held_for_server(held).is_some())?;
+            0
+        }
+    };
     let prefix = app.release_tag_prefix.as_deref();
     let served = app
         .latest_release_tag
@@ -4899,6 +5192,30 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::failed(err, lang))),
+            lang,
+        )
+        .await;
+    }
+    // Design 140 §4.2 (QA M3): a file of ours that needs a newer server, or whose need can't be
+    // read, is refused at once - the upload is the parent's own act, so it is told, never parked.
+    let refused = match server_need(&state, &app, &identity) {
+        crate::catalog_holds::ServerNeed::Serve => None,
+        crate::catalog_holds::ServerNeed::Hold(needed) => Some(t_params(
+            lang,
+            "apps.app.upload_needs_server",
+            &[("server", &crate::catalog_holds::version_text(needed))],
+        )),
+        crate::catalog_holds::ServerNeed::Refuse => {
+            Some(t(lang, "apps.app.upload_no_min_server").to_string())
+        }
+    };
+    if let Some(title) = refused {
+        tokio::fs::remove_file(&file_path).await.ok();
+        return upload_answer(
+            &state,
+            id,
+            Flash::title(&title),
+            StatusCode::BAD_REQUEST,
             lang,
         )
         .await;
@@ -5895,6 +6212,10 @@ pub async fn approve_held(
         Ok(None) => return held_back(&state, id, "stale", &form).await,
         Err(err) => return page_read_failed(id, err, lang),
     };
+    // Design 140 §4.2: a release held for the server waits for no answer.
+    if held.reason == crate::catalog_holds::Reason::Server.key() {
+        return held_back(&state, id, "stale", &form).await;
+    }
     // Not ahead of the served release any more (an upload meanwhile): never a step back (QA L2);
     // Keep still answers it.
     if app.latest_release_tag.is_some() && !release_ahead(&app, &held.release_tag, held.asset_id) {
@@ -6067,6 +6388,10 @@ pub async fn decline_held(
         Ok(None) => return held_back(&state, id, "stale", &form).await,
         Err(err) => return page_read_failed(id, err, lang),
     };
+    // Design 140 §4.2: a release held for the server waits for no answer.
+    if held.reason == crate::catalog_holds::Reason::Server.key() {
+        return held_back(&state, id, "stale", &form).await;
+    }
     let declined = sqlx::query(
         "UPDATE tracked_apps SET declined_release_tag = ?, declined_release_asset_id = ? \
          WHERE id = ?",
@@ -7387,6 +7712,7 @@ mod tests {
             permissions: None,
             split_target: None,
             shared_user_id: false,
+            min_server: crate::apk::MinServer::Absent,
         };
         let refused = check_pins(
             &other_row,
@@ -9460,5 +9786,295 @@ mod tests {
         for (problem, refused, class) in rows {
             assert_eq!(class_of(problem, refused), class, "{problem:?}");
         }
+    }
+
+    /// Design 140: a loopback server of APKs made from `testdata/apk/<base>.apk` with
+    /// `assets/vibb/min_server` holding each text (`None`: the base as it is), and the assets that
+    /// name them.
+    async fn min_server_files(
+        files: &[(&str, &str, Option<&str>)],
+    ) -> HashMap<String, ReleaseAsset> {
+        let mut routes = axum::Router::new();
+        let mut made = Vec::new();
+        for (name, base, text) in files {
+            let base = std::fs::read(format!("testdata/apk/{base}.apk")).unwrap();
+            let bytes = crate::apk::tests::with_min_server(&base, text.map(str::as_bytes));
+            made.push((name.to_string(), bytes.len() as u64));
+            routes = routes.route(
+                &format!("/{name}.apk"),
+                axum::routing::get(move || {
+                    let bytes = bytes.clone();
+                    async move { bytes }
+                }),
+            );
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+        made.into_iter()
+            .enumerate()
+            .map(|(i, (name, size))| {
+                let asset = ReleaseAsset {
+                    id: 100 + i as i64,
+                    name: format!("{name}.apk"),
+                    browser_download_url: format!("{base}/{name}.apk"),
+                    size,
+                    sha256: None,
+                    index_signers: None,
+                    updated_at: None,
+                };
+                (name, asset)
+            })
+            .collect()
+    }
+
+    /// This server's version as text, and the next patch after it (a release that needs more).
+    fn own_and_next(state: &AppState) -> (String, String) {
+        let (x, y, z) = state.server_version;
+        (format!("{x}.{y}.{z}"), format!("{x}.{y}.{}", z + 1))
+    }
+
+    /// Design 140 §4.2, §9, the launcher's row and the music app's: a release that needs a newer
+    /// server is held - a first release too, nothing served - with no nudge, no inbox row (no
+    /// push), not listed to the phones; one that needs this server is served and supersedes it; a
+    /// newer held one replaces the held one; an unreadable value is refused, nothing stored or
+    /// held, and not downloaded again every hour.
+    #[tokio::test]
+    async fn a_release_of_ours_that_needs_a_newer_server_is_held() {
+        let mut config = crate::config::ForkConfig::for_tests();
+        config.launcher_signature_checksum = Some(KEY4_CHECKSUM.to_string());
+        let app = crate::tests::TestApp::with_config(config).await;
+        let (own, next) = own_and_next(&app.state);
+        let further = {
+            let (x, y, z) = app.state.server_version;
+            format!("{x}.{y}.{}", z + 2)
+        };
+        let files = min_server_files(&[
+            ("l-next", "launcher-key4", Some(&format!("{next}\n"))),
+            ("l-own", "launcher-key4", Some(&own)),
+            ("l-further", "launcher-key4", Some(&further)),
+            ("l-bad", "launcher-key4", Some("00.1.0\n")),
+            ("m-next", "music-key4", Some(&next)),
+            ("m-own", "music-key4", Some(&own)),
+        ])
+        .await;
+        let (phone, _) = app.enrolled_device("Anna").await;
+        let launcher: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher, \
+             release_tag_prefix) VALUES ('Vibb One', 'me.vibb.launcher', 'o/r', 1, 'launcher-v') \
+             RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let events = || async {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM parent_events")
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+        };
+        let mut nudges = app.state.command_notify.subscribe();
+        let sync = |id: i64, tag: &'static str, name: &'static str| {
+            let app = &app;
+            let asset = &files[name];
+            async move { sync_release(&app.state, &row_of(app, id).await, tag, asset, false).await }
+        };
+
+        // A first release that needs the next server: held, nothing served.
+        sync(launcher, "launcher-v1.0.0", "l-next").await.unwrap();
+        let held = held_release(&app.state, launcher).await.unwrap().unwrap();
+        assert_eq!(held.reason, "server");
+        assert_eq!(held.min_server.as_deref(), Some(next.as_str()));
+        assert_eq!(row_of(&app, launcher).await.latest_release_tag, None);
+        assert!(nudges.try_recv().is_err(), "no nudge");
+        assert_eq!(events().await, 0, "no inbox row, no push");
+        // The same release again: nothing to do, never downloaded again.
+        sync(launcher, "launcher-v1.0.0", "l-next").await.unwrap();
+
+        // One that needs this server: served, and it supersedes the held one behind it.
+        sync(launcher, "launcher-v1.0.1", "l-own").await.unwrap();
+        assert_eq!(
+            row_of(&app, launcher).await.latest_release_tag.as_deref(),
+            Some("launcher-v1.0.1")
+        );
+        assert!(held_release(&app.state, launcher).await.unwrap().is_none());
+        assert_eq!(nudges.try_recv().ok(), Some(phone));
+
+        // A later one that needs more: held, the phones stay on 1.0.1 and aren't nudged.
+        sync(launcher, "launcher-v1.0.2", "l-next").await.unwrap();
+        let held = held_release(&app.state, launcher).await.unwrap().unwrap();
+        assert_eq!(held.release_tag, "launcher-v1.0.2");
+        assert!(nudges.try_recv().is_err());
+        assert_eq!(
+            row_of(&app, launcher).await.latest_release_tag.as_deref(),
+            Some("launcher-v1.0.1")
+        );
+        assert_eq!(events().await, 0);
+        // A newer one held replaces it, its file going.
+        sync(launcher, "launcher-v1.0.3", "l-further")
+            .await
+            .unwrap();
+        let newer = held_release(&app.state, launcher).await.unwrap().unwrap();
+        assert_eq!(newer.release_tag, "launcher-v1.0.3");
+        assert_eq!(newer.min_server.as_deref(), Some(further.as_str()));
+        assert!(!std::path::Path::new(&held.file_path).exists());
+        // An unreadable value: refused as unreadable, nothing stored or held, kept refused.
+        let refused = sync(launcher, "launcher-v1.0.4", "l-bad")
+            .await
+            .unwrap_err();
+        assert_eq!(refused.problem, SyncProblem::Unreadable, "{refused}");
+        assert_eq!(
+            held_release(&app.state, launcher)
+                .await
+                .unwrap()
+                .unwrap()
+                .release_tag,
+            "launcher-v1.0.3"
+        );
+        let again = sync(launcher, "launcher-v1.0.4", "l-bad")
+            .await
+            .unwrap_err();
+        assert!(again.detail.contains("not downloaded again"), "{again}");
+        assert_eq!(events().await, 0);
+
+        // The music app's row: the same.
+        let music: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, release_tag_prefix) \
+             VALUES ('Vibb music', 'me.vibb.music', ?, 'music-v') RETURNING id",
+        )
+        .bind(&app.state.config.server_release_repo)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert!(crate::catalog_holds::ours(
+            &row_of(&app, music).await,
+            &our_repos(&app.state)
+        ));
+        sync(music, "music-v1.0.0", "m-own").await.unwrap();
+        sync(music, "music-v1.0.1", "m-next").await.unwrap();
+        assert_eq!(
+            row_of(&app, music).await.latest_release_tag.as_deref(),
+            Some("music-v1.0.0")
+        );
+        let held = held_release(&app.state, music).await.unwrap().unwrap();
+        assert_eq!(
+            (held.reason.as_str(), held.min_server.as_deref()),
+            ("server", Some(next.as_str()))
+        );
+        assert_eq!(events().await, 0);
+    }
+
+    /// Design 140 §4.2: at start, a release held for the server goes out once this server is new
+    /// enough - served, nudged, the Security Log's line, no inbox row; one whose file names more
+    /// than its row stays held; one no longer ahead of the served release is dropped.
+    #[tokio::test]
+    async fn a_release_held_for_the_server_goes_out_at_the_start_of_a_newer_one() {
+        let mut config = crate::config::ForkConfig::for_tests();
+        config.launcher_signature_checksum = Some(KEY4_CHECKSUM.to_string());
+        let app = crate::tests::TestApp::with_config(config).await;
+        let (own, next) = own_and_next(&app.state);
+        let files = min_server_files(&[
+            ("l-own", "launcher-key4", Some(&own)),
+            ("l-next", "launcher-key4", Some(&next)),
+        ])
+        .await;
+        let (phone, _) = app.enrolled_device("Anna").await;
+        let launcher: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher, \
+             release_tag_prefix) VALUES ('Vibb One', 'me.vibb.launcher', 'o/r', 1, 'launcher-v') \
+             RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let sync = |tag: &'static str, name: &'static str| {
+            let app = &app;
+            let asset = &files[name];
+            async move {
+                sync_release(&app.state, &row_of(app, launcher).await, tag, asset, false)
+                    .await
+                    .unwrap()
+            }
+        };
+        sync("launcher-v1.0.0", "l-own").await;
+        let served_file = row_of(&app, launcher)
+            .await
+            .latest_release_file_path
+            .unwrap();
+        sync("launcher-v1.0.1", "l-next").await;
+        let held = held_release(&app.state, launcher).await.unwrap().unwrap();
+
+        // The same server again: it stays held.
+        release_server_holds(&app.state).await;
+        assert!(held_release(&app.state, launcher).await.unwrap().is_some());
+
+        // The row says more than the file (or the other way round): it stays held.
+        let mut newer = app.state.clone();
+        newer.server_version = {
+            let (x, y, z) = app.state.server_version;
+            (x, y, z + 1)
+        };
+        sqlx::query("UPDATE tracked_app_held_releases SET min_server = ? WHERE tracked_app_id = ?")
+            .bind(&own)
+            .bind(launcher)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        release_server_holds(&app.state).await;
+        assert!(
+            held_release(&app.state, launcher).await.unwrap().is_some(),
+            "the file still names the next server"
+        );
+        sqlx::query("UPDATE tracked_app_held_releases SET min_server = ? WHERE tracked_app_id = ?")
+            .bind(&next)
+            .bind(launcher)
+            .execute(&app.db)
+            .await
+            .unwrap();
+
+        // A server that is new enough: served, the old file gone, the phones nudged, logged.
+        let mut nudges = app.state.command_notify.subscribe();
+        release_server_holds(&newer).await;
+        let row = row_of(&app, launcher).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("launcher-v1.0.1"));
+        assert_eq!(
+            row.latest_release_file_path.as_deref(),
+            Some(held.file_path.as_str())
+        );
+        assert!(held_release(&app.state, launcher).await.unwrap().is_none());
+        assert!(!std::path::Path::new(&served_file).exists());
+        assert_eq!(nudges.try_recv().ok(), Some(phone));
+        let logged: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT params FROM security_events WHERE event_type = 'catalog_release_server_ready'",
+        )
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(logged.len(), 1);
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parent_events")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(events, 0, "no inbox row");
+
+        // One no longer ahead of the served release (an upload overtook it): dropped, nothing
+        // served.
+        sync("launcher-v1.0.2", "l-next").await;
+        let behind = held_release(&app.state, launcher).await.unwrap().unwrap();
+        sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = 'launcher-v1.0.3', \
+             latest_release_asset_id = 999 WHERE id = ?",
+        )
+        .bind(launcher)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        release_server_holds(&newer).await;
+        assert!(held_release(&app.state, launcher).await.unwrap().is_none());
+        assert!(!std::path::Path::new(&behind.file_path).exists());
+        assert_eq!(
+            row_of(&app, launcher).await.latest_release_tag.as_deref(),
+            Some("launcher-v1.0.3")
+        );
     }
 }
