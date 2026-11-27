@@ -382,10 +382,11 @@ object ZoneWatch {
         null
     }
 
-    /** [MotionGate]'s [StillOrigin], kept at every change (fires and arms are rare). */
+    /** [MotionGate]'s [StillOrigin], kept at every change - written in the background (`apply`, code QA L3): it runs under
+     * the gate's monitor, on the sensor's main thread for a fire. */
     fun saveStillOrigin(context: Context, origin: StillOrigin) {
         try {
-            prefs(context).edit().putString(KEY_STILL_ORIGIN, ServerJson.encodeToString(StillOrigin.serializer(), origin)).commit()
+            prefs(context).edit().putString(KEY_STILL_ORIGIN, ServerJson.encodeToString(StillOrigin.serializer(), origin)).apply()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't keep the still origin: ${e.javaClass.simpleName}")
         }
@@ -522,7 +523,7 @@ object ZoneWatch {
                 wifiDisagreed = prefs(app).getLong(KEY_WIFI_DISAGREED, 0L),
                 still = still,
                 // The owner's report (2026-11-27): since when, beside `still` only.
-                stillSinceMs = MotionGate.reportedStillSince(app, still),
+                stillSinceAgeMs = MotionGate.reportedStillSinceAge(app, still),
                 // Design 138 D3: the network for the parent's Confirm, and the struck confirmations the policy still has.
                 wifi = wifi,
                 wifiStruck = com.kidslauncher.mdm.places.WifiPlaces.struckForReport(app),
@@ -551,6 +552,15 @@ fun Location.toQueued(provider: String? = this.provider): QueuedFix = QueuedFix(
         null
     },
 )
+
+/** This fix's time on the trusted clock ([StillOrigin]'s base, code QA M3): now minus its age by elapsed realtime; now
+ * for a fix without one. */
+fun Location.trustedTimeMs(): Long {
+    val now = com.kidslauncher.mdm.server.TrustedClock.nowMs()
+    val nanos = elapsedRealtimeNanos
+    if (nanos <= 0) return now
+    return now - (SystemClock.elapsedRealtime() - nanos / 1_000_000L).coerceAtLeast(0)
+}
 
 /** Design 131: the extra a Wi-Fi fix carries its check in (`gnss`, `link`) from the attempt to the report. */
 const val FIX_CHECK_EXTRA = "vibb_check"

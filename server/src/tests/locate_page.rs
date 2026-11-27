@@ -1974,6 +1974,75 @@ async fn the_bubble_says_fresh_or_old() {
     );
 }
 
+/// The phone's only fix, captured at `captured`, re-sent at `resent`, still since `since` (RFC 3339).
+async fn still_fix(app: &TestApp, device: i64, captured: &str, resent: &str, since: Option<&str>) {
+    sqlx::query("DELETE FROM device_locations WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at, \
+         resent_at, still_since) VALUES (?, 59.9139, 10.7522, 25, ?, ?, ?)",
+    )
+    .bind(device)
+    .bind(captured)
+    .bind(resent)
+    .bind(since)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// The owner's report (2026-11-27): a stored `still_since` earlier than the fix is the still
+/// line's time in both Locate views (`locate::Seen`) - the same words as a fix of that time
+/// re-sent; without it, the fix's own time.
+#[tokio::test]
+async fn hasnt_moved_since_shows_when_the_phone_went_still_in_both_views() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = app.enrolled_device("Emma").await;
+    set_location(&app, emma, "interval", 15).await;
+    let now = chrono::Utc::now();
+    let ago = |m: i64| crate::zones::instant(now - chrono::Duration::minutes(m));
+    let (five_h, three_h, resent) = (ago(5 * 60), ago(3 * 60), ago(2));
+    let page_line = |html: &str| {
+        html.split(" data-fix-still=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("no still line: {html}"))
+            .to_string()
+    };
+    let bubble_line = |row: &serde_json::Value| {
+        row["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|line| line.as_str())
+            .find(|line| line.starts_with("Hasn't moved since"))
+            .unwrap_or_else(|| panic!("no still line: {row}"))
+            .to_string()
+    };
+    let both = || async {
+        (
+            page_line(&locate_page(&app, &cookie, "").await),
+            bubble_line(&phone_row(&app, &cookie, "", emma).await),
+        )
+    };
+    // The words for a fix five hours old, re-sent now.
+    still_fix(&app, emma, &five_h, &resent, None).await;
+    let went_still = both().await;
+    // A fix three hours old: its own time without a stored value...
+    still_fix(&app, emma, &three_h, &resent, None).await;
+    assert_ne!(both().await, went_still);
+    // ... and five hours ago, when the phone said it went still.
+    still_fix(&app, emma, &three_h, &resent, Some(&five_h)).await;
+    assert_eq!(both().await, went_still);
+    // Never later than the fix.
+    still_fix(&app, emma, &five_h, &resent, Some(&three_h)).await;
+    assert_eq!(both().await, went_still);
+}
+
 /// Design 88 revision 2 (the user, 2026-11-12): no box under the map - the age, the accuracy and
 /// the zone are the marker's; Update Location is the rows' first, its wait in that row, its
 /// redirect on that row; the "Location is off" warning above the rows, and without a position the

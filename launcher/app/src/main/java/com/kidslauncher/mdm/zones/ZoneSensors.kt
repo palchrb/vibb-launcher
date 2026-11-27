@@ -116,7 +116,7 @@ object PassiveFixes {
  *   last fresh fix) and backs off after a failed try while it hasn't (`QUIET`). A new process, a
  *   refused registration, a stopped anchor and Off count as moved.
  * - **Since when it is still** ([StillOrigin], kept in `ZoneWatch`'s prefs): every fire, arm, mark and disarm moves it,
- *   and our fresh fixes after [afterTry] ([afterFreshFix]); the report's `still_since_ms` ([reportedStillSince]).
+ *   and our fresh fixes after [afterTry] ([afterFreshFix]); the report's `still_since_age_ms` ([reportedStillSinceAge]).
  * - **The moving series**: while the policy has zones ([watch] with `zones`) the trigger is kept
  *   armed - re-armed at every fire - and each fire starts or feeds [ZoneSeries]. Without zones a
  *   fire only marks the flags; the next try arms it again.
@@ -148,7 +148,7 @@ object MotionGate {
     private var markedBeforeLoad: Long? = null
 
     private fun origin(context: Context): StillOrigin = stillOrigin ?: run {
-        val kept = (ZoneWatch.stillOrigin(context) ?: StillOrigin()).afterRestart()
+        val kept = (ZoneWatch.stillOrigin(context) ?: StillOrigin()).afterRestart(TrustedClock.nowMs())
         val loaded = markedBeforeLoad?.let { kept.marked(it) } ?: kept
         markedBeforeLoad = null
         stillOrigin = loaded
@@ -163,16 +163,22 @@ object MotionGate {
         ZoneWatch.saveStillOrigin(context, after)
     }
 
-    /** `zone_watch.still_since_ms` for a report that says [still] ([StillOrigin.reported]). */
+    /** `zone_watch.still_since_age_ms` for a report that says [still] ([StillOrigin.reportedAgeMs]); every report marks
+     * the origin alive ([StillOrigin.alive]), what a new process measures its gap from. */
     @Synchronized
-    fun reportedStillSince(context: Context, still: Boolean): Long? = if (still) origin(context.applicationContext).reported(true) else null
+    fun reportedStillSinceAge(context: Context, still: Boolean): Long? {
+        val now = TrustedClock.nowMs()
+        moveOrigin(context.applicationContext) { it.alive(now) }
+        return origin(context.applicationContext).reportedAgeMs(still, now)
+    }
 
-    /** A genuinely fresh fix of ours at [fixMs], after [afterTry]: [moving], and where it lies against the last fresh fix
-     * ([placeAgainst]); with a fire during the attempt (the count moved from [firesAtStart]) the fire's time stands. */
+    /** A genuinely fresh fix of ours at [fixMs] (trusted clock, `trustedTimeMs`), after [afterTry]: [moving], where it lies
+     * against the last fresh fix ([placeAgainst]) and whether the gate had no trusted sensor ([noSensor]); with a fire
+     * during the attempt (the count moved from [firesAtStart]) the fire's time stands. */
     @Synchronized
-    fun afterFreshFix(context: Context, firesAtStart: Int, fixMs: Long, moving: Boolean, place: Place, stillAtTry: Boolean) {
+    fun afterFreshFix(context: Context, firesAtStart: Int, fixMs: Long, moving: Boolean, place: Place, noSensor: Boolean) {
         if (flags.fires != firesAtStart) return
-        moveOrigin(context.applicationContext) { it.afterFreshFix(fixMs, moving, place, stillAtTry) }
+        moveOrigin(context.applicationContext) { it.afterFreshFix(fixMs, moving, place, noSensor) }
     }
 
     private fun sensor(context: Context): Sensor? =

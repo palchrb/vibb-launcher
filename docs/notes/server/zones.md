@@ -147,14 +147,19 @@ counts.
   hasn't moved since; `intake` then stamps that fix's row `device_locations.resent_at` (0093) with now, and "Here now"
   (`freshness_inputs`, `DeviceLocation::seen_at` on the Locate page) counts from the later of `captured_at` and it -
   the fix's own time and the trail are unchanged, a re-send without `still` stamps nothing. Beside `still`,
-  `zone_watch.still_since_ms` (the owner's report, 2026-11-27; `zones::report_still_since`: epoch ms, at most
-  `MAX_FIX_AHEAD_MINUTES` past the receipt - then read as it -, not before `devices.enrolled_at`; anything else is no
-  value, never a refused report) says when the phone went still; `mark_resent` stamps it on the same row
-  (`device_locations.still_since`, migration 0185; NULL for a re-send without it), and Locate's "Hasn't moved since"
-  is the earlier of it and the fix's time (`locate::still_since`, pwa.md "Locate's Alle view"). Tests:
-  `zones::tests::still_since_is_taken_only_beside_still_and_in_range`,
-  `zone_watch::a_still_re_send_stores_since_when_the_phone_is_still`, the contract's value in
-  `a_launcher_report_raises_the_arrival`, `locate::tests::hasnt_moved_since_is_when_the_phone_went_still`.
+  `zone_watch.still_since_age_ms` (the owner's report, 2026-11-27; `zones::report_still_since`: how long ago the phone
+  went still, read as the receipt minus it like a fix's `age_ms` - one clock, the server's (code QA M3) -, 0 up to
+  `MAX_FIX_AGE_MS`, not before `devices.enrolled_at`; anything else is no value, never a refused report; migration
+  0185's header still names it by its first name, `still_since_ms`) says when the phone went still; `mark_resent`
+  stamps it on the same row (`device_locations.still_since`, migration 0185; NULL for a re-send without it), never
+  earlier than the newest stored fix of the phone after it and before the re-sent one that lies apart from it -
+  further than both accuracies and 200 m, an accuracy known on both (`clamp_still_since`, code QA M4) - and Locate's
+  "Hasn't moved since" is the earlier of it and the fix's time (`locate::still_since`, pwa.md "Locate's Alle view").
+  Tests: `zones::tests::still_since_is_taken_only_beside_still_and_in_range`,
+  `zone_watch::a_still_re_send_stores_since_when_the_phone_is_still` (with the clamp), the contract's value in
+  `a_launcher_report_raises_the_arrival` (clamped to its own fix 1 km away),
+  `locate::tests::hasnt_moved_since_is_when_the_phone_went_still`,
+  `locate_page::hasnt_moved_since_shows_when_the_phone_went_still_in_both_views`.
 - **The intake** (code QA N-4; `zones::intake(state, device, fixes, resent)`): every checked fix of the report - the extras,
   then the report's own - is stored first (`store_fix`, each on its own, the dedupe as step 1), then the zones are
   judged **once** (`judge`, one `BEGIN IMMEDIATE`); so a pair inside one report confirms at its first fix whatever the

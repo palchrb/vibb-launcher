@@ -2325,7 +2325,7 @@ pointer here.
   age and "Hasn't moved since 11:40" (`data-fix-still`); its switcher gets "All" first with two phones or more.
   "Hasn't moved since" (both views, `locate::still_since`, the owner's report of 2026-11-27) shows only while a still
   re-send is newer than the fix, at the earlier of the fix's own time and when the phone said it went still
-  (`device_locations.still_since`, 0185, from the report's `zone_watch.still_since_ms`); the fix's time when it didn't
+  (`device_locations.still_since`, 0185, from the report's `zone_watch.still_since_age_ms`); the fix's time when it didn't
   say - so a fresh fix during the stillness no longer moves it.
 - **`GET /devices/locate/phones.json`** (`locate::phones_json`, no-store: `admin_auth::no_store_path`'s arm
   `["devices", "locate", "phones.json"]`): a row per phone in the page's order - `id`, `name`, `initial`, `tone`,
