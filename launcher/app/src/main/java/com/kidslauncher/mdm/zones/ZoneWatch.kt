@@ -202,15 +202,22 @@ object ZoneWatch {
         currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == "interval" }?.zones.orEmpty()
 
     /** A fence broadcast ([ZoneAlertReceiver]): a crossing asks for a fix now and another in
-     * [CONFIRM_DELAY_MS]; an id the current policy doesn't carry and the registration's echo are
-     * dropped (§4.2). */
+     * [CONFIRM_DELAY_MS]; an id the current policy doesn't carry and the registration's echo - early, or late to the
+     * side the phone already knows - are dropped (§4.2). */
     fun onFence(context: Context, zoneId: Long, entering: Boolean) {
         val app = context.applicationContext
         val zones = watchedZones()
         // No record = the registration is under way or gone: an "entering" is its echo (Q-7).
-        val since = fenceRecord(app)?.let { SystemClock.elapsedRealtime() - it.registeredAtElapsed }
-        val verdict = fenceVerdict(zoneId, zones, entering, since)
-        Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering): $verdict")
+        val record = markFenceSeen(app, zoneId)
+        val now = SystemClock.elapsedRealtime()
+        val since = record?.let { now - it.registeredAtElapsed }
+        val first = record != null && zoneId in record.ids && zoneId !in record.seen
+        val gate = MotionGate.snapshot(app)
+        val still = record != null &&
+            stillSinceRegistration(gate.motion, record.registeredAtElapsed, android.os.Process.getStartElapsedRealtime(), now, gate.fires, gate.movedAtElapsedMs)
+        val (reported, kept) = LocateCommands.reportedAndKept()
+        val verdict = fenceVerdict(zoneId, zones, entering, since, reported, kept, first, still)
+        Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering, first=$first, still=$still): $verdict")
         if (verdict != FenceVerdict.CROSSING) return
         // The fence says the phone moved, whatever the sensor saw (F-3); and a crossing starts the
         // moving series at once, cooldown or not (F-2).
@@ -455,11 +462,26 @@ object ZoneWatch {
         null
     }
 
+    /** Saved; a record of the same registration (its stamp) keeps the zones already [FenceRecord.seen] - a broadcast
+     * between the registration's first and last write ([markFenceSeen]) isn't lost. */
     @Synchronized
     internal fun saveFenceRecord(context: Context, record: FenceRecord?) {
         val edit = prefs(context).edit()
-        if (record == null) edit.remove(KEY_FENCES) else edit.putString(KEY_FENCES, ServerJson.encodeToString(FenceRecord.serializer(), record))
+        val merged = record?.let { r ->
+            val seen = fenceRecord(context)?.takeIf { it.registeredAtElapsed == r.registeredAtElapsed }?.seen.orEmpty()
+            r.copy(seen = (seen + r.seen).distinct().filter { it in r.ids })
+        }
+        if (merged == null) edit.remove(KEY_FENCES) else edit.putString(KEY_FENCES, ServerJson.encodeToString(FenceRecord.serializer(), merged))
         if (!edit.commit()) Log.w(LOG_TAG, "Couldn't save the fence record")
+    }
+
+    /** A fence broadcast for [zoneId]: the record as it was before (`null`: none), and the zone marked
+     * [FenceRecord.seen] - its next broadcast is no registration's first. */
+    @Synchronized
+    internal fun markFenceSeen(context: Context, zoneId: Long): FenceRecord? {
+        val record = fenceRecord(context) ?: return null
+        if (zoneId in record.ids && zoneId !in record.seen) saveFenceRecord(context, record.copy(seen = record.seen + zoneId))
+        return record
     }
 
     // --- The queue (§4.5) ---

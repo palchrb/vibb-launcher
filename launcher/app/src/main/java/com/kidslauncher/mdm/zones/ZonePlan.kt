@@ -42,9 +42,10 @@ const val STILL_SKIP_MAX_MS = 4 * 60 * 60_000L
 const val STILL_CEILING_MS = 24 * 60 * 60_000L
 
 /** The fences we registered (CE prefs `zone_fences`): the policy's zones as registered, their
- * ids, and when (elapsed realtime) - the echo window counts from there. */
+ * ids, and when (elapsed realtime) - the echo window counts from there. [seen]: the zones whose fence has sent a
+ * broadcast since this registration (the late echo, [fenceVerdict]). */
 @Serializable
-data class FenceRecord(val fingerprint: String, val ids: List<Long>, val registeredAtElapsed: Long)
+data class FenceRecord(val fingerprint: String, val ids: List<Long>, val registeredAtElapsed: Long, val seen: List<Long> = emptyList())
 
 /** What to do with the platform's fences: remove [remove] (our earlier ids), then add [add]. */
 data class FencePlan(val remove: List<Long>, val add: List<PolicyZone>) {
@@ -75,14 +76,64 @@ fun zoneFencePlan(zones: List<PolicyZone>, watching: Boolean, stored: FenceRecor
  * "entering" within [FENCE_ECHO_WINDOW_MS] of the registration ([sinceRegisteredMs], elapsed). The
  * record (and its stamp) is written before the first add (qa-design-64-step2-code Q-7), so no
  * record (`null`) or a stamp from before a reboot (negative) is within the window too: an
- * "entering" then is the registration's own echo. */
+ * "entering" then is the registration's own echo.
+ *
+ * A late echo (the owner's Jelly, 2026-11-27): AOSP's `GeofenceManager` judges a new fence at once only with a fix
+ * under 5 min old (`MAX_LOCATION_AGE_MS`; removing our last fence also drops its own), else it stays unknown until
+ * the next fused fix - on a phone lying still that was the 4-h cap fix, and its unknown -> inside "entering" came
+ * 4 h 19 min after the registration, taken as a crossing. Unknown -> outside sends nothing. So:
+ * - the phone's newest sure side ([kept], else [reported]; [sureSide]) on the side the fence left is always a crossing,
+ *   the window included;
+ * - a transition to the side the reported fix ([reported], the side the server has) surely has - an inside by a Wi-Fi
+ *   fix alone ([fenceSide]) not counted - with no newer kept fix surely on the other is an echo, whenever it comes;
+ * - an "entering" that is the zone's first broadcast since the registration ([firstSinceRegistration]) while the phone
+ *   hasn't moved since it ([stillSinceRegistration]) is the registration's echo, whatever the fix's accuracy;
+ * - anything else is a crossing (a real one is never dropped). */
 enum class FenceVerdict { CROSSING, NOT_OURS, ECHO }
 
-fun fenceVerdict(zoneId: Long, policyZones: List<PolicyZone>, entering: Boolean, sinceRegisteredMs: Long?): FenceVerdict = when {
-    policyZones.none { it.id == zoneId } -> FenceVerdict.NOT_OURS
-    entering && (sinceRegisteredMs == null || sinceRegisteredMs < FENCE_ECHO_WINDOW_MS) -> FenceVerdict.ECHO
-    else -> FenceVerdict.CROSSING
+fun fenceVerdict(
+    zoneId: Long,
+    policyZones: List<PolicyZone>,
+    entering: Boolean,
+    sinceRegisteredMs: Long?,
+    reported: QueuedFix? = null,
+    kept: QueuedFix? = null,
+    firstSinceRegistration: Boolean = false,
+    stillSinceRegistration: Boolean = false,
+): FenceVerdict {
+    val zone = policyZones.firstOrNull { it.id == zoneId } ?: return FenceVerdict.NOT_OURS
+    val keptSide = kept?.let { sureSide(it, zone) }
+    val newest = keptSide ?: reported?.let { sureSide(it, zone) }
+    if (newest == !entering) return FenceVerdict.CROSSING
+    if (entering && (sinceRegisteredMs == null || sinceRegisteredMs < FENCE_ECHO_WINDOW_MS)) return FenceVerdict.ECHO
+    if (reported?.let { fenceSide(it, zone) } == entering && keptSide != !entering) return FenceVerdict.ECHO
+    if (entering && firstSinceRegistration && stillSinceRegistration) return FenceVerdict.ECHO
+    return FenceVerdict.CROSSING
 }
+
+/** [sureSide] for a fence's known side: an inside by a Wi-Fi fix nothing confirmed (a print/Wi-Fi provider, no
+ * `check`) doesn't count - the server's `FixClass::WifiAlone` never starts an arrival with it; outside it counts. */
+fun fenceSide(fix: QueuedFix, zone: PolicyZone): Boolean? =
+    sureSide(fix, zone)?.takeUnless { it && fix.provider in com.kidslauncher.mdm.places.PRINT_WIFI_PROVIDERS && fix.check == null }
+
+/**
+ * The phone hasn't moved since the fences' registration at [registeredAtElapsedMs] (elapsed realtime): the motion gate
+ * says [Motion.STILL] now (a trusted sensor - not distrusted by D7, not missing -, the anchor running, the last fresh
+ * fix at rest), the registration is this process's ([processStartElapsedMs] .. [nowElapsedMs]: an older one had a gap
+ * nothing watched), and no fire or other evidence of a move came after it - none in this process ([fires] 0: the gate's
+ * own start stamp is no move) or the last one ([movedAtElapsedMs]) before the registration. The trigger is armed in the
+ * same pass as the registration, and every gap in its watch (a refused arm, a disarm) counts as a move.
+ */
+fun stillSinceRegistration(
+    motion: Motion,
+    registeredAtElapsedMs: Long,
+    processStartElapsedMs: Long,
+    nowElapsedMs: Long,
+    fires: Int,
+    movedAtElapsedMs: Long,
+): Boolean = motion == Motion.STILL &&
+    registeredAtElapsedMs in processStartElapsedMs..nowElapsedMs &&
+    (fires == 0 || movedAtElapsedMs < registeredAtElapsedMs)
 
 /**
  * The zone watch is on (qa-design-64-step2-code Q-2, the coordinator's decision): device owner,

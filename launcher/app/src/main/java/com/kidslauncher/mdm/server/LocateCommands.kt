@@ -448,6 +448,12 @@ object LocateCommands {
         return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock, kept.elapsedMs, kept.bootCount, kept.check)
     }
 
+    /** The reported (cached) fix and the kept fix newer than it ([keptUnreported]), read together under the writers'
+     * monitor - what a fence broadcast judges its side by (`fenceVerdict`). */
+    @Synchronized
+    fun reportedAndKept(): Pair<com.kidslauncher.mdm.zones.QueuedFix?, com.kidslauncher.mdm.zones.QueuedFix?> =
+        cachedQueued() to keptUnreported()
+
     /** The newest fix the phone knows, reported or kept - what the series times its next check by. */
     fun newestKnown(): com.kidslauncher.mdm.zones.QueuedFix? = keptUnreported() ?: cachedQueued()
 
