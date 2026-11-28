@@ -1,13 +1,14 @@
 # 143 - Installed web apps on the kid's phone
 
-Status: design note, revision 4, 2026-11-28, branch `pwa-design-3` (revision 3: 356f4daeb; revision 2: 91ca32f41 and
-step 0's first pass faf07debd; revision 1: 46669c860). Docs only. The locked list's item 9b ("Installed PWAs on the kid's phone"; the
-owner: "Vil vi helst ha ordentlig native pwa støtte", and after the clarification: a real installed PWA, Chrome always
+Status: design note, revision 5, 2026-11-28, branch `pwa-design-3` (revision 4: caafd6577; revision 3: 356f4daeb;
+revision 2: 91ca32f41 and step 0's first pass faf07debd; revision 1: 46669c860). Docs only. The locked list's item 9b
+("Installed PWAs on the kid's phone"; the owner: "Vil vi helst ha ordentlig native pwa støtte", and after the clarification: a real installed PWA, Chrome always
 on as the engine, never shown as an app). Not built; the step 0 rows left (§6) and the owner's answers (§8) come first.
 Revision 3 follows step 0's first pass, which found that a WebAPK needs a Google account in Play, and the owner's
 question back (2026-11-28): "Må man ha google konto for pwa? Makes no sense. Er det eneste vei?" It redesigns around
 the paths that need no account (§1, §2) and recommends Chrome's own web-app shortcut, accepted by Vibb One as Home (§3).
-Revision 4 takes the design QA of revision 3 (4H 6M 6L, all taken, §9).
+Revision 4 takes the design QA of revision 3 (4H 6M 6L), revision 5 the verification QA of revision 4 (2H 3M 5L),
+all taken (§9). §0a says how robust it is.
 
 Goal: the parent adds a site in the PWA, and the kid gets a tile that opens it as an app - full screen, its own icon,
 working offline - that can't be used to reach the rest of the web. The first use: the family's own offline copy of a
@@ -29,15 +30,16 @@ offline store holds all of it.
 - **Recommendation: A, Vibb One accepts Chrome's web-app shortcut** (§3). It works for any installable PWA, needs no
   account, no Play, no `assetlinks.json` and no new package; the window is Chrome's own standalone one. The install is
   a tap in Chrome in a pause (the owner's idea: the parent adds the site in the PWA, the phone installs it in a pause),
-  from a row on the pause screen. Two limits: each install still sends the site's manifest to Google's minting server
-  first (R9), and the shortcut fallback rests on a Chrome feature that a Chrome field trial could switch off (§1.1), so
-  B stays in reach.
+  from a row on the pause screen. Two limits: Chrome tries a WebAPK first, which the install step blocks in the DNS
+  filter (else the manifest goes to Google, R9), and the shortcut fallback rests on a Chrome default a later Chrome
+  could change (§1.1), so B stays in reach.
 - **Chrome must stay unhidden while web apps are listed** - a cost to decide (Q0): A requires it, because hiding
   Chrome removes its pinned shortcuts from every launcher (Android's `ShortcutService` treats a hidden package as
   removed, §1.2). **It reverses design 119's option C** ("Chrome hidden except during a login Vibb opens", the owner's
-  ASK 1): any allowed app can then reach Chrome by name (Custom Tabs, AppAuth, MSAL, an explicit intent). What holds
-  the kid instead (§3.4, §3.5): outside a login window Chrome's `URLAllowlist` holds only the web-app entries, and a
-  guard brings Home back whenever any Chrome window other than the web-app window comes to the front.
+  ASK 1). What holds the kid instead (§3.4, §3.5): Chrome's `URLAllowlist`, and a guard that brings Home back whenever
+  any Chrome window other than the web-app window comes to the front. Most in-app logins still go through Vibb's gate
+  (a stub Custom Tabs service makes Vibb the pick); **an app that names Chrome itself (MSAL, an explicit package) can't
+  log in while web apps are listed**.
 - **The offline store is the same in every Chrome path**: Chrome's quota, up to 60% of the disk per origin; step 0 put
   3 GB in and lost nothing to trim, reboot, suspend or a full disk; `persist()` follows the origin and is granted with
   the notification permission, which the bundle grants for the listed sites on Chrome 142+ and the site's own prompt
@@ -48,7 +50,52 @@ offline store holds all of it.
   notifications; it costs a build and signing pipeline and full screen only on a site that publishes the key (§2).
   The WebAPK stays out of v1 (§2.5).
 - Size **M** (server S, launcher M at its upper end): no per-window records and no icon fetch, but the guard, the hide
-  rule's plan input, the nag rule and the bundle per login window.
+  gate over five paths, the stub Custom Tabs service and the nag rule.
+
+## 0a. How robust
+
+The owner (2026-11-28): nothing of 143 is built until it is clear how robust it is. In short:
+
+**What the kid can reach in Chrome, path by path** (Chrome unhidden while web apps are listed):
+
+| Path | What holds | Proven or assumed |
+|---|---|---|
+| The web-app window | Chrome's `URLAllowlist`: the listed sites (and the login sites, Q8); other hosts get Chrome's blocked page | the policy in a tab and a Custom Tab: proven (design 102 M14); in `WebappActivity`: assumed (W4) |
+| "Open in Chrome", the out-of-scope toolbar, Chrome's settings, downloads, history, bookmarks | the guard: any Chrome window but the web app's sends Home within about 1 s; before that only the allowlist's sites load | assumed (W13, W22) |
+| Another app's Custom Tab or login (androidx, AppAuth) | Vibb's stub `CustomTabsService` makes Vibb the pick, so it goes through design 119's gate | the gate: proven (design 119 M2); the stub: assumed (W27) |
+| An app that names Chrome itself (MSAL's browser list, `setPackage(chrome)`) | the guard sends Home; **that app's login fails** while web apps are listed | follows from the code; W27 |
+| Chrome's notifications (a download, a promo) | the nag rule cancels them; only `web:<listed origin>` pushes stay | the rule: code; Chrome's channel ids: R8 (W21, W28) |
+| A page's scripts, images, XHR to other hosts | the DNS filter, as today | proven (design 67) |
+| Usage access off, or Chrome's settings not confirmed | Chrome suspended, no tiles | design (W20, W23) |
+
+**What can make the web apps stop working, and how likely**:
+
+- **Chrome hidden by any code path**: every web app is gone at once (Android removes the pins, §1.2). Five paths hide
+  Chrome today; all go through one gate with a test (§3.4). Likely only through a bug; W20 runs each path.
+- **Chrome's data cleared**: the web apps and their content are gone. Only by the parent (Chrome ticked and then
+  unticked); the guard keeps the kid out of Chrome's settings.
+- **Chrome changes its install**: a later Chrome could switch the shortcut fallback off by default or drop it
+  (`ChromeVariations` doesn't stop a code change, §1.1). Installed web apps keep working (their MAC key is in Chrome's
+  data); new installs fail and B is the way on. Unlikely soon; possible over years.
+- **The install with an account or with Play suspended**: a "probable failure" adds no shortcut (§1.1). Without an
+  account and Play as the pause leaves it, the shortcut came every time (R1); the other cases are W12, W25, W26.
+- **Chrome's policy applied late** (Chrome applies a new bundle on its own schedule): an install step may start before
+  Chrome holds it to the entry (W9). Harmless (a tile showing a blocked page), not a way out.
+- **A first-run or search-engine screen at a web app's first launch**: the guard could close it and the tile wouldn't
+  open; the guard lets those classes through right after a tile tap (W2, W13).
+
+**Proven** (step 0, the code, Chromium and AOSP sources): no account is needed for the shortcut; a 3 GB store and its
+survival; `persist()` from the notification grant; push without an account; what removes pins; a launcher can't read
+the shortcut's URL; the MAC check. **Assumed until the rows**: Vibb receiving and accepting the pin under lock task
+(W9), the launch (W10), the policy in the web-app window (W4), the guard's speed and coverage (W13, W22), the stub
+(W27), the install with an account (W12, W26).
+
+**The verdict**: robust enough to build once phase 1 and the decisive phase 2 rows pass. The kid is held by two layers,
+Chrome's own policy and Vibb's guard; the policy is measured, the guard isn't yet. The fragile point is that one hide
+anywhere deletes every web app, so every hide goes through one gate with a test. The long-term risk is Chrome's own
+install path. **What would change it**: W9 or W10 failing (B instead); the guard slower than about 1 s or missing a
+class (the policy alone holds the kid, which leaves Chrome's settings reachable); W27 failing (in-app logins break
+wider than MSAL); no shortcut in any install case of W12/W25/W26 (installs need Play running and no account).
 
 ## 1. What Android and Chrome offer
 
@@ -156,7 +203,7 @@ for `localhost`). The storage is the same in A, B, C and a WebAPK: all of them a
 | Storage | Chrome's (§1.6) | Chrome's | Chrome's | Chrome's |
 | Size on the phone | a shortcut | nothing | an APK of about 1 MB per site | an APK per site |
 | New package to trust | no | no | yes, one per site (a catalog app) | yes, Google-signed, `org.chromium.webapk.*` |
-| Data to Google | **the manifest to `webapk.googleapis.com` at each install** (R9: Chrome tries a WebAPK first) | none beyond Chrome | none beyond Chrome | the manifest goes to the minting server |
+| Data to Google | the manifest to `webapk.googleapis.com` at each install (R9: Chrome tries a WebAPK first), unless the step blocks that host (§3.2, W26) | none beyond Chrome | none beyond Chrome | the manifest goes to the minting server |
 | Chrome unhidden | always, while web apps are listed (reverses design 119's C) | while a web app is open | while a web app is open | always (its pushes and launches go through Chrome) |
 | What breaks it | hiding Chrome or clearing its data (§1.2); a Chrome trial that turns the fallback into a notification (§1.1) | a cold Chrome without a session (design 119's gate: the bind missed on 16) | an APK to build and sign per site | no account; Play suspended |
 | Cost | M: a pin-accept activity, the tile, the install step | M: rev 2's windows | L: a build and signing pipeline, or the parent builds with Bubblewrap | M + the trust rule + Play's windows |
@@ -194,9 +241,9 @@ the manifest goes to Google at each install; and the install is a tap in Chrome.
 
 On a phone with an account it would add its own notification name, an app settings entry and manifest updates. It
 costs Play unsuspended during the install, the manifest sent to Google, and a Google-signed package Vibb must let past
-`enforceOnNewPackage` by its start URL. Not in v1. So that every phone gets the same thing, the install step keeps Play
-suspended while Chrome installs (§3.2), and Chrome falls back to the shortcut - if step 0's row W12 shows it does (a
-"probable failure" adds no shortcut, §1.1).
+`enforceOnNewPackage` by its start URL. Not in v1. So that every phone gets the same thing, the install step blocks
+`webapk.googleapis.com` while Chrome installs (§3.2), and Chrome falls back to the shortcut - if W26 shows the failure
+is a definite one (a "probable failure" adds no shortcut, §1.1); W12 and W25 try Play suspended.
 
 ## 3. The design (option A)
 
@@ -216,11 +263,17 @@ suspended while Chrome installs (§3.2), and Chrome falls back to the shortcut -
   count left as a quiet value. A tap starts an **install step** for the first such entry: one record `{entry, opened,
   boot, state}`, at most 10 minutes, one at a time.
 - **The step holds Chrome to that one site**, although the pause lifts everything else: Chrome's bundle is written with
-  the lockdown on and `URLAllowlist` = the entry alone plus `LOGIN_CAPTCHA_PATHS`, and Chrome opens only after it read
-  back (`sameBundle`). So the parent can install that site and no other in the step. Play stays suspended while the
-  step is open (§2.5). Vibb then opens the entry's URL in full Chrome (an explicit `VIEW` with `setPackage`, since Vibb
-  holds the browser role); the parent taps Chrome's ⋮ › "Install app" › Install, or the site's own install button
-  (`beforeinstallprompt`, the owner's site can offer one).
+  the lockdown on and `URLAllowlist` = the entry alone plus `LOGIN_CAPTCHA_PATHS`, and Chrome opens after the bundle
+  read back (`sameBundle`) and the delay W9 measures. `sameBundle` reads Android's stored copy, not what Chrome
+  applied; Chrome may still run the pause's bundle for a while. So "the parent can install that site and no other" is
+  the expectation, not a guarantee; a miss gives a tile that shows a blocked page, never a way out.
+- **Google's minting is blocked during the step**: the step adds `webapk.googleapis.com` to the DNS filter's blocked
+  hosts, so Chrome's WebAPK request fails at once (a definite failure, so the shortcut follows - W26) and the
+  manifest doesn't reach Google. Play stays as the pause leaves it. If W26 shows a "probable failure" instead, the step
+  doesn't block, and the path is R1's (no account: Play refuses, the shortcut follows - observed); a phone with an
+  account then needs W12's answer.
+- Vibb opens the entry's URL in full Chrome (an explicit `VIEW` with `setPackage`, since Vibb holds the browser role);
+  the parent taps Chrome's ⋮ › "Install app" › Install, or the site's own install button (`beforeinstallprompt`).
 - **Vibb's pin activity** (new; exported, the `ACTION_CONFIRM_PIN_SHORTCUT` filter; `taskAffinity=""`,
   `excludeFromRecents`, `noHistory` and a no-display theme, as `LinkGateActivity`): Android starts it with
   `NEW_TASK | CLEAR_TASK`, so in Home's affinity it would clear Home or the pause screen, and under lock task a clear of
@@ -232,29 +285,35 @@ suspended while Chrome installs (§3.2), and Chrome falls back to the shortcut -
   `getShortcuts` (`FLAG_MATCH_PINNED`, Chrome, `[id]`), then mark the entry `bound`. The reconcile leaves a pending id
   alone for 30 s; a pending id that isn't confirmed by then is dropped.
 - **The first-open check**: right after the bind, Vibb starts the shortcut once and reads from the usage events (with
-  the class name, as design 139's `AppGroupUsage` does) which Chrome activity came up within 5 s: `WebappActivity`
-  means installed; `ChromeTabbedActivity` means Chrome made a bookmark, not a web app (§1.2): Vibb unpins it
-  (`LauncherApps.pinShortcuts` without it) and the entry reports `not_installable`. **Without usage access** the check
-  reports `unchecked`, never installed (§3.3). Then the step for the next entry starts, or the pause screen comes back.
+  the class name, as design 139's `AppGroupUsage` does) the last Chrome activity resumed within 5 s: `WebappActivity`
+  means installed; `ChromeTabbedActivity` means Chrome made a bookmark, not a web app (§1.2), or the MAC failed and
+  `WebappLauncherActivity` opened a tab: Vibb unpins it (`LauncherApps.pinShortcuts` without it) and the entry reports
+  `not_installable`. Without usage access it reports `unchecked`, never installed (§3.3). Then the next entry's step
+  starts, or the pause screen comes back.
 - An entry whose request was refused, or whose shortcut was unpinned, is installed again in the next step (W14).
-- **Why binding by the step is enough**: Vibb can't read a shortcut's URL (§1.2), but in the step Chrome loads only the
-  entry, so the shortcut Chrome makes is the entry's. Outside the step what any shortcut opens is decided by the
-  allowlist (§3.4). Outside a pause there is no step and no request is accepted: neither the kid nor another app can add
-  anything to Home.
+- **Why binding by the step is enough**: Vibb can't read a shortcut's URL (§1.2); in the step Chrome is meant to load
+  only the entry, so the shortcut Chrome makes is the entry's. What any shortcut opens is decided by the allowlist
+  (§3.4). Outside a pause there is no step and no request is accepted: neither the kid nor another app can add anything
+  to Home.
 - **The manifest's own addresses**: a `start_url` or `scope` outside the entry's prefix opens Chrome's blocked page in
-  the web-app window, though the first-open check sees `WebappActivity` (Vibb can't see the URL). W19 shows what the
-  kid sees; the address field's (i) in the PWA says the entry must cover the start page (§5).
+  the web-app window, though the first-open check sees `WebappActivity`. W19 shows what the kid sees; the address
+  field's (i) in the PWA says the entry must cover the start page (§5).
 
 ### 3.3 The tile and the launch
 
 - **The tile**: on Home like an app, the parent's name for it, the icon from the shortcut
   (`LauncherApps.getShortcutIconDrawable`); no fetch, no Chrome badge. An entry without a shortcut has no tile.
 - **Usage access is a hard requirement** (the guard and the first-open check read it; `queryEvents` returns nothing,
-  silently, without it): while it is off the tiles are hidden and the PWA shows the existing orange line "Data om appbruk
-  er av"; the pause screen's grant row (design 114's `usage_access` step) turns it on.
+  silently, without it). While it is off and web apps are listed, **Chrome is suspended** (the pins stay) and the tiles
+  are hidden: an unhidden Chrome with no guard would be the weaker fallback. The PWA shows the existing orange line
+  "Data om appbruk er av"; the pause screen's grant row turns it on. Design 114's `usage_access` step is keyed on app
+  groups only today (`setup_status.rs:256` `features ["app_groups"]`, `SetupSteps.kt:100` `StepWhen.APP_GROUPS`): its
+  `when` becomes "app groups or web apps", with a `web_apps` feature (in line with design 144's Q1).
 - **The launch**: `LauncherApps.startShortcut(chrome, id, bounds, null, user)`. Chrome's `WebappActivity` opens in a
   task of Chrome's own; Chrome is a lock task package while web apps are listed. Vibb is the visible Home at the tap
-  (Android 14's background-start rules). A second tap brings that task back where the kid left it (`intoExisting`).
+  (Android 14's background-start rules). A second tap brings that task back where the kid left it (`intoExisting`). A
+  dimmed tile (Chrome suspended) never calls `startShortcut`: a start into a package the device owner suspended ends in
+  Android's admin-support dialog.
 - **A failed `startShortcut` keeps the binding**: the tile stays, the failure is reported (§3.9). Only the reconcile
   drops a binding.
 - **The reconcile**, at each app-list load and in `LauncherApps.Callback.onShortcutsChanged` (an empty TODO in
@@ -265,50 +324,77 @@ suspended while Chrome installs (§3.2), and Chrome falls back to the shortcut -
 
 ### 3.4 Chrome's bundle and the hide rule
 
-- `browserConfigPlan`: the lockdown is in force when the login role is on or web apps are listed. **Outside a login
-  window `URLAllowlist` holds only the web-app entries**; the login sites and `LOGIN_CAPTCHA_PATHS` are added when a
-  login window opens and taken out at its end (a tightening: Chrome's tabs end, design 119 Q102-M4). So a Chrome reached
-  by name outside a login loads only the web apps. Its cost: each login window writes Chrome's bundle at its start and
-  its end, and the start waits for the read-back (W22 measures it). In an install step: the entry alone (§3.2).
+- `browserConfigPlan`: the lockdown is in force when the login role is on or web apps are listed. `URLAllowlist`: the
+  web-app entries, the login sites and `LOGIN_CAPTCHA_PATHS`, as today (Q8, recommended): a Chrome reached outside a
+  login window loads only these, and the guard sends it Home. The alternative (revision 4) adds the login sites only
+  while a login window is open; it costs two bundle writes per login and a login page that may show "blocked" first,
+  since Chrome applies a new bundle on its own schedule (W22 measures it). In an install step: the entry alone (§3.2).
 - **A path is a string prefix**, so a scope is written with a trailing `/` (`example.org/app/`, not `example.org/app`,
   which would also allow `/apple`). Ready means the bundle read back typed (`sameBundle`).
-- **The hide rule, a plan input `webAppsListed`**: while it is true Chrome is never hidden, whatever the login role and
-  the bundle's readiness. Today `EnforcementPlan` exempts Chrome from the hide only as `roleApp`, which exists only when
-  `loginBrowser` is set - the role on and the bundle ready (`EnforcementPlan.kt:261-276`) - so "not ready" or the role
-  off would hide Chrome and drop every pin (§1.2). With web apps listed and the bundle not ready, Chrome is
-  **suspended** instead: the tiles dim, the pins stay. `BrowserConfig`'s hide-before-loosen (`BrowserConfig.kt:96`:
-  the role turned off after its lockdown hides Chrome before the bundle loosens) becomes suspend-before-loosen while
-  web apps are listed. Design 119's hide at a login window's end applies only when no web app is listed; a time rule
-  suspends Chrome as before. Removing the last entry returns the phone to design 119 (Chrome hidden; Android drops the
-  pins with it). W20 runs each case.
+- **One gate for every hide of Chrome**: `chromeHideAllowed(webAppsListed)`, false while a web app is listed, and every
+  path that hides Chrome goes through it, pinned by a test that scans for a `setApplicationHidden(..., true)` on Chrome
+  outside the gate. The paths today:
+  1. `EnforcementPlan`'s hide set: Chrome is exempt only as `roleApp`, which exists only with the role on and the
+     bundle ready (`EnforcementPlan.kt:261-276`);
+  2. `BrowserConfig`'s hide before loosening (`BrowserConfig.kt:96`, the role turned off after its lockdown);
+  3. `BrowserConfig`'s hide at every tightening (`BrowserConfig.kt:133-137`, `chromeTightened`): a pause's end, an
+     install step's start, a removed entry or login site;
+  4. `LoginWindow.chromeStep` and `chromeAppeared` (a window's end; the screen-on after Play's update window,
+     `PlayRuntime.kt:145`);
+  5. `enforceOnNewPackage`: with the role off or the bundle not ready, an unhidden Chrome arrives as a new package and
+     is suspended and hidden again (the loop of 2026-11-15): Chrome is exempt there while a web app is listed.
+- **While a web app is listed a tightening doesn't hide**: Chrome refreshes the bundle itself, and a page left open
+  from the looser phase (a pause's tab, a login tab after its window) is a Chrome window other than the web app's, so
+  the guard sends it Home (W20, W22). Hide-before-loosen isn't needed: with web apps listed the lockdown stays on, so
+  turning the role off only takes login sites out - a tightening.
+- **Not ready** (a bundle write not read back) with web apps listed: Chrome is **suspended**, not hidden: the tiles
+  dim and no start is attempted. Suspension doesn't stop Chrome's process (Android only records it and tells the
+  apps), so the guard treats every Chrome class, the web-app window's too, as out while not ready. Design 119's rules
+  apply unchanged when no web app is listed; removing the last entry returns the phone to them (Chrome hidden; Android
+  drops the pins with it). W20 runs each path.
+- **Chrome off Home and the drawer**: `AppFilter` keeps Chrome's launcher entry out only through
+  `loginRolePackageNow()`, which is null with the role off. It also drops Chrome while a web app is listed and Chrome
+  isn't ticked (W24).
+- **A stub `CustomTabsService` in Vibb One**, enabled only while a web app is listed. With Chrome hidden, design 119's
+  in-app logins worked because no browser offered Custom Tabs (`CustomTabsClient.getPackageName` null, AppAuth falling
+  back to the default browser, Vibb). With Chrome unhidden, androidx's `getPackageName` and AppAuth's `BrowserSelector`
+  prefer the default browser if it has a Custom Tabs service: the stub makes that Vibb, its sessions refused, so the
+  Custom Tab intent comes to Vibb's gate as a session-less tab (design 119 M2). It can't cover an app that picks Chrome
+  itself: MSAL's browser list (Vibb isn't on it; with Chrome hidden MSAL used its WebView), or an explicit
+  `setPackage(chrome)`. Those logins fail while web apps are listed (Q0, W27).
 - **Chrome's one-time clear (D13) is keyed on the lockdown's first turn-on** (`chromeClearDue(lockdownOn, cleared)`,
   today `chromeClearDue(roleOn, cleared)`, `LoginBrowser.kt:193`, called from `BrowserConfig.kt:108`), so it runs
   before the first install. Any later clear (Chrome ticked as a free app, then unticked) removes every web app's
   shortcut and content (§1.2): the entries go back to not installed and are installed again in a pause.
-- **Chrome ticked as a free app** (the lockdown off): the tiles still open the web apps; nothing is hidden.
+- **Chrome ticked as a free app** (the lockdown off): the tiles still open the web apps; nothing is hidden, no guard.
 - **Notifications**: `DefaultNotificationsSetting: 2` and `NotificationsAllowedForUrls` (the listed sites, Chrome
   142+), and the device owner grants Chrome's `POST_NOTIFICATIONS`. On an older Chrome - likely on a phone without an
   account, where Play never updates Chrome and the Jelly runs the Chrome of Unihertz's updates - the site asks during
   the install step and the parent allows it (W17 runs that half on Chrome 133 now).
-- **`ChromeVariations: 1`** (critical fixes only), so no field trial switches the shortcut fallback off (§1.1).
-- Removing a site is a tightening (Chrome's tabs end), as today.
+- **`ChromeVariations: 1`** (critical fixes only) keeps a field trial from switching the shortcut fallback off
+  (§1.1). It doesn't stop a later Chrome changing the default in code, and it takes effect at Chrome's next cold start:
+  W1 checks it at the first start after the D13 clear.
 
 ### 3.5 Staying on the parent's sites; Chrome never shown
 
 - In scope the window has no browser UI. A link off the site shows Chrome's toolbar with the host, and Chrome's
   "blocked by your organization" page unless the host is listed (design 102 M14). `URLBlocklist` stops navigations and
   frames, not a page's scripts, images or XHR; the DNS filter judges those hosts (§3.8).
-- **Ways to the rest of Chrome**, now that it is unhidden: any allowed app reaches it by name, in that app's task or
-  its own (a Custom Tab through `CustomTabsClient.getPackageName`, AppAuth, MSAL, an explicit intent); the web-app
-  window's long-press "Open in Chrome" and its out-of-scope toolbar; Chrome's own surfaces - its settings (clearing site
-  data), downloads (its download notification is tappable), history, bookmarks; perhaps a notification tap (W8).
-- **The guard is an allowlist** (Q0): outside a login window, an install step or a pause, any Chrome activity in front
-  other than `org.chromium.chrome.browser.webapps.WebappActivity` (that name, or a name beginning with it) and the
-  launch trampolines `WebappLauncherActivity` and `SecureWebAppLauncher` (no display, they finish at once) brings Home
-  to the front. A class Chrome renames fails closed - Home - and the report names the class (§3.9). Vibb reads the
-  usage events once a second while the screen is on and Chrome is the package in front. With the allowlist of web-app
-  entries only (§3.4), another app's Custom Tab outside a login ends at Home a moment after it opens: the outcome design
-  119's hidden Chrome gave, a beat later. W13 and W22 measure how long a Chrome window shows.
+- **Ways to the rest of Chrome**, now that it is unhidden: an app that names Chrome (MSAL, `setPackage(chrome)`; the
+  rest go to Vibb through the stub, §3.4); the web-app window's long-press "Open in Chrome" and its out-of-scope
+  toolbar; Chrome's own surfaces - its settings (clearing site data), downloads, history, bookmarks; Chrome's own
+  notifications (cancelled by the nag rule, §3.10); perhaps a notification tap (W8).
+- **The guard is an allowlist** (Q0): outside a login window, an install step, a pause, the parent's override and a
+  ticked Chrome, the **last resumed** Chrome activity decides. Allowed: `org.chromium.chrome.browser.webapps.
+  WebappActivity` (that name, or a name beginning with it); the launch trampolines `WebappLauncherActivity` and
+  `SecureWebAppLauncher` only while they are followed by an allowed class (a trampoline with a bad MAC opens a tab,
+  which the next event shows); and, for 10 s after a tile tap, Chrome's first-run and search-engine-choice activities
+  if W2 and W13 find them at a launch (their classes logged there). Anything else brings Home to the front; a class
+  Chrome renames fails closed - Home - and the report names it (§3.9). Vibb reads the usage events once a second while
+  the screen is on and Chrome is the package in front.
+- So a Chrome window outside the web apps shows for up to about a second and can load only the allowlist's sites in
+  that time (W13, W22). Unlike design 119's hidden Chrome, an app that names Chrome itself gets Chrome briefly and then
+  Home, and its login fails.
 - Links from other apps go through design 119's gate (Vibb holds the browser role); the gate opening a web app's tile
   is not in v1.
 
@@ -343,17 +429,21 @@ suspended while Chrome installs (§3.2), and Chrome falls back to the shortcut -
 
 `web_apps` in the full report: per entry the host, `installed` (bound and pinned), `not_installable`, `unchecked`,
 `filtered`, `last_open_ms`, the last failed `startShortcut` (time and exception); the guard's last trip (time and
-class); usage access on or off; Chrome's `version_name` as today. Never a path or a page.
+class); usage access on or off; Chrome suspended for web apps and why (not ready, usage access); Chrome's
+`version_name` as today. Never a path or a page.
 
 ### 3.10 Chrome's notifications and the nag rule
 
 Vibb's nag rule (`badges/NotificationRule.kt`, `nagVerdict`) cancels a clearable notification from a package that is
 neither allowed nor essential. Chrome is not an allowed app while it isn't ticked, so every web push would be deleted.
 New keep reason (`NagKeep.WEB_APP`): a notification of `com.android.chrome` whose channel is `web:<listed origin>` -
-the whole id, or the origin followed by `;` - is kept. Chrome's other clearable notifications (downloads, its own
-promos) are still cancelled. The origin is written as Chrome writes it (R8: `web:http://127.0.0.1:8090`: the scheme,
-the host, the port unless the default). `NagPolicy` gains the listed origins; a pure function with rows in
-`contracts/core/web_apps.json`. W21 sends a push with Vibb managing the phone and the listener on.
+the whole id, or the origin followed by `;` - is kept. A Chrome channel starting with `web:` is judged by this alone,
+before the other reasons (`essentialChannel`'s substring match would keep a site whose host holds "emergency").
+Chrome's other clearable notifications (downloads, its own promos) are still cancelled. The listed origin is compared
+the way Chrome writes it (R8: `web:http://127.0.0.1:8090`): lower case, the host in punycode, the default port dropped
+(W28). `reportableChannel` reports a non-listed site's channel as `web:#other`, never its host. `NagPolicy` gains the
+listed origins; a pure function with rows in `contracts/core/web_apps.json`. W21 sends a push with Vibb managing the
+phone and the listener on.
 
 ## 4. Android 14-17
 
@@ -414,8 +504,8 @@ filler, push handler) on `127.0.0.1` over `adb reverse` (a real-domain stand-in 
 
 | # | What | Where | Expected |
 |---|---|---|---|
-| W1 | "Install app" for the test PWA and `squoosh.app`, the launcher's sheet accepted; `dumpsys shortcut`: the id, the intent (action, `webapp_url`, `webapp_mac`, the display mode, `webapp_source`), the icon. **Also on the newest Chrome** that can be put on the image without an account (a sideloaded stable APK), and with `ChromeVariations: 1` once a device owner writes it (phase 2) | 14, 16 | `ACTION_START_WEBAPP`, standalone, a GUID id (§1.2); a shortcut, not a failure notification (§1.1) |
-| W2 | The shortcut launched: `dumpsys activity activities` - `WebappActivity`, its own task, the task's label and icon in Recents; no toolbar in scope; the splash; a second launch brings the same task back; any "Running in Chrome" or first-run notice | 14, 16 | an app window with the site's name and icon |
+| W1 | "Install app" for the test PWA and `squoosh.app`, the launcher's sheet accepted; `dumpsys shortcut`: the id, the intent (action, `webapp_url`, `webapp_mac`, the display mode, `webapp_source`), the icon. **Also on the newest Chrome** that can be put on the image without an account (a sideloaded stable APK), and with `ChromeVariations: 1` once a device owner writes it (phase 2), checked at Chrome's first start after the D13 clear | 14, 16 | `ACTION_START_WEBAPP`, standalone, a GUID id (§1.2); a shortcut, not a failure notification (§1.1) |
+| W2 | The shortcut launched: `dumpsys activity activities` - `WebappActivity`, its own task, the task's label and icon in Recents; no toolbar in scope; the splash; a second launch brings the same task back; any "Running in Chrome", first-run or search-engine-choice screen, with its class logged | 14, 16 | an app window with the site's name and icon |
 | W3 | A cold start offline: airplane mode, Chrome force-stopped, the shortcut launched | 14, 16 | the service worker's page |
 | W4 | Ways out from the window (no policy yet): the long-press menu on a link, an out-of-scope link's toolbar and its menu, `target=_blank` and `window.open`, `intent://` links, the app menu if any; Chrome's own notifications posted from the web-app window (a download), its default-browser promo | 16 | the list the guard must cover (W13) |
 | W5 | "Add to Home screen" and Chrome's "Install" on a page without a manifest, and on a manifest with `display: browser` | 16 | a `VIEW` shortcut that opens `ChromeTabbedActivity` (what the first-open check catches) |
@@ -428,22 +518,26 @@ debug build; W9, W10 and W14 can run earlier with a small probe Home app without
 
 | # | What | Where | Expected |
 |---|---|---|---|
-| W9 | Chrome's install with Vibb as Home: `hasShortcutHostPermission()` logged; the `PinItemRequest` arrives; what its `ShortcutInfo` carries (id, labels, icon; the intent null); the pin activity's start under lock task over the pause screen (its own affinity: Home and the pause screen stay, no refused root clear); `accept()` with no UI; the pending-confirm-bound order; a request outside an install step and a second request in one step refused (nothing appears; what Chrome says); a `PinItemRequest` intent sent by another app | 14, 16; 17 owed | as §3.2 |
+| W9 | Chrome's install with Vibb as Home: `hasShortcutHostPermission()` logged; the `PinItemRequest` arrives; what its `ShortcutInfo` carries (id, labels, icon; the intent null); the pin activity's start under lock task over the pause screen (its own affinity: Home and the pause screen stay, no refused root clear); `accept()` with no UI; the pending-confirm-bound order; a request outside an install step and a second request in one step refused (nothing appears; what Chrome says); a `PinItemRequest` intent sent by another app; the time from the step's bundle write to Chrome blocking another host and allowing the entry, on a warm, a cached and a cold Chrome | 14, 16; 17 owed | as §3.2; the step's delay set from it |
 | W10 | `startShortcut` from Vibb under lock task with Chrome pinned: a cold and a warm Chrome, tap-to-page time, Recents, a second tap | 14, 16; 17 owed | Chrome's window in its own task, no block screen |
 | W11 | Chrome hidden by the device owner, then unhidden | 16 | the shortcut gone (§1.2); the reconcile drops the binding |
 | W12 | The install step with Play suspended, on the owner's test account (squeue 5a), on the newest Chrome (after Play updates it) | 16 | Chrome falls back to a shortcut; a probable failure or a failure notification and nothing added changes §2.5. Also: a Play install started earlier in the same pause |
-| W13 | The guard: each way out of W4 under the bundle; the return to Home and its latency; a login window, an install step and a pause exempt; the poll's battery and CPU while a web app is open | 14, 16 | Home within about 1 s |
+| W13 | The guard: each way out of W4 under the bundle; the return to Home and its latency; a login window, an install step, a pause, the override and a ticked Chrome exempt; the last resumed class after a trampoline; the classes at a web app's first launch logged; the poll's battery and CPU while a web app is open | 14, 16 | Home within about 1 s |
 | W14 | The first-open check for a web app and for W5's bookmark and "Install"; the unpin; the same entry installed again after the unpin and after a refused request | 16 | installed vs `not_installable`; the second install binds |
 | W15 | A time rule starting with a web app open; its end | 14, 16 | the window stops, the tile dims, the shortcut kept, the tile opens it after |
 | W16 | A Vibb One restart and a reboot | 14, 16 | bindings and pins kept, the tiles open |
 | W17 | `persist()` in the installed window with the site's own prompt allowed, **now on the image's Chrome 133**; later with `NotificationsAllowedForUrls` (Chrome 142+, after a Chrome update on the test account); a 3 GB fill with the window closed (a service worker and Background Fetch) | 16 | persisted; the fill goes on with the window closed |
 | W18 | A Chrome update through Play (test account) | 16 | pins kept, the tiles open |
 | W19 | A manifest whose `start_url` or `scope` lies outside the entry's prefix, under the bundle | 16 | Chrome's blocked page in the web-app window; the check says installed (§3.2) |
-| W20 | Web apps listed and installed: the bundle not ready (a write refused), the login role turned off, the role on then off with a window open | 14, 16 | Chrome suspended, never hidden; the pins kept; the tiles back when ready |
+| W20 | Web apps listed and installed, each hide path of §3.4: the bundle not ready (a write refused), the login role turned off, the role off with a window open, a login window's end, a pause's end, an install step's start, a removed entry, the screen-on after Play's window, Chrome arriving as a new package with the role off | 14, 16 | never hidden; suspended only when not ready; the pins kept; an open login or pause tab sent Home by the guard |
 | W21 | A push to a listed site with Vibb managing the phone and the nag listener on; a Chrome download notification beside it | 16 | the push kept, the download notice cancelled |
-| W22 | The guard over another app's Custom Tab outside a login (`CustomTabActivity` in that app's task), over Chrome's settings, downloads, history and bookmarks, over a tap on Chrome's download notification; a login window's bundle writes (start and end) and the time they add | 14, 16 | Home each time, with the class in the report; the login's start delayed by the read-back only |
-| W23 | Usage access turned off with web apps installed | 16 | the tiles hidden, the PWA's orange line; the first-open check says `unchecked` |
-| W24 | Chrome unhidden and not ticked: Chrome's launcher entry on Home and in the drawer (`AppFilter`) | 14, 16 | absent |
+| W22 | The guard over another app's Custom Tab outside a login (`CustomTabActivity` in that app's task), over Chrome's settings, downloads, history and bookmarks, over a tap on Chrome's download notification; and, for Q8's alternative, a login window's bundle writes: the time from the write to the login page loading on a warm, a cached and a cold Chrome | 14, 16 | Home each time, with the class in the report |
+| W23 | Usage access turned off with web apps installed | 16 | Chrome suspended, the tiles hidden, the PWA's orange line, the setup step shown; the first-open check says `unchecked` |
+| W24 | Chrome unhidden and not ticked, the role off: Chrome's launcher entry on Home and in the drawer (`AppFilter`) | 14, 16 | absent |
+| W25 | **The main install path**: no account, Play suspended by Vibb as device owner, Chrome's "Install app" | 16 | a shortcut, or a probable failure and nothing (then the step leaves Play as the pause has it, R1) |
+| W26 | The install step with `webapk.googleapis.com` blocked in the DNS filter, without and with an account | 16 | a definite failure and the shortcut; no request reaches Google |
+| W27 | The stub `CustomTabsService`: androidx `getPackageName`, an AppAuth sample, Element X's login, a session-less Custom Tab to Vibb's gate; an MSAL sample and an explicit `setPackage(chrome)` | 14, 16 | the first ones through Vibb's gate as design 119 M2; MSAL and the explicit one fail (Chrome, then Home) |
+| W28 | Chrome's `web:` channel ids for an upper-case host, an IDN host, an explicit default port; a host holding "emergency" not listed | 16 | kept only when listed; the unlisted one cancelled and reported as `web:#other` |
 
 **Phase 3 - the Jelly, by the owner**: first Chrome's `version_name` (no account, so Play never updates it; the
 Jelly's Chrome comes with Unihertz's updates, and below 142 the notification policies don't exist); then W1's install,
@@ -452,8 +546,8 @@ emulator can't show the Jelly's Chrome and Play versions, Unihertz's behaviour, 
 or battery.
 
 **What decides the design**: W1 on the newest and the Jelly's Chrome (the fallback still a shortcut), W9 and W10 (A
-works under Vibb at all), W11 and W20 (the hide rule), W13 and W22 (the guard), W21 (push kept), W12 (a phone with an
-account). A failing W1, W9 or W10 makes B the path (revision 2's §3 in 91ca32f41) and revises
+works under Vibb at all), W25 and W26 (the install path), W11 and W20 (the hide rule), W13 and W22 (the guard), W27
+(in-app logins), W21 (push kept), W12 (a phone with an account). A failing W1, W9 or W10 makes B the path (revision 2's §3 in 91ca32f41) and revises
 this note.
 
 ### Revision 2's rows (the first pass ran against these)
@@ -519,23 +613,26 @@ no TWA (T1, T2, T8 open). The host ran short of memory with a second emulator on
 
 1. Step 0 phase 1 (§6, emulator, no build), then the owner's answers (§8).
 2. Server (S): the table and migration, the policy key and contract, the Apps page group and its copy, the report's
-   lines and the "Ikke installert"/"Kan ikke installeres" states from them.
+   lines and the "Ikke installert"/"Kan ikke installeres" states from them; the `usage_access` step's `when` as app
+   groups or web apps (a `web_apps` feature).
 3. Launcher (M, at its upper end): the pin activity and the install step (the pause screen's row, the step's
    one-site bundle, Play kept suspended while it runs); the pending-confirm-bound order and the reconcile
    (`onShortcutsChanged`); the tile, usage access as a requirement, `startShortcut`; the first-open check; the plan's
-   `webAppsListed` (never hidden; suspended when not ready; BrowserConfig's suspend-before-loosen) and the clear keyed
-   on the lockdown; the bundle (the web-app entries only outside a login window, the login sites per window, the
-   notification policies and grant, `ChromeVariations`); the guard as an allowlist; the nag rule's `WEB_APP` keep; the
-   report.
+   `chromeHideAllowed` gate over all five hide paths with its test, suspended when not ready or without usage access,
+   `AppFilter` keeping Chrome off Home; the clear keyed on the lockdown; the bundle (Q8's allowlist, the step's one
+   site, the minting host blocked in the step, the notification policies and grant, `ChromeVariations`); the stub
+   `CustomTabsService`; the guard as an allowlist of the last resumed class; the nag rule's `WEB_APP` keep with
+   Chrome's canonical origins; the report.
 4. Code QA, the emulator gate on 14 and 16 (step 0's phase 2 with the real build), the Jelly with the site.
 
 ## 8. Questions for the owner
 
 - **Q0. Chrome unhidden while web apps are listed** - a cost you see: it gives up design 119's option C (your ASK 1,
-  "Chrome hidden except during a login Vibb opens"). Any allowed app can then open Chrome by name. What holds the kid
-  instead: outside a login Chrome loads only the web apps' sites, and Vibb sends any Chrome window other than a web app
-  back to Home within about a second (a moment of Chrome may show). Recommended: **yes**, A needs it (hiding Chrome
-  deletes the web apps); without it the choice is B with Chrome hidden between uses (revision 2).
+  "Chrome hidden except during a login Vibb opens"). What holds the kid instead: Chrome loads only the listed sites, and
+  Vibb sends any Chrome window other than a web app back to Home within about a second (a moment of Chrome may show).
+  **Logins inside apps that pick Chrome themselves (MSAL - Microsoft's apps - or an app naming Chrome) stop working
+  while web apps are listed**; the others keep going through Vibb (W27). Recommended: **yes**, A needs it (hiding
+  Chrome deletes the web apps); without it the choice is B with Chrome hidden between uses (revision 2).
 - **Q1. The engine: A, Chrome's own web-app shortcut accepted by Vibb One?** Recommended: **A** (no Google account,
   any installable PWA, Chrome's own app window). Each install still sends the site's manifest to Google first (Chrome
   tries a WebAPK). B (Vibb opens the site as a TWA) if W1, W9 or W10 fail; C (a TWA app per site) later for a site
@@ -552,6 +649,10 @@ no TWA (T1, T2, T8 open). The host ran short of memory with a second emulator on
   **yes**.
 - **Q6. Usage access becomes a requirement for web apps** (the guard reads it): off means no tiles and an orange line.
   Recommended: **yes** (no weaker fallback).
+- **Q8. The login sites in Chrome's allowlist at all times** (as today), or only while a login is open? Always: a
+  Chrome opened outside a login could load a login page for the second before Vibb sends it Home. Only during a login:
+  two settings writes per login, and the login page may show "blocked" first while Chrome catches up. Recommended:
+  **always** (simpler, no race; the guard holds); the other if W22 shows the guard too slow.
 - **Q7. Revision 2's open ones** ("vet ikke enda"): the list per phone (recommended); web apps under the phone's rules
   and screen time, with no per-site limit, and a time rule's usable list can't hold a web app in v1 (recommended); the
   Kiwix idea parked until W17 passes on the Jelly.
@@ -576,7 +677,17 @@ no TWA (T1, T2, T8 open). The host ran short of memory with a second emulator on
   promo (W4); L4 `hasShortcutHostPermission` logged (W9); L5 Chrome off Home and the drawer (W24); L6 time rules' usable
   list (§3.7, Q7). One adjustment: the guard's allowlist also lets Chrome's two launch trampolines through
   (`WebappLauncherActivity`, `SecureWebAppLauncher`), which come to the front for a moment at every launch.
-- **Revision 4** (this one) is not design-QA'd yet.
+- **Revision 4**'s verification QA (2H 3M 5L), all taken in revision 5, none found wrong (the hide paths, the
+  `usage_access` keying and `AppFilter`'s role check confirmed in the code): H1 one gate `chromeHideAllowed` over five
+  hide paths, with a test; no hide at a tightening while listed; `enforceOnNewPackage` exempts Chrome (§3.4, W20); H2
+  the stub `CustomTabsService`, MSAL and explicit callers named as failing, in Q0 (§3.4, W27); M1 `sameBundle` is
+  Android's copy, not Chrome's - the step's delay from W9, Q8 for the login sites (§3.2, §3.4); M2 Chrome suspended
+  without usage access, the setup step keyed on web apps too (§3.3, W23); M3 the main install path's row and the
+  minting host blocked in the step (§3.2, W25, W26); L1 the nag rule on Chrome's canonical origins, `web:` judged
+  first, `web:#other` (§3.10, W28); L2 `ChromeVariations`' limits (§3.4, W1); L3 the last resumed class, the override
+  and ticked Chrome exempt, first-run and choice screens (§3.5, W2, W13); L4 suspension doesn't stop Chrome:
+  suspend-before-loosen dropped, a dimmed tile never starts (§3.3, §3.4); L5 `AppFilter` (§3.4, §7).
+- **Revision 5** (this one) is not design-QA'd yet; §0a is new.
 
 ## Sources
 
@@ -630,5 +741,7 @@ no TWA (T1, T2, T8 open). The host ran short of memory with a second emulator on
   `docs/notes/launcher/dns-and-vpn.md` (tsnet in-process), `Application.kt` (`onShortcutsChanged`, a TODO),
   `Functions.kt:125` (the shortcuts TODO), `timerules/AppGroupUsage.kt` (the class name), `timerules/UsageAccess.kt`,
   `badges/NotificationRule.kt` (`nagVerdict`), `server/EnforcementPlan.kt:261-276` (`roleApp`),
-  `server/BrowserConfig.kt:96` (hide before loosen) and `:108`, `logins/LoginBrowser.kt:193`, `LinkGateActivity`'s
+  `server/BrowserConfig.kt:96` (hide before loosen), `:108` and `:133-137` (hide at a tightening),
+  `logins/LoginWindow.kt` (`chromeStep`, `chromeAppeared`), `play/PlayRuntime.kt:145`, `server/AppEnforcer.kt`
+  (`enforceOnNewPackage`), `apps/AppFilter.kt:44`, `server/src/setup_status.rs:256`, `setup/SetupSteps.kt:100`, `logins/LoginBrowser.kt:193`, `LinkGateActivity`'s
   manifest entry
