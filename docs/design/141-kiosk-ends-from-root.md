@@ -421,6 +421,9 @@ Code QA (2026-11-27, 0H 1M 4L), all taken:
 - **L4** the order scan also checks that a step other than EMPTY returns before `setLockTaskPackages` and that
   `HomeRootStop.kioskOn()` is in the pin branch.
 
+Night gate on 16 (`docs/testing/emulator.md` §6ch F1): row 9's call screen did not come back - `KidInCallService` had no
+`onBringToForeground`; since branch `incall-front` it starts `InCallActivity` while a call is live (re-run owed on 14 and 16).
+
 The night gate on 14 (2026-11-27, emulator.md §6cg F1), branch `night-fixes`: on 14 and 15 `stopLockTask()` is oneway, so
 the emptying could beat Home's stop (8 of 37 kiosk ends; 5 stuck). §3.5 adds the bounded wait between Home's stop and
 the emptying (`HomeRootStop.settle`, pure `stopSettle`, 10 ms reads up to 300 ms after the stop, the pass's `ASKED` and
