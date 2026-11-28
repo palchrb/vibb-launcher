@@ -656,7 +656,8 @@ fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield(
  * power change then looks once ([powerRecheck]) - a fresh loss through the same rule ([refrontAction]), so the kid's own
  * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap ([ANDROID_REFRONT_CAP]) all hold.
  * glance-replug (the owner's log, 2026-11-26): a power change's own loss has a re-front budget of its own
- * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back.
+ * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back. PLAN 1o (2026-11-28): the tag is the
+ * screen-on's, kept until its screen-off ([powerWakeTag]) - an unplug's wake stays one when a re-plug follows.
  */
 
 /** The power change's stamp may come this long after its screen-on: the two are reordered (300 ms, as before), and the
@@ -703,9 +704,21 @@ fun powerWokeScreen(powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?)
     return screenOffAtMs == null || screenOnAtMs - screenOffAtMs >= POWER_WAKE_DARK_MS
 }
 
-/** The screen-on [sosGestureLikely] reads: none when it was the power change's own wake ([powerWokeScreen]). */
-fun sosScreenOn(lastScreenOnAtMs: Long?, powerAtMs: Long?, lastScreenOffAtMs: Long?): Long? =
-    lastScreenOnAtMs?.takeUnless { powerWokeScreen(powerAtMs, it, lastScreenOffAtMs) }
+/**
+ * PLAN 1o (the owner's Jelly, Android 16, 2026-11-28: an unplug woke the screen, a re-plug 1.3 s later): the screen-on's
+ * power-wake tag, decided for the screen-on and kept for the rest of it. [tagged] is the tag so far (`false` from each
+ * screen-off and set anew at each screen-on, from the last stamp); each power change stamped at [powerAtMs] may set it
+ * ([powerWokeScreen] against the screen-on at [screenOnAtMs] and the screen-off before it at [screenOffAtMs]) and never
+ * clears it. Before, [powerWokeScreen] read only the latest stamp, so the re-plug's stamp 1.3 s after the unplug's wake
+ * un-tagged it and the charging dialog's loss read as a probable SOS. A press-SOS's screen-on still ends a short dark
+ * spell ([POWER_WAKE_DARK_MS]): no stamp tags it, and the press that turned the screen off ended any earlier tag.
+ */
+fun powerWakeTag(tagged: Boolean, powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?): Boolean =
+    tagged || powerWokeScreen(powerAtMs, screenOnAtMs, screenOffAtMs)
+
+/** The screen-on [sosGestureLikely] reads: none when the screen-on is a power change's own wake ([powerWake],
+ * [powerWakeTag]). */
+fun sosScreenOn(lastScreenOnAtMs: Long?, powerWake: Boolean): Long? = lastScreenOnAtMs?.takeUnless { powerWake }
 
 /** What the power change's look does ([powerRecheck]). */
 data class PowerRecheck(
@@ -720,8 +733,8 @@ data class PowerRecheck(
  * glance not in front ([lockResumed]) and lost at [lostAtMs] around the change ([POWER_LOSS_BEFORE_MS] ..
  * [POWER_LOSS_AFTER_MS]) - a loss from before (the kid's own PIN pad, a yield that ended into the platform's screen, the
  * cap reached) is left as the rule left it. A probable-SOS mark ([sosMarked]) wins unless the screen-on behind it was
- * the change's own wake ([powerWake], [powerWokeScreen]). The check itself decides the rest (screen on, Android locked,
- * ours, the exemptions, the cap).
+ * the change's own wake ([powerWake]: the screen-on's tag, [powerWakeTag]). The check itself decides the rest (screen
+ * on, Android locked, ours, the exemptions, the cap).
  */
 fun powerRecheck(locked: Boolean, lockResumed: Boolean, powerAtMs: Long, lostAtMs: Long?, powerWake: Boolean, sosMarked: Boolean): PowerRecheck {
     val fresh = locked && !lockResumed && powerLossAround(powerAtMs, lostAtMs) && (!sosMarked || powerWake)

@@ -186,6 +186,16 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     plug-in's stamp, then a loss - read as the plug-in's wake, so the look re-fronts (seen on the emulator with a
     stand-in: one wake key, the blocked start, a plug-in 0.25 s later). The exemptions still come before the cap, and a
     mark from a screen-on that wasn't the change's own wake still stops the look.
+    *The tag is the screen-on's* (PLAN 1o; the owner's Jelly, Android 16, 2026-11-28; branch `glance-unplug-replug`): an
+    unplug woke the screen, a re-plug 1.3 s later replaced the stamp, and `powerWokeScreen` read only the latest stamp -
+    the screen-on was 1.3 s+ before it, outside the 0.8 s, so the charging dialog's loss 1.6 s after the screen-on was
+    marked a probable SOS (`Lock yields to an exempt screen: sos`) and Android's lock screen stayed until the screen-off.
+    Now the runtime keeps `screenOnPowerWake` (`powerWakeTag`): decided at the screen-on from the last stamp, set by any
+    later stamp the screen-on is the wake of, never cleared by one, and false from the screen-off. The SOS rule
+    (`sosScreenOn`, at the pause's mark, its delay and the stop's mark) and the look (`powerRecheck`'s `powerWake`) read
+    the tag; the loss inside the re-plug's window takes its budget. A press-SOS still keeps its mark: the press that
+    turned the screen off ended the tag, and its screen-on ends a short dark spell, so no stamp sets it again.
+    `PowerGlanceTest` (the log's sequence, re-plugs 0.3-2 s after the wake, re-plugs on one screen-on, the press-SOS).
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's
