@@ -2096,20 +2096,8 @@ Rows:
 - §6bw o, p and the device row (the redacted BSSID's background read) - Jelly Star.
 - §6bw - Android 17.
 - §6bx: the relearning on the phone - Jelly Star (§6by).
-- §6cg 13's split-screen control on 14 (design 139 §18, F2's fix, branch `night-fixes`): X moves to a second activity
-  inside itself, its first activity's STOPPED comes, then split screen with another app within 2 s - X keeps counting;
-  and once more a kill of X in the class it was resumed in (`kill -9`, `am crash`) - it ends. (§6cd/§6ce 13, 18 and 6
-  passed on 14 and 16 in §6cg/§6ch.)
-- Design 139 §8 row 19 on 14 (§18, F2's code QA M1, branch `night-fixes`): a translucent activity of X over its Main,
-  then `am crash` (and once `kill -9`) - X ends at the first STOPPED; record the STOPPED order.
-- §6cg design 141 rows 2, 3 and 12 re-run on 14, 10+ times each (F1's fix, `HomeRootStop.settle`, design 141 §3.5,
-  branch `night-fixes`): a leftover, then the kiosk's end - never stuck, Home's task kept; the `lock task ended ... ms
-  after Home's stop` line's times, and no `still LOCKED` line.
 - §6cd/§6ce 15: moot, not owed - it can't occur on a Vibb phone: the maximum time to lock is the screen timeout
   (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout; the fold's rule stays unit-tested.
-- §6cf/§6ch: design 141 row 9 re-run on 14 (the call screen comes back; 16 passed 5 of 5 in §6cj) -
-  `KidInCallService.onBringToForeground` (§6ch F1); the gap race in mind (on 14/15 the start can land before the
-  settle's emptying - the 600 ms re-check's `starting it once more` line is the one to look for).
 
 ## 6s. The plain series cover, skip 15/15, the one "Favoritter" tile (design r12)
 
@@ -3952,6 +3940,44 @@ on` + `reset`, so the `unplug; set usb 1` pair may not have sent `ACTION_POWER_C
 | 139 rows 13, 18, 6 (hold) | Pass |
 
 No product code changed. The emulator was shut down (`sync`, `emu kill`) at 23:29 UTC and the server stopped.
+
+## 6ci. Re-run 2026-11-28, Android 14 (branch `gate-rerun-1128a`)
+
+The re-run owed by `night-fixes` on **Android 14 only** (`compat34`, Google APIs, port 5556, `-wipe-data`), 2026-11-28
+00:48-01:30 UTC, with the owner's OK for the night; Android 16 is gate B's (§6cj). `main` at `aeecd64d5`: the debug
+launcher (`assembleDebug`, `-PwarningsAsErrors=true`) and the debug server (`--features emulator_keys`, admin
+`127.0.0.1:3140`, phones `10.0.2.2:3141`), both also gate B's; the server on a copy of §6cg's data. The phone: §4's adb
+lines, "Telefon 1" enrolled again with a typed code, the Child PIN 2580 sent from the PWA (`kid-pin/send`), the setup
+flow's steps left with Later/Skip, screen timeout 10 min, system language English, our dialer role; the kiosk on with
+the block, Home's task `#8` the root (`t8` through the whole run), the lock-task protolog on. Test apps: §6cd's Gate A/B
+(X = `probe.gate.a`) rebuilt with a translucent activity `gate.T` (`Theme.Translucent.NoTitleBar`, started by `gate.Cmd
+opent`), let out with "Allow these apps"; group "Test" (A, B), 5 min. "A leftover" as §6cg (the live wallpaper picker,
+then the Home key), checked in every try's read before the pass: `#1 Task{... A=1000:android}` locked beside Home's
+`#0`. State read right after the emptying (`Allowlisting 0:[]` in the protolog), ~1 s (row 2) and ~2 s after; logs from
+one `logcat -b all` stream; the VM's and the phone's clocks agreed within ~0.3 s. Scripts and logs in
+`~/emu-gate-rerun/` (not committed).
+
+| Row | Android 14 (`compat34`) |
+|---|---|
+| 141 row 2 | **Pass, 11 of 11 - §6cg F1 fixed.** A leftover, parent Settings (in Home's task `t8`, so it kept the leftover), the pause switch and the Parent PIN. Every try: the leftover's `removeLockedTask`, Home's ("last task, reverting"), then `Allowlisting 0:[]` 3-52 ms after the revert. `Home's stop ASKED` in 8, then `lock task ended 44, 11, 15, 32, 14, 11, 11 ms after Home's stop, then the list` (one `ASKED` with no settle line: the first read was already `NONE`); silent in 3 (tries 2-4: Home's own stop from its kiosk-switch listener landed first - `ui/HomeActivity.kt:225` -> `reconcileKioskMode`, `:663` - and the pass read `NONE`, `NOT_LOCKED`, never logged, `lock/LockTaskRoot.kt:330`). `NONE` at ~0.3, ~1 and ~2 s; Settings in front (`SettingsActivity t8`); Home's task and record kept (no `wm_on_create_called` for a new Home) |
+| 141 row 3 | **Pass, 16 of 16.** The PWA's pause. Home in front with a leftover (11): `ASKED` in all 11, `lock task ended 11, 12, 11, 29, 10, 10, 26, 10 ms ...` (3 with no line, the first read `NONE`), `Allowlisting 0:[]` 4-47 ms after the revert, `NONE` at ~0.3 and ~2 s, Home `t8` resumed, not recreated. Chrome in front (5, **no leftover**: Chrome's start trims it, also when Chrome is brought back after the leftover, as §6cg): Chrome's task and Home's removed by Home's stop, `NONE`, Home `t8` resumed; answers `ASKED` (44 and 19 ms), `ASKED_BEFORE` once (26 ms - Home's own stop counted, the settle waited on it), silent twice |
+| 141 row 12 | **Pass, 11 of 11 (`ASKED`, never `NO_HOME`).** `font_scale` flipped 1.3/1.0 before each try: Home relaunched in its own record (`wm_relaunch_resume_activity`, token `254045667`, task `#8`, 11 of 11), then a leftover and the PWA's pause: `ASKED` in 9 (`lock task ended 20, 28, 11, 13, 10, 10, 12, 10 ms`; one with no line), silent in 2; `Allowlisting 0:[]` 2-27 ms after the revert; `NONE` at ~0.3 and ~2 s; Home `t8` kept |
+| 141 row 9 | **Pass, 6 of 6 - §6ch F1 fixed on 14 too.** A call from "Telefon 2" answered, Home in front (the `.call` task locked beside Home), the PWA's pause: the call's task and Home's removed, `NONE`; `KidInCallService: Telecom asks for the call screen in front` in every try (twice in 2), a new `InCallActivity` task (`t59`..`t69`, never locked) in front at ~2 and ~4 s; the call `ACTIVE`, our call notification; Home `t8` kept. In try 2 the ask came between `ASKED` and the settle's end (the start in the gap before the emptying) and survived it. The 600 ms re-check never fired (no `starting it once more` line) |
+| 139 row 13, split-screen control | **Pass, 3 of 3 - §6cg F2 fixed.** A parent pause (kiosk off); Chrome, X over it, X's Main opens its B (`gate.Cmd openb`; B lands in a task of its own here), then Chrome's task to the side stage **after** Main's STOPPED: STOPPED to Chrome's RESUMED **425, 1047, 328 ms**. X kept counting while B was on in its half (`carry` on: X with `resumed_class gate.B`, and Chrome): `group_used_ms` 53 976 -> 114 044 over the next 60 s fold (try 1), +60 s in the 40 s read of try 2, +70 s in try 3 |
+| 139 row 19 | **Pass, 3 of 3** (`am crash` twice, `kill -9` once). Chrome, X's Main over it, X's translucent `gate.T` over Main (Main PAUSED and visible), 30 s, X killed. STOPPED order: **T, then Main, in the same ms**, Chrome RESUMED in that ms. X ended at the first STOPPED: `group_used_ms` grew by exactly X's RESUMED-to-STOPPED (33 577, 33 580, 33 559 ms) and nothing in Chrome's 75 s after. The kill of X in the class it was resumed in (T) ends it, as §6cg 13's control asked |
+
+44 kiosk ends on 14 (33 with a leftover locked): 0 stuck, 0 `still LOCKED`, 0 `NO_HOME`, 0 retry or stuck lines, Home
+never recreated, `Allowlisting 0:[]` always after Home's revert (2-64 ms). The settle's 30 `lock task ended` lines: 10-44
+ms (median 12). Row 18's check over the run: 0 `late event` lines, no `AppGroupUsage` warning.
+
+**Noted.**
+- `adb shell kill -9` of X's pid is refused on this image ("Operation not permitted"); `run-as probe.gate.a kill -9`
+  works (row 19's kill). The refused try left X alive (counted correctly, not counted as a try), and the next `am crash`
+  of that task (Main, T, T) brought Main back (Android's restart of the task's remaining activity) - not counted either.
+- After the split-screen tries, the Home key sent B into its auto-enter PiP (the test app's own setting); cleared with
+  `am force-stop` before row 19.
+
+No product code changed. The emulator was shut down (`sync`, `emu kill`) and the server stopped at 01:30 UTC.
 
 ## 6cj. Re-run 2026-11-28, Android 16 (branch `gate-rerun-1128b`)
 
