@@ -1,9 +1,11 @@
 package com.kidslauncher.mdm.calls
 
 import android.telecom.Call
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * Emulator run 2026-10-06: no "ongoing call" notification or call screen after the call - and
@@ -39,5 +41,29 @@ class CallUiReconcileTest {
             assertFalse("$state", callUiShouldClear(listOf(state), emptyList()))
             assertFalse("$state", callUiShouldClear(emptyList(), listOf(state)))
         }
+    }
+
+    /** Emulator.md §6ch F1 (design 141 row 9): the kiosk's end clears the call screen's locked task, and Telecom's
+     * bring-to-front after the stop must start it again - only while a call is live, as a new call starts it. */
+    @Test
+    fun `Telecom's bring to front starts the call screen while a call is live`() {
+        val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
+        val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
+        val bring = service.substringAfter("override fun onBringToForeground(showDialpad: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(bring.indexOf("if (!OngoingCalls.hasLiveCall) return") in 0 until bring.indexOf("startInCallUi()"))
+        assertFalse("showDialpad" in bring)
+        val start = service.substringAfter("private fun startInCallUi(): Boolean = try {").substringBefore("\n    }\n")
+        assertTrue("startActivity(InCallActivity.intent(this))" in start)
+        // Code QA L1: one re-check after the bring - one at a time, past the kiosk's end's 300 ms wait on 14/15.
+        val post = bring.indexOf("handler.postDelayed(bringRecheck, BRING_RECHECK_MS)")
+        assertTrue(bring, bring.indexOf("startInCallUi()") in 0 until post)
+        assertTrue(bring, bring.indexOf("handler.removeCallbacks(bringRecheck)") in 0 until post)
+        val recheck = service.substringAfter("private val bringRecheck = Runnable {").substringBefore("\n    }\n")
+        assertTrue(recheck, recheck.contains("if (OngoingCalls.hasLiveCall && !InCallActivity.resumed) {"))
+        assertTrue(recheck, recheck.contains("startInCallUi()"))
+        assertEquals(600L, BRING_RECHECK_MS)
+        assertEquals(300L, com.kidslauncher.mdm.lock.KIOSK_END_STOP_SETTLE_MS)
+        // onDestroy's removeCallbacksAndMessages drops it with the service.
+        assertTrue(service.substringAfter("override fun onDestroy() {").substringBefore("\n    }\n").contains("handler.removeCallbacksAndMessages(null)"))
     }
 }

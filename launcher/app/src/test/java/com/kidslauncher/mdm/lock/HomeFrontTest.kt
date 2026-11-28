@@ -142,7 +142,7 @@ class HomeFrontTest {
     fun `the kiosk's end - block, switch, Home's root stop, then the empty list`() {
         val chrome = code(file("java/com/kidslauncher/mdm/lock/LockTaskChrome.kt"))
         val unpin = chrome.substringAfter("private fun writeLockTask(").substringAfter("if (packages == null) {").substringBefore("} else if")
-        val order = listOf("liftAppBlock(dpm, admin)", "mdm.kioskEnabled(false)", "HomeRootStop.stop(context)", "HomeRootStop.step(context", "dpm.setLockTaskPackages(admin, emptyArray())", "HomeRootStop.afterUnpin(context")
+        val order = listOf("liftAppBlock(dpm, admin)", "mdm.kioskEnabled(false)", "HomeRootStop.stop(context)", "HomeRootStop.step(context", "HomeRootStop.settle(context)", "dpm.setLockTaskPackages(admin, emptyArray())", "HomeRootStop.afterUnpin(context")
         val at = order.map { unpin.indexOf(it) }
         assertTrue("$order: $at", at.all { it >= 0 } && at == at.sorted())
         // Code QA L4: a step other than EMPTY returns before the list is written.
@@ -157,7 +157,21 @@ class HomeFrontTest {
         val stop = stopper.substringAfter("fun stop(context: Context): HomeRootStopAnswer {").substringBefore("\n    }\n")
         assertTrue(stop, stop.contains("val asked = synchronized(logLock) { spell.homeAsked }"))
         assertTrue(stop, stop.contains("homeRootStopAnswer(activity != null, lockTaskState(context), PinLockRuntime.chromeLocked, asked)"))
-        assertTrue(stop, stop.contains("if (answer == HomeRootStopAnswer.ASKED) spell.asked()"))
+        assertTrue(stop, stop.contains("if (answer == HomeRootStopAnswer.ASKED) spell.asked(SystemClock.elapsedRealtime())"))
+        // §6cg F1 (§3.5): the wait after the EMPTY step, before the list; the stop's time from both stops; it waits on
+        // system_server alone - no main-thread hop, no latch - and an interrupt can't cut it short.
+        assertTrue(unpin.indexOf("if (HomeRootStop.step(context, stopAnswer) != UnpinStep.EMPTY) return false") < unpin.indexOf("HomeRootStop.settle(context)"))
+        assertEquals(1, Regex("HomeRootStop\\.settle\\(").findAll(chrome).count())
+        val homeStopped = stopper.substringAfter("fun homeStopped(): Boolean").substringBefore("\n    }\n")
+        assertTrue(homeStopped, homeStopped.contains("spell.asked(SystemClock.elapsedRealtime())"))
+        val settle = stopper.substringAfter("fun settle(context: Context): StopSettle {").substringBefore("\n    }\n")
+        assertTrue(settle, settle.contains("stopSettle(since, waited = reads > 0) { lockTaskState(context) }"))
+        // Code QA L1: on 16+ (a synchronous stop) no wait and no read - the gate comes first.
+        val gate = settle.indexOf("if (!stopIsOneway(Build.VERSION.SDK_INT)) return StopSettle.NOT_ASKED")
+        assertTrue(settle, gate in 0 until settle.indexOf("spell.askedAtMs"))
+        assertTrue(settle, settle.contains("SystemClock.sleep(KIOSK_END_STOP_POLL_MS)"))
+        assertTrue(settle, settle.contains("log.settleTimedOut()"))
+        for (banned in listOf("main.", "Latch", "Looper", "Thread.sleep", "synchronized(this)")) assertFalse(banned, settle.contains(banned))
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         assertEquals(listOf("LockTaskChrome.kt"), sources.filter { code(it).contains("HomeRootStop.stop(") }.map { it.name })
         assertEquals(1, Regex("HomeRootStop\\.stop\\(").findAll(chrome).count())

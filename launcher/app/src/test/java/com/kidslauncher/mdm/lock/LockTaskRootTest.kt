@@ -345,7 +345,10 @@ class LockTaskRootTest {
         assertFalse(log.answer(HomeRootStopAnswer.ASKED_BEFORE))
         assertTrue(log.stuck())
         assertFalse(log.stuck())
+        assertTrue("the wait's timeout once per spell (§3.5)", log.settleTimedOut())
+        assertFalse(log.settleTimedOut())
         log.kioskOn()
+        assertTrue(log.settleTimedOut())
         assertTrue("again after a kiosk-on pass", log.answer(HomeRootStopAnswer.REFUSED))
         assertTrue(log.answer(HomeRootStopAnswer.NO_HOME))
         assertTrue(log.stuck())
@@ -356,8 +359,10 @@ class LockTaskRootTest {
         val spell = KioskEndSpell()
         assertFalse(spell.homeAsked)
         assertFalse("nothing brought: Home's own stop asks for no pass (code QA M1)", spell.awaitingHome)
-        spell.asked()
+        assertEquals(null, spell.askedAtMs)
+        spell.asked(atMs = 500L)
         assertTrue(spell.homeAsked)
+        assertEquals(500L, spell.askedAtMs)
         // §3.4: brought, then Home's stop asks for the pass that empties; once emptied, no more passes.
         spell.brought(atMs = 1_000L)
         assertEquals(1_000L, spell.broughtAtMs)
@@ -370,11 +375,73 @@ class LockTaskRootTest {
         assertFalse(spell.takeRetry())
         spell.retried(HomeRootStopAnswer.ASKED)
         assertEquals(HomeRootStopAnswer.ASKED, spell.retryAnswer)
+        // Home's own stop later in the spell moves the wait's start (§3.5).
+        spell.asked(atMs = 2_000L)
+        assertEquals(2_000L, spell.askedAtMs)
         spell.kioskOn()
         assertFalse(spell.homeAsked)
+        assertEquals(null, spell.askedAtMs)
         assertEquals(null, spell.broughtAtMs)
         assertFalse(spell.awaitingHome)
         assertEquals(null, spell.retryAnswer)
         assertTrue("a new spell retries again", spell.takeRetry())
+    }
+
+    /** Design 141 §3.5 (emulator.md §6cg F1): on 14 and 15 Home's stop is oneway, so the unpin waits for lock task to read
+     * not LOCKED before the emptying - bounded, and only right after a stop. */
+    @Test
+    fun `stopSettle - waits after Home's stop until lock task isn't LOCKED, at most 300 ms`() {
+        var reads = 0
+        fun state(s: LockTaskState): () -> LockTaskState = { reads++; s }
+        // No stop this spell, or an older one (a stuck spell's later passes): no wait and no read.
+        assertEquals(StopSettle.NOT_ASKED, stopSettle(null, waited = false, state(LockTaskState.LOCKED)))
+        assertEquals(StopSettle.NOT_ASKED, stopSettle(-1, waited = false, state(LockTaskState.LOCKED)))
+        assertEquals(StopSettle.NOT_ASKED, stopSettle(KIOSK_END_STOP_SETTLE_MS, waited = false, state(LockTaskState.LOCKED)))
+        assertEquals(StopSettle.NOT_ASKED, stopSettle(60_000, waited = false, state(LockTaskState.LOCKED)))
+        assertEquals(0, reads)
+        // Right after the stop: LOCKED waits, anything else is the stop landed (NONE; PINNED is never the kiosk's).
+        for (since in listOf(0L, 19L, KIOSK_END_STOP_SETTLE_MS - 1)) {
+            for (waited in listOf(false, true)) {
+                assertEquals("$since", StopSettle.WAIT, stopSettle(since, waited, state(LockTaskState.LOCKED)))
+                assertEquals("$since", StopSettle.ENDED, stopSettle(since, waited, state(LockTaskState.NONE)))
+                assertEquals("$since", StopSettle.ENDED, stopSettle(since, waited, state(LockTaskState.PINNED)))
+            }
+        }
+        // The bound: a wait that ran out empties the list regardless; one that ends there by reading NONE ended.
+        assertEquals(StopSettle.TIMED_OUT, stopSettle(KIOSK_END_STOP_SETTLE_MS, waited = true, state(LockTaskState.LOCKED)))
+        assertEquals(StopSettle.TIMED_OUT, stopSettle(KIOSK_END_STOP_SETTLE_MS + 40, waited = true, state(LockTaskState.LOCKED)))
+        assertEquals(StopSettle.ENDED, stopSettle(KIOSK_END_STOP_SETTLE_MS + 5, waited = true, state(LockTaskState.NONE)))
+        assertEquals(300L, KIOSK_END_STOP_SETTLE_MS)
+        assertEquals(10L, KIOSK_END_STOP_POLL_MS)
+    }
+
+    /** Code QA L1: the wait only where the stop is oneway - android14/15-release; plain `void` from 16 (API 36). */
+    @Test
+    fun `stopIsOneway - Android 14 and 15 only`() {
+        assertTrue(stopIsOneway(34))
+        assertTrue(stopIsOneway(35))
+        assertFalse(stopIsOneway(36))
+        assertFalse(stopIsOneway(37))
+    }
+
+    /** The gate's runs (§6cg row 2): the stop landing 0-19 ms after the call, and one that never lands (14's REFUSED). */
+    @Test
+    fun `stopSettle - the wait as the unpin runs it, against a stop landing late or never`() {
+        fun run(landsAtMs: Long?): Pair<StopSettle, Int> {
+            var now = 0L
+            var reads = 0
+            while (true) {
+                val answer = stopSettle(now, waited = reads > 0) {
+                    if (landsAtMs != null && now >= landsAtMs) LockTaskState.NONE else LockTaskState.LOCKED
+                }
+                if (answer != StopSettle.WAIT) return answer to reads
+                reads++
+                now += KIOSK_END_STOP_POLL_MS
+            }
+        }
+        assertEquals(StopSettle.ENDED to 0, run(0))
+        assertEquals(StopSettle.ENDED to 2, run(19))
+        assertEquals(StopSettle.ENDED to 30, run(KIOSK_END_STOP_SETTLE_MS))
+        assertEquals(StopSettle.TIMED_OUT to 30, run(null))
     }
 }

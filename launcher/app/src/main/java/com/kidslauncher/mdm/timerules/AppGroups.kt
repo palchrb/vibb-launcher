@@ -67,9 +67,11 @@ data class UsageEv(val timeMs: Long, val pkg: String, val cls: String?, val kind
     val key: String get() = "$timeMs|$pkg|$cls|$kind"
 }
 
-/** A package that isn't off: on, or on-paused ([paused]) by the PAUSED of class [pausedClass] (QA M1). */
+/** A package that isn't off: on, or on-paused ([paused]) by the PAUSED of class [pausedClass] (QA M1). [resumedClass]:
+ * the class of its last RESUMED while on (`null` = not known) - a STOPPED of another class is a move inside the app,
+ * never a kill (emulator.md §6cg F2). */
 @Serializable
-data class OnPackage(val pkg: String, val paused: Boolean = false, val pausedClass: String? = null)
+data class OnPackage(val pkg: String, val paused: Boolean = false, val pausedClass: String? = null, val resumedClass: String? = null)
 
 /** A STOPPED of an on package at [atMs] whose kill rule window (to [atMs] + [KILL_FALLBACK_MS], inclusive) wasn't wholly
  * before the read's `to` (QA L6): still counted as on, settled by a later fold. [alone]: it was the only package on
@@ -273,10 +275,11 @@ fun groupScreenMs(
         applied += e.timeMs to e.key
         if (e.timeMs < plan.spanFrom && superseded(i, e)) continue
         countTo(e.timeMs)
-        // A later event of a package resolves its pending STOPPED; the event applies as usual.
-        pending.removeAll { it.pkg == e.pkg }
+        // A later event of a package resolves its pending STOPPED; the event applies as usual. Not another STOPPED of it
+        // (code QA M1): a dying app's activities stop one after another, newest first - no sign of life.
+        if (e.kind != UsageKind.STOPPED) pending.removeAll { it.pkg == e.pkg }
         when (e.kind) {
-            UsageKind.RESUMED -> on[e.pkg] = OnPackage(e.pkg)
+            UsageKind.RESUMED -> on[e.pkg] = OnPackage(e.pkg, resumedClass = e.cls)
             UsageKind.PAUSED -> on[e.pkg] = OnPackage(e.pkg, paused = true, pausedClass = e.cls)
             UsageKind.STOPPED -> {
                 val state = on[e.pkg]
@@ -284,6 +287,11 @@ fun groupScreenMs(
                     state == null -> {}
                     // QA M1: an on-paused package ends only at the STOPPED of the PAUSED's class.
                     state.paused -> if (state.pausedClass == e.cls) on.remove(e.pkg)
+                    // Revision 6, §6cg F2: the late STOPPED of an activity the app left for another of its own (Main ->
+                    // B) - neither the pair nor the fallback; a dead app's STOPPED is of the activity it was resumed in.
+                    state.resumedClass != null && state.resumedClass != e.cls -> {}
+                    // Code QA M1: its earlier STOPPED's kill rule is still open and decides for both.
+                    pending.any { it.pkg == e.pkg } -> {}
                     // The kill rule (QA L1, L2).
                     else -> {
                         val alone = on.size == 1
@@ -350,9 +358,12 @@ private enum class Partner { YES, NO, OPEN }
  * - The pair: another package's RESUMED in the same ms (either report order), or after it up to [KILL_PAIR_MS].
  * - The fallback (revision 6), only when [alone] (X was the only package on or on-paused at the STOPPED): the first
  *   RESUMED of another package with no event of it before in the window, up to [KILL_FALLBACK_MS] after it. In split
- *   screen the other half is on, so X's late STOPPED after a move inside X never pairs with that half's new app.
- * Any event of [pkg] after the STOPPED ends the search ([Partner.NO]). [Partner.OPEN] while the window reaches [to]
- * (QA L6).
+ *   screen the other half is on, so it never pairs with that half's new app. X's late STOPPED after a move inside X
+ *   (its class isn't the one X was last RESUMED in) never comes here (§6cg F2: split screen entered after it).
+ * Any event of [pkg] after the STOPPED ends the search ([Partner.NO]) - but another STOPPED of it (code QA M1): at a
+ * process death Android stops the dead app's activities newest first (a translucent activity over its Main, PiP beside a
+ * resumed one, both split halves), and the next one's STOPPED is no sign of life. [Partner.OPEN] while the window
+ * reaches [to] (QA L6).
  */
 private fun pairOf(window: List<UsageEv>, index: Int, pkg: String, atMs: Long, to: Long, alone: Boolean): Partner {
     fun partner(e: UsageEv) = e.kind == UsageKind.RESUMED && e.pkg != pkg
@@ -367,7 +378,10 @@ private fun pairOf(window: List<UsageEv>, index: Int, pkg: String, atMs: Long, t
     for (j in first until window.size) {
         val e = window[j]
         if (e.timeMs > atMs + KILL_FALLBACK_MS) return Partner.NO
-        if (e.pkg == pkg) return Partner.NO
+        if (e.pkg == pkg) {
+            if (e.kind == UsageKind.STOPPED) continue
+            return Partner.NO
+        }
         if (partner(e) && e.timeMs >= atMs) {
             if (e.timeMs <= atMs + KILL_PAIR_MS) return Partner.YES
             if (alone && e.pkg !in seen) return Partner.YES
