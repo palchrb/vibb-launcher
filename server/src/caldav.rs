@@ -1888,6 +1888,8 @@ pub struct AccountView {
     pub owner_name: Option<String>,
     /// "Delt i familien": every phone's page shows it.
     pub shared: bool,
+    /// How often its calendars are checked, in minutes (0188, `calendar_feeds::CALDAV_CHECKS`; the owner's choice).
+    pub check_minutes: i64,
 }
 
 /// The accounts shown on `device`'s pages (design 136 decision 2): its own and the shared ones.
@@ -1895,7 +1897,7 @@ pub async fn accounts(db: &sqlx::SqlitePool, device: i64) -> Result<Vec<AccountV
     sqlx::query_as(
         "SELECT a.id, a.server_url, a.username, a.hosts, a.calendars_json, a.state, a.test_error, \
          a.test_status, a.ok_at, a.password_key_fp AS key_fp, a.lan_http, a.owner_device_id, \
-         d.name AS owner_name, a.shared \
+         d.name AS owner_name, a.shared, a.check_minutes \
          FROM caldav_accounts a LEFT JOIN devices d ON d.id = a.owner_device_id \
          WHERE a.principal IS NOT NULL AND (a.owner_device_id = ? OR a.shared = 1) ORDER BY a.id",
     )

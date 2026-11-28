@@ -1016,6 +1016,16 @@ summary.row:active {
     left: 57px;
 }
 
+/* A row under a tile row in its own cell (Device › Calendar's sources' "Check", 2026-11-28): its label and its
+   hairline start at the label above it. */
+.group-icons > .cell-rows > .row ~ .row {
+    padding-left: 57px;
+}
+
+.group-icons > .cell-rows > .row ~ .row::before {
+    left: 57px;
+}
+
 .group-avatars > .row ~ .row::before,
 .group-avatars > .row ~ .cell::before,
 .group-avatars > .cell ~ .row::before,

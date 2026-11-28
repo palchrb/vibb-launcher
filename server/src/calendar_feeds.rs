@@ -7,7 +7,8 @@
 //!   `uid` the hash of it; `device_calendar_feeds` names it per phone). The URL is sealed with the music key
 //!   ([music_secret::MusicKey::seal_with], `calendar-v1:<fingerprint>:<uid>`); only its host is ever shown or logged.
 //!   A source no phone names goes at once (the migration's trigger, QA H2).
-//! - **The fetch** (§2.1, [refresh], [run]): each source every [INTERVAL] (most overdue first, [SPACING] apart), and
+//! - **The fetch** (§2.1, [refresh], [run]): each source at its interval ([interval_of]: a link's [LINK_CHECKS], a
+//!   CalDAV account's [CALDAV_CHECKS]; most overdue first, [SPACING] apart), and
 //!   "Fetch now" at most once per [FETCH_NOW_GAP]; through `music_fetch` (one request at a time server-wide) with
 //!   `Kind::Calendar` (5 MB, 60 s), a public link never reaching a private address, a LAN link pinned to its judged
 //!   addresses; redirects followed here one at a time ([get]), an https → http one refused; conditional GET; a
@@ -40,8 +41,14 @@ pub const MAX_SOURCES: i64 = 50;
 pub const MAX_URL_CHARS: usize = 2000;
 /// A link's name, in code points after `calendar::clean`.
 pub const NAME_MAX: usize = 60;
-/// Each source is fetched this often (decision 2's 30, since 2026-11-09: a removed event leaves the phone sooner).
+/// A source whose interval can't be read is fetched this often (decision 2's 30, since 2026-11-09: a removed event
+/// leaves the phone sooner), and a failing one backs off to at least this ([interval_of] gives the rest).
 pub const INTERVAL: TimeDelta = TimeDelta::minutes(30);
+/// How often a link is checked, the parent's choice per phone (2026-11-28, migration 0188), in minutes; the shared
+/// fetch takes the shortest of the phones' rows that name it.
+pub const LINK_CHECKS: [i64; 3] = [15, 30, 60];
+/// ... and a CalDAV account's calendars, the account owner's choice (an unchanged calendar is one PROPFIND).
+pub const CALDAV_CHECKS: [i64; 4] = [5, 15, 30, 60];
 /// ... and this often while its UIDs churn (QA L8).
 pub const CHURN_INTERVAL: TimeDelta = TimeDelta::hours(6);
 /// Fetches in a row whose every series is new before [CHURN_INTERVAL].
@@ -548,10 +555,12 @@ async fn fetch_and_store(
             }
         },
     };
+    // Read after the fetch: a choice saved while it ran counts from this check.
+    let every = interval_of(&state.db, id).await?;
     let interval = if row.churn >= CHURN_FETCHES {
         CHURN_INTERVAL
     } else {
-        INTERVAL
+        every
     };
     let (fetched, lan) = match result {
         Ok(found) => found,
@@ -566,7 +575,8 @@ async fn fetch_and_store(
             let wait = if now - failing_since >= TimeDelta::days(DAILY_AFTER_DAYS) {
                 TimeDelta::hours(24)
             } else {
-                crate::music_sweep::backoff(failures, interval)
+                // The backoff as before the choice (15 min, then 30), never more often than the interval.
+                crate::music_sweep::backoff(failures, interval.max(INTERVAL))
             };
             sqlx::query(
                 "UPDATE calendar_sources SET failures = ?, error = ?, error_status = ?, tried_at = ?, \
@@ -644,7 +654,7 @@ async fn fetch_and_store(
     let interval = if churn >= CHURN_FETCHES {
         CHURN_INTERVAL
     } else {
-        INTERVAL
+        every
     };
     let counts = parsed.counts.clone();
     let feed_name = parsed
@@ -691,7 +701,57 @@ async fn fetch_and_store(
     Ok(Outcome::Unchanged)
 }
 
-/// The scheduler (§2.1): every due source, most overdue first, [SPACING] apart; then a minute's sleep.
+/// A source's interval as the parent chose it (migration 0188): a CalDAV calendar its account's, a link the shortest
+/// of the phones' rows that name it (one fetch for all of them); [INTERVAL] for a source gone meanwhile.
+pub async fn interval_of(db: &SqlitePool, id: i64) -> Result<TimeDelta, sqlx::Error> {
+    let minutes: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT CASE WHEN s.kind = 'caldav' \
+         THEN (SELECT a.check_minutes FROM caldav_accounts a WHERE a.id = s.account_id) \
+         ELSE (SELECT MIN(d.check_minutes) FROM device_calendar_feeds d WHERE d.source_id = s.id) END \
+         FROM calendar_sources s WHERE s.id = ?",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    Ok(minutes.flatten().map_or(INTERVAL, TimeDelta::minutes))
+}
+
+/// After the parent changed a source's interval: one waiting its regular interval (no failure, no churn, not due yet)
+/// is next checked that long after its last check - at the next pass when that is past. A failing source keeps its
+/// backoff, a due one stays due, and a fetch stored meanwhile wins (only the `next_at` read here is replaced).
+pub async fn reschedule(db: &SqlitePool, id: i64, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    let row: Option<(Option<String>, String, i64, i64)> = sqlx::query_as(
+        "SELECT tried_at, next_at, failures, churn FROM calendar_sources WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    let Some((tried_at, next_at, failures, churn)) = row else {
+        return Ok(());
+    };
+    let (Some(tried), Some(next)) = (
+        tried_at.as_deref().and_then(parse_stamp),
+        parse_stamp(&next_at),
+    ) else {
+        return Ok(());
+    };
+    if failures > 0 || churn >= CHURN_FETCHES || next <= now {
+        return Ok(());
+    }
+    let at = tried + interval_of(db, id).await?;
+    sqlx::query("UPDATE calendar_sources SET next_at = ? WHERE id = ? AND next_at = ?")
+        .bind(stamp(at))
+        .bind(id)
+        .bind(&next_at)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The scheduler (§2.1): every due source, most overdue first, [SPACING] apart; then a minute's sleep. A source
+/// checked every 5 minutes never starves one checked hourly: each pass takes the due ones by `next_at`, and a fetched
+/// source's next is its interval on, so one due longer goes first in the next pass. [MAX_SOURCES] checked every 5
+/// minutes is 50 fetches [SPACING] apart, under 4 of the 5 minutes; past that every source is checked later, in turn.
 pub async fn run(state: AppState) {
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     loop {
@@ -1022,13 +1082,15 @@ pub struct LinkRow {
     pub account_id: Option<i64>,
     /// When the next fetch is due (a failing link's retry).
     pub next_at: String,
+    /// This phone's "Check" for a link, in minutes (0188; a CalDAV calendar's is its account's).
+    pub check_minutes: i64,
 }
 
 pub async fn links(db: &SqlitePool, device_id: i64) -> Result<Vec<LinkRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT s.uid, d.name, s.host, s.lan_http, s.ok_at, s.error, s.error_status, s.events, s.cut, \
          s.unknown_tz, s.churn, s.url_key_fp AS key_fp, s.kind, a.state AS account_state, \
-         s.account_id, s.next_at FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
+         s.account_id, s.next_at, d.check_minutes FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
          LEFT JOIN caldav_accounts a ON a.id = s.account_id WHERE d.device_id = ? ORDER BY d.created_at, s.uid",
     )
     .bind(device_id)

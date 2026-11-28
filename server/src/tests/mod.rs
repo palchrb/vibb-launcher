@@ -19,6 +19,7 @@ mod bluetooth_pairing;
 mod caldav;
 mod caldav_per_phone;
 mod calendar;
+mod calendar_check;
 mod calendar_feeds;
 mod calls;
 mod calls_simpler;
