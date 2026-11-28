@@ -2100,6 +2100,8 @@ Rows:
   inside itself, its first activity's STOPPED comes, then split screen with another app within 2 s - X keeps counting;
   and once more a kill of X in the class it was resumed in (`kill -9`, `am crash`) - it ends. (§6cd/§6ce 13, 18 and 6
   passed on 14 and 16 in §6cg/§6ch.)
+- Design 139 §8 row 19 on 14 (§18, F2's code QA M1, branch `night-fixes`): a translucent activity of X over its Main,
+  then `am crash` (and once `kill -9`) - X ends at the first STOPPED; record the STOPPED order.
 - §6cg design 141 rows 2, 3 and 12 re-run on 14, 10+ times each (F1's fix, `HomeRootStop.settle`, design 141 §3.5,
   branch `night-fixes`): a leftover, then the kiosk's end - never stuck, Home's task kept; the `lock task ended ... ms
   after Home's stop` line's times, and no `still LOCKED` line.

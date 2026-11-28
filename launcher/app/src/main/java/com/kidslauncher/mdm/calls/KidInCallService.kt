@@ -16,6 +16,11 @@ private const val LOG_TAG = "KidInCallService"
 /** [com.kidslauncher.mdm.push.SyncRunner.request]'s reason after an emergency call connects. */
 internal const val EMERGENCY_SYNC_REASON = "emergency_call"
 
+/** [KidInCallService.onBringToForeground]'s one re-check (code QA L1 of `incall-front`): past the kiosk's end's wait on
+ * 14/15 (`KIOSK_END_STOP_SETTLE_MS`, 300 ms) and the emptying after it, with room - a call screen started in design 141
+ * §2's gap and cleared by that emptying (or by a root stop after it) is started once more. */
+internal const val BRING_RECHECK_MS = 600L
+
 /**
  * Our in-call UI service: Telecom binds it while we hold the dialer role (manifest:
  * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI). Not always for emergency calls: AOSP
@@ -225,6 +230,17 @@ class KidInCallService : InCallService() {
         if (!OngoingCalls.hasLiveCall) return
         Log.i(LOG_TAG, "Telecom asks for the call screen in front")
         startInCallUi()
+        // Code QA L1: on 14/15 the start can land in design 141 §2's gap and be cleared by the emptying - once more.
+        handler.removeCallbacks(bringRecheck)
+        handler.postDelayed(bringRecheck, BRING_RECHECK_MS)
+    }
+
+    /** [onBringToForeground]'s one re-check, as [retryIfHidden]: a live call with its screen not resumed. */
+    private val bringRecheck = Runnable {
+        if (OngoingCalls.hasLiveCall && !InCallActivity.resumed) {
+            Log.w(LOG_TAG, "Call screen not in front $BRING_RECHECK_MS ms after Telecom's ask - starting it once more")
+            startInCallUi()
+        }
     }
 
     private fun retryIfHidden(call: Call) {
