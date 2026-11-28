@@ -432,6 +432,12 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
   link's `device_calendar_feeds.check_minutes` (15 / 30 / 60, default 30), each phone's own as its name is; the
   shared fetch takes the shortest of the rows that name the source (`calendar_feeds::interval_of`, read after each
   fetch). A CalDAV calendar's phone rows keep that column's default, unread. CHECKs in the migration hold the values.
+  A shared account whose owner phone was deleted (no owner, design 136) shows no Check anywhere: it keeps its value
+  until a phone claims it with a passing Test, and that phone's page has it.
+- **A CalDAV calendar with no validator** (its server gives neither `getctag` nor `sync-token`, `etag` NULL) reads the
+  whole calendar at every check, so it is checked at most every 30 min (`INTERVAL`) whatever the choice; a longer
+  choice still counts. The fetch judges by the validator its own answer gave (`interval_for`), `reschedule` by the
+  stored one.
 - **The scheduler** is unchanged: each pass takes the due sources by `next_at`, so a 5-min source never starves an
   hourly one (a fetched source's next is its interval on; one due longer goes first in the next pass); 50 sources
   (`MAX_SOURCES`) every 5 minutes is 50 fetches 4 s apart, one in flight server-wide. Churn's 6 h and the backoff stay
@@ -444,11 +450,14 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
   `.../caldav/{account}/check` (`check` = minutes; anything else a 400 `calendar.error.check`, nothing written; a
   source or account this phone doesn't have or own - a CalDAV uid on the link route - refused back to `#sources`),
   a 303 to the Calendar page's `#sources`; a save in the settings log (route and ids). No nudge: the policy is
-  unchanged. A changed choice counts the next check from the last (`calendar_feeds::reschedule`: only a source with no
-  failure and no churn that isn't due yet; at the next pass when that is past). No launcher or contract change.
+  unchanged. A changed choice - and a phone attaching to a shared link or leaving it (`calendar_feeds::add`, the
+  link's Remove) - counts the next check from the last (`calendar_feeds::reschedule`: only a source with no failure
+  and no churn that isn't due yet; at the next pass when that is past; a fetch that stored its own `next_at` in
+  between is read again and judged once more). No launcher or contract change.
 - Tests: `tests::calendar_check` (each kind's default and choices, the refused values and owners, the next check
-  counted again, the shortest of two phones, the backoff, the scheduler's order with a 5-min and a 60-min source, the
-  landing).
+  counted again - by the choice, an attach and a leave -, the shortest of two phones, the backoff, a CalDAV calendar
+  without a validator, the scheduler's order with a 5-min and a 60-min source, the landing);
+  `tests::calendar::every_calendar_route_needs_a_session` has both routes.
 
 ## CalDAV write-back of the kid's own events (design 72b, `docs/design/72b-caldav-write-back.md`, branch `caldav-write`)
 

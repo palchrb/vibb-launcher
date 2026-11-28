@@ -447,3 +447,83 @@ async fn the_scheduler_serves_the_longest_due_first() {
         assert_eq!(next_at(&app, home).await, t0 + TimeDelta::minutes(wait));
     }
 }
+
+/// A phone attaching to a shared link, or leaving it, changes the shortest choice: the next check is counted again
+/// (code QA L1).
+#[tokio::test]
+async fn attaching_or_leaving_a_shared_link_counts_its_next_check_again() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let (ola, _) = app.enrolled_device("Ola").await;
+    let link = add_link(&app, &cookie, anna).await;
+    post_check(
+        &app,
+        &cookie,
+        &format!("/devices/{anna}/calendar/links/{}/check", link_uid()),
+        "60",
+    )
+    .await;
+    let tried = whole(Utc::now()) - TimeDelta::minutes(10);
+    sqlx::query("UPDATE calendar_sources SET tried_at = ?, next_at = ? WHERE id = ?")
+        .bind(stamp(tried))
+        .bind(stamp(tried + TimeDelta::minutes(60)))
+        .bind(link)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // Ola's row comes with the default 30.
+    add_link(&app, &cookie, ola).await;
+    assert_eq!(next_at(&app, link).await, tried + TimeDelta::minutes(30));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{ola}/calendar/links/{}/remove", link_uid()),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert_eq!(next_at(&app, link).await, tried + TimeDelta::minutes(60));
+}
+
+/// A CalDAV calendar whose server gives neither `getctag` nor `sync-token` reads the whole calendar at every check:
+/// it is checked at most every 30 minutes whatever the account's choice, and at the choice again once it has a
+/// validator (code QA L3).
+#[tokio::test]
+async fn a_caldav_calendar_without_a_validator_waits_at_least_half_an_hour() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    fake_icloud(&app);
+    test_form(&app, &cookie, anna, SERVER, PASSWORD).await;
+    let account = account_id(&app).await;
+    tick(&app, &cookie, anna, account, &[HOME]).await;
+    let home = home_source(&app).await;
+    let check = format!("/devices/{anna}/calendar/caldav/{account}/check");
+    let no_tag = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/1000000001/calendars/home/</d:href><d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+    app.fetch.answer_method("PROPFIND", HOME, 207, no_tag);
+    let t0 = whole(Utc::now());
+    calendar_feeds::refresh(&app.state, home, t0).await.unwrap();
+    let etag: Option<String> = sqlx::query_scalar("SELECT etag FROM calendar_sources WHERE id = ?")
+        .bind(home)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(etag, None);
+    assert_eq!(next_at(&app, home).await, t0 + TimeDelta::minutes(30));
+    assert_eq!(
+        calendar_feeds::interval_of(&app.db, home).await.unwrap(),
+        TimeDelta::minutes(30)
+    );
+    // A longer choice still counts; a shorter one stops at the half hour.
+    post_check(&app, &cookie, &check, "60").await;
+    assert_eq!(next_at(&app, home).await, t0 + TimeDelta::minutes(60));
+    post_check(&app, &cookie, &check, "15").await;
+    assert_eq!(next_at(&app, home).await, t0 + TimeDelta::minutes(30));
+    // The validator back: the choice again, from that very fetch.
+    app.fetch
+        .answer_method("PROPFIND", HOME, 207, super::caldav::ctag("ctag-2"));
+    calendar_feeds::refresh(&app.state, home, t0).await.unwrap();
+    assert_eq!(next_at(&app, home).await, t0 + TimeDelta::minutes(15));
+}

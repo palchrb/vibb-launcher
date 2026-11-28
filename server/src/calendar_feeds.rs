@@ -651,6 +651,12 @@ async fn fetch_and_store(
         && !parsed.events.is_empty()
         && parsed.events.iter().all(|e| !before.contains(&e.uid));
     let churn = if all_new { row.churn + 1 } else { 0 };
+    // A CalDAV calendar's floor goes by the validator this answer gave, not the one stored before it.
+    let every = if row.kind == "caldav" {
+        interval_for(&state.db, id, Some(etag.is_some())).await?
+    } else {
+        every
+    };
     let interval = if churn >= CHURN_FETCHES {
         CHURN_INTERVAL
     } else {
@@ -702,49 +708,77 @@ async fn fetch_and_store(
 }
 
 /// A source's interval as the parent chose it (migration 0188): a CalDAV calendar its account's, a link the shortest
-/// of the phones' rows that name it (one fetch for all of them); [INTERVAL] for a source gone meanwhile.
+/// of the phones' rows that name it (one fetch for all of them); [INTERVAL] for a source gone meanwhile. A CalDAV
+/// calendar with no validator (its server gave neither `getctag` nor `sync-token`) reads the whole calendar at every
+/// check, so it is checked at most every [INTERVAL] whatever the choice.
 pub async fn interval_of(db: &SqlitePool, id: i64) -> Result<TimeDelta, sqlx::Error> {
-    let minutes: Option<Option<i64>> = sqlx::query_scalar(
-        "SELECT CASE WHEN s.kind = 'caldav' \
-         THEN (SELECT a.check_minutes FROM caldav_accounts a WHERE a.id = s.account_id) \
-         ELSE (SELECT MIN(d.check_minutes) FROM device_calendar_feeds d WHERE d.source_id = s.id) END \
-         FROM calendar_sources s WHERE s.id = ?",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await?;
-    Ok(minutes.flatten().map_or(INTERVAL, TimeDelta::minutes))
+    interval_for(db, id, None).await
 }
 
-/// After the parent changed a source's interval: one waiting its regular interval (no failure, no churn, not due yet)
-/// is next checked that long after its last check - at the next pass when that is past. A failing source keeps its
-/// backoff, a due one stays due, and a fetch stored meanwhile wins (only the `next_at` read here is replaced).
-pub async fn reschedule(db: &SqlitePool, id: i64, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
-    let row: Option<(Option<String>, String, i64, i64)> = sqlx::query_as(
-        "SELECT tried_at, next_at, failures, churn FROM calendar_sources WHERE id = ?",
+/// [interval_of], with `validator` the CalDAV calendar's as its fetch just answered (`None`: the stored one's).
+async fn interval_for(
+    db: &SqlitePool,
+    id: i64,
+    validator: Option<bool>,
+) -> Result<TimeDelta, sqlx::Error> {
+    let row: Option<(String, Option<i64>, bool)> = sqlx::query_as(
+        "SELECT s.kind, CASE WHEN s.kind = 'caldav' \
+         THEN (SELECT a.check_minutes FROM caldav_accounts a WHERE a.id = s.account_id) \
+         ELSE (SELECT MIN(d.check_minutes) FROM device_calendar_feeds d WHERE d.source_id = s.id) END, \
+         COALESCE(s.etag, '') <> '' FROM calendar_sources s WHERE s.id = ?",
     )
     .bind(id)
     .fetch_optional(db)
     .await?;
-    let Some((tried_at, next_at, failures, churn)) = row else {
-        return Ok(());
+    let Some((kind, minutes, stored)) = row else {
+        return Ok(INTERVAL);
     };
-    let (Some(tried), Some(next)) = (
-        tried_at.as_deref().and_then(parse_stamp),
-        parse_stamp(&next_at),
-    ) else {
-        return Ok(());
-    };
-    if failures > 0 || churn >= CHURN_FETCHES || next <= now {
-        return Ok(());
-    }
-    let at = tried + interval_of(db, id).await?;
-    sqlx::query("UPDATE calendar_sources SET next_at = ? WHERE id = ? AND next_at = ?")
-        .bind(stamp(at))
+    let every = minutes.map_or(INTERVAL, TimeDelta::minutes);
+    Ok(if kind == "caldav" && !validator.unwrap_or(stored) {
+        every.max(INTERVAL)
+    } else {
+        every
+    })
+}
+
+/// After a source's interval may have changed (the parent's choice, a phone attaching to a shared link or leaving
+/// it): one waiting its regular interval (no failure, no churn, not due yet) is next checked that long after its
+/// last check - at the next pass when that is past. A failing source keeps its backoff and a due one stays due. Only
+/// the `next_at` read here is replaced: a fetch stored in between wrote its own, counted with the interval as it
+/// read it after its request, so it is read once more and judged again (once: a second race means the fetches are
+/// counting with the new choice already).
+pub async fn reschedule(db: &SqlitePool, id: i64, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    for _ in 0..2 {
+        let row: Option<(Option<String>, String, i64, i64)> = sqlx::query_as(
+            "SELECT tried_at, next_at, failures, churn FROM calendar_sources WHERE id = ?",
+        )
         .bind(id)
-        .bind(&next_at)
-        .execute(db)
+        .fetch_optional(db)
         .await?;
+        let Some((tried_at, next_at, failures, churn)) = row else {
+            return Ok(());
+        };
+        let (Some(tried), Some(next)) = (
+            tried_at.as_deref().and_then(parse_stamp),
+            parse_stamp(&next_at),
+        ) else {
+            return Ok(());
+        };
+        if failures > 0 || churn >= CHURN_FETCHES || next <= now {
+            return Ok(());
+        }
+        let at = tried + interval_of(db, id).await?;
+        let written =
+            sqlx::query("UPDATE calendar_sources SET next_at = ? WHERE id = ? AND next_at = ?")
+                .bind(stamp(at))
+                .bind(id)
+                .bind(&next_at)
+                .execute(db)
+                .await?;
+        if written.rows_affected() > 0 {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -901,6 +935,8 @@ pub async fn add(
             &name_of(given_name, feed_name.as_deref(), &host),
         )
         .await?;
+        // Its new row's choice may be shorter than the siblings' (0188).
+        reschedule(&state.db, source_id, now).await?;
         return Ok(uid);
     }
     let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendar_sources")
@@ -997,6 +1033,10 @@ pub async fn add(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    if inserted.is_none() {
+        // Attached to the source another add made meanwhile: as above.
+        reschedule(&state.db, source_id, now).await?;
+    }
     tracing::info!(device_id, host = %host, "a calendar link was added");
     Ok(uid)
 }

@@ -652,8 +652,16 @@ pub async fn save_caldav_check(
             .bind(account)
             .fetch_all(&state.db)
             .await;
+    // Best effort, as the link route's: the choice is saved, and the next fetch counts it anyway.
+    let sources = match sources {
+        Ok(sources) => sources,
+        Err(err) => {
+            tracing::warn!(account_id = account, %err, "couldn't read a CalDAV account's calendars to count their next check again");
+            Vec::new()
+        }
+    };
     let now = chrono::Utc::now();
-    for source_id in sources.unwrap_or_default() {
+    for source_id in sources {
         if let Err(err) = calendar_feeds::reschedule(&state.db, source_id, now).await {
             tracing::warn!(source_id, %err, "couldn't count a CalDAV calendar's next check again");
         }
@@ -742,6 +750,12 @@ pub async fn remove_link(
         .await
     {
         Ok(_) => {
+            // A link the siblings keep is checked at their choices now (0188); a source no phone names is gone.
+            if let Err(err) =
+                calendar_feeds::reschedule(&state.db, source_id, chrono::Utc::now()).await
+            {
+                tracing::warn!(source_id, %err, "couldn't count a calendar link's next check again");
+            }
             colors_after_link_save(&state, id).await;
             nudged(&state, id, &back)
         }
