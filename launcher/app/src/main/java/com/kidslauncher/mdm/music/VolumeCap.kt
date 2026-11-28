@@ -16,6 +16,7 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.server.callsThenDecision
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.hardeningManaged
@@ -80,8 +81,10 @@ object VolumeCap {
         )
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val policy = currentPolicyDecision().policy
-                refresh(app, policy, hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed), OfflineOverride.isActive() || RestrictionsPause.isActive())
+                // Design 142 M3's order: the call state first, then the decision.
+                val (calls, decision) = callsThenDecision({ CallPolicyStore.state }, { currentPolicyDecision() })
+                val policy = decision.policy
+                refresh(app, policy, hardeningManaged(policy?.allowlist, calls.managed), OfflineOverride.isActive() || RestrictionsPause.isActive())
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't read the volume cap at start", e)
             }

@@ -317,5 +317,27 @@ class HardeningTest {
         assertTrue(pass.indexOf("val callState") < pass.indexOf("hardeningManaged(policy?.allowlist, callState.managed)"))
         // The sync keeps its own fresh decision; its pass reads the call state after its own refresh.
         assertTrue("AppEnforcer.apply(context, decision, fromSync = true)" in code.getValue("MdmSyncWorker.kt"))
+        // Code QA L2: the time-rule lock inside the pass takes the pass's call state too.
+        assertTrue("TimeRulesRuntime.currentLock(context, policy, overrideActive, calls = callState)" in pass)
+        assertFalse("TimeRulesRuntime.currentLock(context, policy, overrideActive)\n" in pass)
+        // Code QA L3: the other two readers of both take the same order.
+        for (name in listOf("VolumeCap.kt", "UpdateFence.kt")) assertTrue(name, "callsThenDecision(" in code.getValue(name))
+    }
+
+    /** Code QA L4: callsThenDecision's invariant - the sync writes the policy cache and `calls_managed_last` in one
+     * commit, and refreshes the call state from them only after it. */
+    @Test
+    fun `the policy and the managed-calls flag are one commit, before the call state's refresh`() {
+        val main = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val sync = File(main, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText().replace(Regex("//[^\\n]*"), "")
+        val store = sync.substringAfter("private fun storeAcceptedPolicy(").substringBefore("\n}\n")
+        val editor = store.indexOf("val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()")
+        val policy = store.indexOf(".putString(keys.kidModePolicy(),")
+        val calls = store.indexOf("editor.putBoolean(keys.callsManagedLast(), update.callsManagedLast)")
+        val commit = store.indexOf("val ok = editor.commit()")
+        assertTrue(store, editor in 0 until policy && policy < commit && calls in 0 until commit)
+        assertEquals("one commit", 1, Regex("""\.commit\(\)""").findAll(store).count())
+        val perform = sync.substringAfter("suspend fun performMdmSync(")
+        assertTrue(perform.indexOf("storeAcceptedPolicy(context, freshPolicy)") in 0 until perform.indexOf("CallPolicyStore.refresh(context)"))
     }
 }

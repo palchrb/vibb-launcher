@@ -299,10 +299,12 @@ sealed interface PolicyToApply {
 }
 
 /**
- * Design 142 M3 (`AppEnforcer.applyCurrent`): the call state read first, the decision second. The sync commits an
- * accepted policy to the cache before it refreshes the call state from it, so a managed call state read first means
- * the decision read after it has the policy: an `Apply(null)` never comes with managed calls, wherever the sync's two
- * writes land between these two reads (`HardeningTest`).
+ * Design 142 M3 (`AppEnforcer.applyCurrent`): the call state read first, the decision second. The invariant it rests
+ * on: `storeAcceptedPolicy` writes the policy cache and `calls_managed_last` in one editor and one `commit()`, and the
+ * sync's `CallPolicyStore.refresh` (which reads the call state from those same CE preferences) runs after it. So a
+ * managed call state read first means the cache already has the policy when the decision is read: an `Apply(null)`
+ * never comes with managed calls, wherever the sync's two writes land between these two reads (`HardeningTest`, which
+ * also scans that the two writes stay in one commit, before the refresh).
  */
 inline fun <C, D> callsThenDecision(calls: () -> C, decision: () -> D): Pair<C, D> {
     val callState = calls()

@@ -305,10 +305,18 @@ pub struct ProvisionForm {
     network: String,
 }
 
-impl ProvisionForm {
-    /// "Mobildata" chosen: the Wi-Fi fields are ignored - never checked, never saved, never in the QR.
-    fn mobile(&self) -> bool {
-        self.network == "mobile"
+/// Design 142 N3: what the QR form's "Nett" makes of its fields - `(mobile, ssid, password)`, trimmed. "Mobildata"
+/// (`network=mobile`) ignores the Wi-Fi fields (hidden on the page, still sent): never checked, saved or in the QR,
+/// so both come back empty. Anything else is Wi-Fi.
+pub(crate) fn form_network<'a>(
+    network: &str,
+    ssid: &'a str,
+    password: &'a str,
+) -> (bool, &'a str, &'a str) {
+    if network == "mobile" {
+        (true, "", "")
+    } else {
+        (false, ssid.trim(), password.trim())
     }
 }
 
@@ -570,65 +578,62 @@ pub async fn provision_qr(
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    let mobile = form.mobile();
-    // Design 142 N3: with mobile data the Wi-Fi fields (hidden on the page, still sent) are never read.
-    let (ssid, typed) = if mobile {
-        ("", "")
-    } else {
-        (form.wifi_ssid.trim(), form.wifi_password.trim())
-    };
+    let (mobile, ssid, typed) = form_network(&form.network, &form.wifi_ssid, &form.wifi_password);
     let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, &saved, false).await;
     page.mobile = mobile;
 
-    if let Some((field, why)) = wifi_refusal(lang, ssid, typed) {
-        page.error_field = field;
-        page.error = Some(why);
-        page.password_dropped = !typed.is_empty();
-        // The name isn't a secret: typed back (escaped, cut to a sane length) to be shortened.
-        page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
-        return page.page(StatusCode::BAD_REQUEST);
-    }
-    if !mobile {
+    // Design 142 N3: with mobile data nothing below reads the Wi-Fi fields - no check, no saved network, no save.
+    let wifi = if mobile {
+        None
+    } else {
+        if let Some((field, why)) = wifi_refusal(lang, ssid, typed) {
+            page.error_field = field;
+            page.error = Some(why);
+            page.password_dropped = !typed.is_empty();
+            // The name isn't a secret: typed back (escaped, cut to a sane length) to be shortened.
+            page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
+            return page.page(StatusCode::BAD_REQUEST);
+        }
         page.wifi_ssid = ssid.to_string();
-    }
-    let Some(password) = qr_password(&state, saved.as_ref(), ssid, typed) else {
-        tracing::warn!("the saved Wi-Fi password doesn't open with this server's key");
-        page.error_field = "wifi_password";
-        page.error = Some(crate::i18n::t(lang, "devices.qr.password_again"));
-        return page.page(StatusCode::BAD_REQUEST);
-    };
-    // Code QA L3: a saved password that no longer opens is replaced by the one typed under its name.
-    let repair = saved.as_ref().is_some_and(|saved| {
-        saved.ssid == ssid
-            && !typed.is_empty()
-            && saved
-                .sealed
-                .as_deref()
-                .is_some_and(|sealed| open_saved(&state, sealed).is_none())
-    });
-    if (form.remember.is_some() || repair) && !ssid.is_empty() {
-        match save_wifi(&state, &admin.username, ssid, &password).await {
-            Ok(true) => {
-                page.saved_ssid = Some(ssid.to_string());
-                page.saved_password = !password.is_empty();
-            }
-            Ok(false) => {}
-            Err(err) => {
-                tracing::error!(%err, "couldn't save the Wi-Fi network");
-                return crate::i18n::error(
-                    lang,
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "error.save_failed_log",
-                );
+        let Some(password) = qr_password(&state, saved.as_ref(), ssid, typed) else {
+            tracing::warn!("the saved Wi-Fi password doesn't open with this server's key");
+            page.error_field = "wifi_password";
+            page.error = Some(crate::i18n::t(lang, "devices.qr.password_again"));
+            return page.page(StatusCode::BAD_REQUEST);
+        };
+        // Code QA L3: a saved password that no longer opens is replaced by the one typed under its name.
+        let repair = saved.as_ref().is_some_and(|saved| {
+            saved.ssid == ssid
+                && !typed.is_empty()
+                && saved
+                    .sealed
+                    .as_deref()
+                    .is_some_and(|sealed| open_saved(&state, sealed).is_none())
+        });
+        if (form.remember.is_some() || repair) && !ssid.is_empty() {
+            match save_wifi(&state, &admin.username, ssid, &password).await {
+                Ok(true) => {
+                    page.saved_ssid = Some(ssid.to_string());
+                    page.saved_password = !password.is_empty();
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::error!(%err, "couldn't save the Wi-Fi network");
+                    return crate::i18n::error(
+                        lang,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "error.save_failed_log",
+                    );
+                }
             }
         }
-    }
+        (!ssid.is_empty()).then(|| (ssid.to_string(), password))
+    };
     // No code at all without a checksum: there would be no QR code to carry it. Nor while the
     // launcher the QR names would be refused, or isn't checked yet (design 86).
     if page.missing_checksum || page.launcher_blocks || page.no_parent_pin {
         return page.page(StatusCode::OK);
     }
-    let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password));
     let payload_for =
         |code: String| setup_payload(&state.config, &settings, wifi.clone(), mobile, code);
     // The fit is checked before a code is made (qa-31-s15-code L1): an overflow must never

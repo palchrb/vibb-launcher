@@ -176,6 +176,11 @@ turn it on, so a failure before the compliance step leaves only the screen: phot
 11. N3: a SIM without a SIM PIN and with data, no Wi-Fi anywhere in reach or the saved one forgotten; Connect with
     "Mobildata", scan. The phone downloads Vibb One over mobile data with no Wi-Fi screen and enrols. Note the data the
     setup used (Android's data usage for the day).
+12. M4's two known blunt cases (code QA L6, by design, no code): a QR whose server address isn't https is refused on
+    the phone (`QrExtrasAction.REFUSE`) and Koble til says "Bruk en ny oppsettkode" - a new code won't help until the
+    address in Phone Setup is fixed; and a server answering 426 `update_app` keeps the extras for a retry, so Koble til
+    says "Prøver igjen" until a newer Vibb One is installed. Neither should happen with a stable 0.43.0 and an https
+    server (M1, 140's `NeedsServer`); if either is seen on the Jelly, note the screen and the server's version.
 
 Android 17: no device; nothing in M3/M4/N3 is version-dependent (no API above 34 on the phone; N3's extra is API 29).
 
@@ -221,7 +226,7 @@ N1 XS with them; N2 only on §5's finding.
   `PolicyToApply.kind` in `PolicyGate.kt`; `apply`'s bare form takes `calls` and `kind`, and `applyHeld` reads
   `calls ?: CallPolicyStore.state` once, where the hardening is decided, and uses it for the call roles, the fence,
   the PIN lock's `managed`, the screen timeout and the notification rule (the second `ensureLoaded` + read is gone).
-  The 23 offline applies in 14 files call `applyCurrent`. The log line: `Apply (<kind>): policy present|none, calls
+  The 23 offline applies in 15 files call `applyCurrent`. The log line: `Apply (<kind>): policy present|none, calls
   <state> (store: <describe()>), managed <b>, baseline <b>`. Tests: `HardeningTest` (the six orders of the sync's two
   writes around the two reads; the old order shown to fail; the source scans), and the scans in `HomeRound7Test`,
   `AndroidLockPlanTest` and `BtPairingPlanTest` follow the new text.
@@ -234,3 +239,15 @@ N1 XS with them; N2 only on §5's finding.
   `tests::provisioning`. Notes: `docs/notes/server/connectivity.md`, `docs/notes/launcher/setup.md`, `hardening.md`,
   `fail-closed.md`.
 - Not built: N1 (docs, with the release), N2 (on §5's finding), §2 row 2's baseline at first start (§2).
+
+Code QA (2026-11-28, 0H 1M 6L), all taken:
+- **M1** the mobile-data POST test now sends a real network with "Remember" under Mobildata (a QR, nothing saved,
+  nothing logged), and `form_network` (the handler's seam: `(mobile, ssid, password)`) feeds `setup_payload` in the test.
+- **L2** the pass's call state goes into `TimeRulesRuntime.currentLock(.., calls = callState)` (`snapshot`'s `calls`,
+  `messagingApps`), scanned in `HardeningTest`.
+- **L3** `VolumeCap`'s start and `UpdateFence.fenceLocked` read the call state first too (`callsThenDecision`).
+- **L4** `callsThenDecision`'s KDoc states the invariant; `HardeningTest` scans that `storeAcceptedPolicy` writes the
+  policy and `calls_managed_last` in one editor and one commit, before the sync's `CallPolicyStore.refresh`.
+- **L5** Koble til reads the witness once per render (`due(context, witnessEnrolled)`, `qrLine(witnessEnrolled)`).
+- **L6** §5 row 12 (the non-https QR address and 426 `update_app`), no code.
+- **L7** with Mobildata the handler skips `wifi_refusal`, `qr_password` and the save entirely; "15 files" above.

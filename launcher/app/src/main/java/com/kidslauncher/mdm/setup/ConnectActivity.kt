@@ -113,7 +113,9 @@ class ConnectActivity : UIObjectActivity() {
 
     private fun render() {
         val busyNow = busy
-        if (!busyNow && !isFinishing && !due(this)) {
+        // Code QA L5: the witness's file read once per render, for the rule and the QR's line.
+        val witnessEnrolled = EnrolmentWitness.enrolled(this)
+        if (!busyNow && !isFinishing && !due(this, witnessEnrolled)) {
             finish()
             return
         }
@@ -124,19 +126,14 @@ class ConnectActivity : UIObjectActivity() {
         // Design 129b D12: while the enrolment waits for a parent, one line and the attempt's number; after the 45-minute
         // stop, "Koden er utløpt. Be om en ny." (L7).
         // Design 142 M4: else why the QR didn't connect, read again at every render (QrExtras.running moves it).
-        val line = EnrolWait.lines(this) ?: lastError.value?.let { getString(it) } ?: qrLine()?.let { getString(it) }
+        val line = EnrolWait.lines(this) ?: lastError.value?.let { getString(it) } ?: qrLine(witnessEnrolled)?.let { getString(it) }
         binding.connectError.text = line.orEmpty()
         binding.connectError.visibility = if (line == null) View.GONE else View.VISIBLE
     }
 
-    /** Design 142 M4: the QR's line, from the kept extras' store and the witness (no Keystore call). */
-    private fun qrLine(): Int? {
+    /** Design 142 M4: the QR's line, from the kept extras' store (no Keystore call) and the witness [render] read. */
+    private fun qrLine(witnessEnrolled: Boolean): Int? {
         val kept = QrExtras.keptState(this)
-        val witnessEnrolled = try {
-            EnrolmentWitness.enrolled(this)
-        } catch (e: Exception) {
-            true
-        }
         return when (qrConnectLine(kept.refused, kept.pending, running = QrExtras.running.value > 0, witnessEnrolled)) {
             QrConnectLine.RETRYING -> R.string.connect_qr_retrying
             QrConnectLine.REFUSED -> R.string.connect_qr_refused
@@ -201,8 +198,8 @@ class ConnectActivity : UIObjectActivity() {
         private var skipNextHomeResume = false
 
         /** The rule's live inputs; main-thread safe (a binder call, prefs reads and the witness's small file, no
-         * Keystore). Never throws. */
-        fun due(context: Context): Boolean = try {
+         * Keystore; [witnessEnrolled] as the caller already read it). Never throws (`EnrolmentWitness.enrolled` catches). */
+        fun due(context: Context, witnessEnrolled: Boolean = EnrolmentWitness.enrolled(context)): Boolean = try {
             val mdm = LauncherPreferences.mdm()
             connectScreenDue(
                 deviceOwner = SetupReadings.deviceOwner(context),
@@ -210,7 +207,7 @@ class ConnectActivity : UIObjectActivity() {
                 tokenStored = DeviceCredentials.tokenStored(),
                 keyAdopted = KeyBook.adoptedStored(context),
                 policyEverApplied = mdm.policyEverApplied(),
-                witnessEnrolled = EnrolmentWitness.enrolled(context),
+                witnessEnrolled = witnessEnrolled,
             )
         } catch (e: Exception) {
             false

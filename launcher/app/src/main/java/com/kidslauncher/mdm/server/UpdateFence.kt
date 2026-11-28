@@ -229,9 +229,16 @@ object UpdateFence {
     private fun fenceLocked(app: Context, sessionId: Int, releaseTag: String): Boolean {
         val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return false
         if (!dpm.isDeviceOwnerApp(app.packageName)) return false
-        val policy = currentPolicyDecision().policy
-        CallPolicyStore.ensureLoaded(app)
-        val managed = policy?.allowlist != null || CallPolicyStore.state.managed
+        // Design 142 M3's order: the call state first, then the decision.
+        val (calls, decision) = callsThenDecision(
+            calls = {
+                CallPolicyStore.ensureLoaded(app)
+                CallPolicyStore.state
+            },
+            decision = { currentPolicyDecision() },
+        )
+        val policy = decision.policy
+        val managed = policy?.allowlist != null || calls.managed
         if (policy?.updateFence != true || !managed) {
             Log.i(LOG_TAG, "No fence for $releaseTag (switch ${policy?.updateFence == true}, managed $managed)")
             return false

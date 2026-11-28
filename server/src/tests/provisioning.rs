@@ -1295,6 +1295,61 @@ async fn mobile_data_ignores_the_wifi_fields_and_saves_nothing() {
             .await
             .unwrap();
     assert_eq!(saved, 0);
+    // Code QA M1: a real network typed under Mobildata with "Remember" - still a QR, still nothing saved or logged.
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[
+                ("network", "mobile"),
+                ("wifi_ssid", "Hjemme"),
+                ("wifi_password", "fake-wifi-pass"),
+                ("remember", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let text = res.text();
+    assert!(text.contains("data-row=\"qr\""), "{text}");
+    assert!(!text.contains("fake-wifi-pass"));
+    assert!(provisioning::saved_wifi(&app.db).await.unwrap().is_none());
+    let saved: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'wifi_%'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(saved, 0);
+    // What the handler makes of those fields, and the QR it builds from them: mobile data, no Wi-Fi.
+    let (mobile, ssid, password) = provisioning::form_network("mobile", "Hjemme", "fake-wifi-pass");
+    assert_eq!((mobile, ssid, password), (true, "", ""));
+    let settings = crate::models::ProvisioningSettings::default();
+    let payload = provisioning::setup_payload(
+        &app.state.config,
+        &settings,
+        (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string())),
+        mobile,
+        "ABC123".to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        payload["android.app.extra.PROVISIONING_USE_MOBILE_DATA"],
+        true
+    );
+    assert!(
+        payload
+            .get("android.app.extra.PROVISIONING_WIFI_SSID")
+            .is_none()
+    );
+    // Wi-Fi (or no choice): the fields, trimmed.
+    assert_eq!(
+        provisioning::form_network("wifi", " Hjemme ", " fake-wifi-pass "),
+        (false, "Hjemme", "fake-wifi-pass")
+    );
+    assert_eq!(
+        provisioning::form_network("", "Hjemme", ""),
+        (false, "Hjemme", "")
+    );
     // Wi-Fi again: the same field is judged as before.
     let res = app
         .request_form(
