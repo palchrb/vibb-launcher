@@ -2107,8 +2107,9 @@ Rows:
   after Home's stop` line's times, and no `still LOCKED` line.
 - §6cd/§6ce 15: moot, not owed - it can't occur on a Vibb phone: the maximum time to lock is the screen timeout
   (`lock/KeyguardCover.kt:39`), so the keyguard shows at every timeout; the fold's rule stays unit-tested.
-- §6cf/§6ch: design 141 row 9 re-run on 14 and 16 (the call screen comes back) - `KidInCallService.onBringToForeground`,
-  branch `incall-front` (§6ch F1); the gap race in mind (the start after the posted stop, or the retry ends a root it made).
+- §6cf/§6ch: design 141 row 9 re-run on 14 (the call screen comes back; 16 passed 5 of 5 in §6cj) -
+  `KidInCallService.onBringToForeground` (§6ch F1); the gap race in mind (on 14/15 the start can land before the
+  settle's emptying - the 600 ms re-check's `starting it once more` line is the one to look for).
 
 ## 6s. The plain series cover, skip 15/15, the one "Favoritter" tile (design r12)
 
@@ -3951,3 +3952,32 @@ on` + `reset`, so the `unplug; set usb 1` pair may not have sent `ACTION_POWER_C
 | 139 rows 13, 18, 6 (hold) | Pass |
 
 No product code changed. The emulator was shut down (`sync`, `emu kill`) at 23:29 UTC and the server stopped.
+
+## 6cj. Re-run 2026-11-28, Android 16 (branch `gate-rerun-1128b`)
+
+The re-run owed by `night-fixes` (§6ch F1's call-screen fix, §6cg F1's settle) on **Android 16 only** (`jelly36`, port
+5560), 2026-11-28 00:51-01:05 UTC, with the owner's OK for the night; Android 14 is gate A's (`compat34`). `main` at
+`aeecd64d5`: gate A's debug launcher (installed with `install -r` over the image's last state) and debug server, run as
+this gate's own copy (admin `127.0.0.1:3200`, phones `10.0.2.2:3201`) on a copy of §6ch's data. The phone: §6ch's
+second phone "Telefon 2" kept from that night (no wipe) - Device Owner, our dialer role, the kiosk on with the block
+(`mFlags= 127`), Home's task `#18` the root; "Mamma" (`+4791234567`) given to it in the copy's database before the
+server started. **No Android PIN on this phone** (§6ch's hold phone was enrolled without a Child PIN; `locksettings
+verify` with no credential succeeds) - neither row needs it. The protolog on (`wm logging enable-text
+WM_DEBUG_LOCKTASK`), state read every ~0.06-0.4 s (`dumpsys activity activities`), `logcat` and `logcat -b events` in
+one stream each, the phone's times. §6ch's method, scripts adapted. At the boot a Recents task (`type=recents`,
+`nexuslauncher`, which is on the lock-task list) was locked beside Home; the first pass (row 9 try 1) removed it.
+
+| Row | Android 16 (`jelly36`) |
+|---|---|
+| 141 row 9 | **Pass, 5 of 5 - §6ch F1 fixed.** `adb emu gsm call` from Mamma, answered (`mCallState=2`), Home key (Home `t18` in front, the call's `.call` task locked beside it), the PWA's pause. Each: the call's task and Home's removed (`finish-imm:clear-task-all` for `InCallActivity`), Home's revert, `Home's stop ASKED`, then `KidInCallService: Telecom asks for the call screen in front` (twice in 4 tries, once in 1; the first ask 14-44 ms after the revert, in two tries just before the `ASKED` line), a new `InCallActivity` (`wm_create_activity`, tasks `t24`..`t32`, never locked) resumed **540, 109, 159, 181, 121 ms** after the revert. `NONE` with no locked task at the first read after the pass and at every read to 4.5-7 s after it (the read's end), `InCallActivity` in front throughout, the call live, the screen "Mamma" with Hang up. The 600 ms re-check never fired (no `starting it once more` line: the screen was resumed in time each time). Home: in front before the pause (the row's setup) and until the call screen resumed - no other screen between (one read with no `topResumedActivity`, the transition), no `wm_set_resumed_activity`, `wm_on_create_called` or `wm_finish_activity` for `HomeActivity` between the pause and the call screen. After `gsm cancel`, the Home key and the PWA's end: LOCKED, `#18` alone, 12-14 s after the post |
+| 141 row 2 | **Pass, 5 of 5 - no regression from the settle (skipped on 16).** A leftover (`LiveWallpaperActivity`, `#1 Task{... A=1000:android}` beside Home's `#0`), the pause from Settings (drawer › Settings › Parent PIN › "Pause all restrictions" › PIN). Each: `Allowing features 0:0x3f`, the leftover's `removeLockedTask`, Home's ("last task, reverting"), then `Allowlisting 0:[]` **20, 25, 12, 66, 4 ms** after the revert; `Home's stop ASKED` in 3, silent in 2 (Home's own listener first, as §6ch); no settle line (`lock task ended`/`still LOCKED`) - the wait is skipped on 16 (`lock/HomeRootStop.kt` `settle`, `stopIsOneway`). `NONE` at the first read after the pass and at every read to 3.5-9 s after; Home's task `#18` kept; Settings in front, Back -> Home, Chrome opened from Home (its first-run screen); the PWA's end re-pinned (LOCKED, `#18` alone) |
+
+**Noted.**
+- Home relaunched once in its own record (`ActivityThread: Schedule relaunch activity: HomeActivity`,
+  `wm_on_destroy_called` then `wm_on_create_called` with the same token `213359956`, task `#18`) at 00:58:27, while I
+  opened the drawer's Settings by hand between the rows - a configuration relaunch under Settings, not in a row (none
+  in row 2's five Settings opens), as row 12's font-size relaunch; no finding.
+- Row 2's first attempt didn't reach the pause: the Parent PIN pad wasn't up when the script read it (timing); the
+  script now waits for the pad. Not counted.
+
+No product code changed. The emulator was shut down (`sync`, `emu kill`) at 01:05 UTC and the server stopped.
