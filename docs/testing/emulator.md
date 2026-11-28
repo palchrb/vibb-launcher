@@ -4055,3 +4055,64 @@ only in the QR's compliance step).
   then succeeding by hand; enrolled on that fresh image. Boots took 72-148 s on 16 against 48-94 s on 14 under that load.
 
 No product code changed. Each emulator was shut down (`emu kill`) after its last row and the server stopped at 10:04 UTC.
+
+## 6cl. PLAN 1o: an unplug's wake stays one through a re-plug (branch `gate-1o`) - run 2026-11-28
+
+PLAN 1o's rows (`docs/notes/launcher/lock-and-glance.md`, "The tag is the screen-on's") on **Android 16** (`jelly36`)
+and then **Android 14** (`compat34`), one emulator at a time on port 5556, 2026-11-28 10:44-11:04 UTC, with the owner's
+OK. `main` at `a779d1f79`: the debug launcher (`assembleDebug`, `-PwarningsAsErrors=true`) installed with `install -r`
+over each image's last state from §6ck (Device Owner, enrolled, the kiosk on, `mLockTaskModeState=LOCKED`), cold boots
+without a wipe; the debug server (`--features emulator_keys`) on a copy of §6ck's data, so both phones kept their
+enrolment. The Child PIN 2580 sent from the PWA (`kid-lock`): `AndroidLock: apply: managed=true kidPin=true secure=true
+face=true`, the glance Android's face. SOS handlers: Android 16 Google's `safetyhub` (`EmergencySosActivity`) beside
+`com.android.emergency`; Android 14 `com.android.emergency` (`EmergencyAction`). The control: the build before the merge
+(`a779d1f79^1` = `b3cff5d92`) installed over the same phone for row 1o-a, then the fix build again.
+
+Neither image wakes on a plug change, so the steps send `KEYCODE_WAKEUP`; the loss is the blocked start
+`am start -a android.intent.action.SET_WALLPAPER` (`BlockedAppActivity`). Before each try: `dumpsys battery set usb 1`
+(1o-d: `unplug`), `KEYCODE_SLEEP`, 4.5 s dark. Read: one `logcat` stream per image with a `GATE` marker per try;
+`mKeyguardOccluded` at +1, +2 and +3 s after the last step. `dumpsys battery reset` at the end of each image. Times below
+are from the wake; "re-front" is `AndroidLock: re-front #1 of the power change` (followed by `PinLock: Re-fronting the
+lock (#1)`).
+
+| Row | Android 16 (`jelly36`) | Android 14 (`compat34`) |
+|---|---|---|
+| 1o-a, the build before the fix: `unplug; WAKEUP; sleep 1.3; set usb 1; am start ...` | **Reproduced**, 3 of 3: `probably Emergency SOS`, `Lock yields to an exempt screen: sos`, no re-front, `mKeyguardOccluded=false` at +1..+3 s | **Reproduced**, 3 of 3: the same |
+| 1o-a on the fix | **Pass**, 3 of 3: the start at 1331-1368 ms, the re-front 204-241 ms after it, no SOS line, occluded at +1..+3 s | **Pass**, 3 of 3: the start at 1381-1408 ms, the re-front 203-242 ms after, no SOS line, occluded |
+| 1o-b, `sleep 0.5` | **Pass**, 3 of 3: the start at 534-559 ms, the re-front ~205 ms after, occluded | **Pass**, 3 of 3: 578-604 ms, ~230 ms after, occluded |
+| 1o-b, `sleep 2.0` | **Pass**, 3 of 3: the start at 2030-2041 ms, the re-front ~210 ms after, occluded | **Pass**, 3 of 3: 2075-2155 ms, 213-238 ms after, occluded |
+| 1o-c: 1o-a's line, then 1.5 s apart, each after `KEYCODE_SHIFT_LEFT`: `unplug; am start ...`, then `set usb 1; am start ...` | **Pass**, 3 of 3: three losses on one screen-on (~1.33, ~2.9, ~4.46 s), each `re-front #1 of the power change` 200-210 ms after, no SOS line, occluded after the last | **Pass**, 3 of 3: the same (~1.45, ~3.1, ~4.7 s; 204-229 ms) |
+| 1o-d: a plug-in's wake, 2 s later `KEYCODE_SLEEP`, `unplug`, `KEYCODE_WAKEUP`, the start 0.3 s later | **Pass**, 4 of 4 (sleep-to-wake 119, 121, 126, 273 ms): `probably Emergency SOS`, `exempt screen: sos`, no `power changed`, no re-front, `mKeyguardOccluded=false` | **Pass**, 3 of 3 inside the row's 30-290 ms (sleep-to-wake 80, 135, 150 ms): the same; a fourth try at 420 ms (outside, not counted) the same too |
+| 1o-e: `WAKEUP`, the start 1 s later (no power change) | **Pass**, 3 of 3: `probably Emergency SOS`, `exempt screen: sos` | **Pass**, 3 of 3: the same |
+| 1o-f: `unplug; WAKEUP; am start ...; sleep 0.8; set usb 1` | **Pass on the end state**, 3 of 3, occluded at +1..+3 s in each. Try 1: `re-front #1 of the power change` at 328 ms, no SOS line. Try 2: the start (21 ms) came before the glance's own resume at the screen-on, so the glance came up over it - nothing lost, no line. Try 3: the pause at ~70 ms came before the unplug's stamp: `probably Emergency SOS` and the `sos` yield at 379 ms, then the unplug's look 1.0 s after its stamp (`power changed`, the mark cleared, `re-front #1 of the power change` at 1078 ms) | **Pass on the end state**, 3 of 3: try 1 the re-front at 565 ms, no SOS line; try 2 as 16's try 3 (the SOS line and yield at 433 ms, the look's re-front at 1186 ms); try 3 as 16's try 2 (the glance over the start, no line) |
+
+**1o-f's SOS line (Noted, as designed).** In 2 of 6 tries the glance's pause came 7-35 ms before the unplug's
+`ACTION_POWER_DISCONNECTED` reached the launcher (the stamp is the delivery; in the dark it is late, §6bl "Row 5 again",
+D1). The screen-on was not tagged yet at the pause, so the pause set the probable-SOS mark and the check yielded; the
+stamp then tagged the screen-on and the change's own look (`powerLook`, `PinLockRuntime.kt:1588`) cleared the mark as
+its comment describes ("a mark with the tag set is one set before a late stamp tagged the screen-on"), and re-fronted.
+Android's lock screen showed for ~0.7 s (from the yield to the look). The row's "no SOS line" holds when the stamp
+comes before the pause; the end state is right either way.
+
+**The real SOS gesture (Noted).** Five `KEYCODE_POWER` from separate `input` calls 0.15 s apart (one `input` call with
+five keys is "too fast", 10 ms):
+- Android 16: `GestureLauncherService: Emergency gesture detected, launching.` (626 ms), `EmergencySosActivity`; the
+  glance yields (`probably Emergency SOS`, `sos`), the SOS screen occludes the keyguard. This image's SOS screen is
+  "Touch & hold for 3 seconds to start" (no automatic countdown): left alone it closed itself after 20 s, no call; a
+  3.8 s hold (`input swipe` in place) started an emergency call at once (Telecom `CREATED, com.google.android.apps.safetyhub`,
+  the dialer's emergency call screen, the glance yields `system_call`), hung up from the call screen's End call; the
+  glance back after.
+- Android 14: `EmergencyAction` with its automatic countdown; the glance yields as above; 6.3 s after the start
+  `EmergencyActionRcvr: Starting to call emergency number`, then the app crashed (`Unknown authority
+  com.android.settings.emergency`, this image's missing provider) - no call, as §6bl found on 16.
+- **Covered** - the press-SOS in the dark right after a plug-in (`unplug`, 4.5 s dark, `set usb 1`, then the five
+  presses): on both images the plug-in tagged press 1's screen-on, the SOS start was read as the plug-in's loss and the
+  glance re-fronted 0.20-0.22 s after it (`re-front #1 of the power change`), `mKeyguardOccluded=true` with the glance
+  on top for the next 8 s - the code QA's M the note names ("Not told apart"), reproduced. On 16 the SOS screen went out
+  of sight (`visibilityChanged ... false` at once) and its task was gone when read ~20 s later; its hold to start can't be reached
+  under the glance, so no call. On 14 the countdown kept running under the glance: `Starting to call emergency number`
+  7.5 s after the start (then the same crash) - the AOSP app would place its call while covered. Whether Unihertz's SOS
+  counts down or waits for a hold, and what it does covered, only the Jelly Star shows.
+
+No product code changed. Scripts and logs in `~/emu-gate-1o/` (not committed). Each emulator was shut down
+(`emu kill`) after its last row (Android 16 at 10:56, Android 14 at 11:04 UTC) and the server stopped.
