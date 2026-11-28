@@ -243,11 +243,21 @@ const val KIOSK_END_STUCK_CHECK_MS = 1_000L
  * its `stopLockTaskModeInternal` 11 ms behind one when it lost; 300 ms is over 15 times that for a busy system_server at
  * the kiosk's end, and short enough under the chrome monitor: a main-thread taker (the LOCKED edge's pass, the "sos"
  * yield) waits at most this once per kiosk-off spell, far from an ANR, and it ends well before the 1 s stuck check.
+ * Only on 14 and 15 ([stopIsOneway]).
  */
 const val KIOSK_END_STOP_SETTLE_MS = 300L
 
 /** How often the wait of [KIOSK_END_STOP_SETTLE_MS] reads `lockTaskModeState`: at most 30 binder reads. */
 const val KIOSK_END_STOP_POLL_MS = 10L
+
+/**
+ * Whether `Activity.stopLockTask()` is a oneway binder call on [sdk] (`Build.VERSION.SDK_INT`): `IActivityClientController`'s
+ * `stopLockTaskModeByToken` is `oneway` in android14-release and android15-release, plain `void` from android16-release
+ * (API 36). Only then does the unpin wait ([KIOSK_END_STOP_SETTLE_MS], code QA L1): on 16+ the stop has run when the call
+ * returns, and a wait would only widen §2's gap - the emptying would then land after the posted end, where a launch that
+ * joined in the gap stays the new root.
+ */
+fun stopIsOneway(sdk: Int): Boolean = sdk < 36
 
 /** One read of the wait for Home's stop to land ([stopSettle]). */
 enum class StopSettle {

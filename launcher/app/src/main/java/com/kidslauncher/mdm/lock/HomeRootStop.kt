@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -27,7 +28,7 @@ private const val LOG_TAG = "HomeRootStop"
  *   edge's pass, the "sos" yield) - a wait for main there would time out into the very path this fixes.
  * - The wait before the emptying ([settle], §3.5): on Android 14 and 15 the stop is oneway and returns before it has run,
  *   so the unpin reads `lockTaskModeState` until it isn't LOCKED, at most [KIOSK_END_STOP_SETTLE_MS] - a wait on
- *   system_server only, never on main.
+ *   system_server only, never on main. Not on 16+, where the stop is synchronous ([stopIsOneway]).
  * - Home registers in `onCreate` and unregisters in `onDestroy` unless `isChangingConfigurations` (a relaunch keeps the
  *   record and its token; the new instance registers again), and only while it is the registered one.
  * - The stuck check ([afterUnpin], §3.3): 1 s after a pass that found lock task LOCKED, lock task still on and not ours
@@ -130,9 +131,11 @@ object HomeRootStop {
      * (emulator.md §6cg F1). Reads every [KIOSK_END_STOP_POLL_MS]; the wait waits on system_server alone (its stop and
      * its posted `performStopLockTask`), never on this process's main thread, so holding the chrome monitor here can't
      * deadlock with a main-thread taker - it waits at most the bound. Out of time: today's emptying, one log line per
-     * spell. Never throws.
+     * spell. Only on 14 and 15 ([stopIsOneway]). Never throws.
      */
     fun settle(context: Context): StopSettle {
+        // Code QA L1: on 16+ the stop is synchronous - no wait, so §2's gap stays one binder round trip.
+        if (!stopIsOneway(Build.VERSION.SDK_INT)) return StopSettle.NOT_ASKED
         val askedAt = synchronized(logLock) { spell.askedAtMs } ?: return StopSettle.NOT_ASKED
         var reads = 0
         while (true) {

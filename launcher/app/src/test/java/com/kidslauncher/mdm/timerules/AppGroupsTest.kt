@@ -351,6 +351,46 @@ class AppGroupsTest {
         }
     }
 
+    /** Code QA M1 of §6cg F2: at a process death Android stops the dead app's visible activities newest first - a
+     * translucent B over Main, PiP beside a resumed one, both split halves. Another STOPPED of X is no sign of life, in
+     * either order and whichever class X was last resumed in; the kill still ends X. */
+    @Test
+    fun `a death with two of X's activities visible ends X, in either STOPPED order (code QA M1)`() {
+        val main = "$x.Main"
+        val b = "$x.B"
+        val start = listOf(ev(999, home, UsageKind.PAUSED), ev(1_000, x, UsageKind.RESUMED, main), ev(1_400, home, UsageKind.STOPPED))
+        // B (translucent) over Main: Main is PAUSED, not stopped; B resumed last. Split halves: Main resumed last.
+        val bLast = start + listOf(ev(10_000, x, UsageKind.PAUSED, main), ev(10_005, x, UsageKind.RESUMED, b))
+        val mainLast = start + listOf(ev(10_005, x, UsageKind.RESUMED, b), ev(10_010, x, UsageKind.RESUMED, main))
+        for ((name, before) in listOf("B resumed last" to bLast, "Main resumed last" to mainLast)) {
+            for ((order, first, second) in listOf(Triple("B then Main", b, main), Triple("Main then B", main, b))) {
+                // am crash: the two STOPPEDs 1 ms apart, Home's cold RESUMED 400 ms later (the fallback), or 3 ms (the pair).
+                for (gap in listOf(3L, 400L)) {
+                    val events = before + listOf(
+                        ev(40_000, x, UsageKind.STOPPED, first), ev(40_001, x, UsageKind.STOPPED, second),
+                        ev(40_000 + gap, home, UsageKind.RESUMED),
+                    )
+                    val out = fold(events, carryOn(home))
+                    assertFalse("$name, $order, +$gap", x in out.onPkgs())
+                    assertTrue("$name, $order, +$gap: ${out.ms()}", out.ms() in 39_000L..39_001L)
+                    assertTrue(out.carry.pending.isEmpty())
+                }
+            }
+        }
+        // The first STOPPED at a read's end: pending, the second one in the next read keeps it, the partner settles it.
+        val all = bLast + listOf(ev(40_000, x, UsageKind.STOPPED, b), ev(40_001, x, UsageKind.STOPPED, main), ev(40_400, home, UsageKind.RESUMED))
+        val one = next(all.filter { it.timeMs < 40_001 }, carryOn(home), 0, 40_001)
+        assertEquals(listOf(PendingStop(x, 40_000, alone = true)), one.carry.pending)
+        val two = next(all.filter { it.timeMs < 40_200 }, one.carry, 40_001, 40_200)
+        assertEquals(one.carry.pending, two.carry.pending)
+        val three = next(all, two.carry, 40_200, 50_000)
+        assertFalse(x in three.onPkgs())
+        assertTrue(three.carry.pending.isEmpty())
+        // Not a death: X's own RESUMED or PAUSED after the STOPPED still ends the search (a move, X stays on).
+        val alive = bLast + listOf(ev(40_000, x, UsageKind.STOPPED, b), ev(40_100, x, UsageKind.RESUMED, main), ev(40_400, home, UsageKind.RESUMED))
+        assertTrue(x in fold(alive, carryOn(home)).onPkgs())
+    }
+
     // ---- A pending STOPPED across reads (QA L6) ---------------------------------------------------------------------
 
     @Test

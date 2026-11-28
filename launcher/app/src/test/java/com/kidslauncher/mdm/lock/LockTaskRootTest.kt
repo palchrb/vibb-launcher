@@ -415,6 +415,15 @@ class LockTaskRootTest {
         assertEquals(10L, KIOSK_END_STOP_POLL_MS)
     }
 
+    /** Code QA L1: the wait only where the stop is oneway - android14/15-release; plain `void` from 16 (API 36). */
+    @Test
+    fun `stopIsOneway - Android 14 and 15 only`() {
+        assertTrue(stopIsOneway(34))
+        assertTrue(stopIsOneway(35))
+        assertFalse(stopIsOneway(36))
+        assertFalse(stopIsOneway(37))
+    }
+
     /** The gate's runs (§6cg row 2): the stop landing 0-19 ms after the call, and one that never lands (14's REFUSED). */
     @Test
     fun `stopSettle - the wait as the unpin runs it, against a stop landing late or never`() {

@@ -166,6 +166,9 @@ class HomeFrontTest {
         assertTrue(homeStopped, homeStopped.contains("spell.asked(SystemClock.elapsedRealtime())"))
         val settle = stopper.substringAfter("fun settle(context: Context): StopSettle {").substringBefore("\n    }\n")
         assertTrue(settle, settle.contains("stopSettle(since, waited = reads > 0) { lockTaskState(context) }"))
+        // Code QA L1: on 16+ (a synchronous stop) no wait and no read - the gate comes first.
+        val gate = settle.indexOf("if (!stopIsOneway(Build.VERSION.SDK_INT)) return StopSettle.NOT_ASKED")
+        assertTrue(settle, gate in 0 until settle.indexOf("spell.askedAtMs"))
         assertTrue(settle, settle.contains("SystemClock.sleep(KIOSK_END_STOP_POLL_MS)"))
         assertTrue(settle, settle.contains("log.settleTimedOut()"))
         for (banned in listOf("main.", "Latch", "Looper", "Thread.sleep", "synchronized(this)")) assertFalse(banned, settle.contains(banned))
