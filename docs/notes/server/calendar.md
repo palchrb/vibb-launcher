@@ -204,14 +204,16 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   series whole unless its UNTIL is over 60 days ago. Caps 2000 events and 2 MB served, the farthest from today first.
   A series' rev = 16 hex of SHA-256 over its JSON without the rev; the feed's over the events array.
 - **The fetch** (`src/calendar_feeds.rs`): `run` (spawned in `main`, its first pass 30 s on, then `run_due` every
-  minute) fetches each due source every `INTERVAL` - **30 min** since 2026-11-09 (design 72 decision 2's other choice;
-  it was 60: a removed event, the user's declined Spond event in an iCloud feed, lingered on the lock's reminder row;
-  branch `calendar-fresh`) -, most overdue first, `SPACING` 4 s apart, each in its own task - a parse that panics
+  minute) fetches each due source at its interval, `calendar_feeds::interval_of` - **the parent's "Sjekk"** since
+  2026-11-28 (below, "How often a source is checked"; before it `INTERVAL`, 30 min since 2026-11-09, design 72
+  decision 2's other choice; it was 60: a removed event, the user's declined Spond event in an iCloud feed, lingered on
+  the lock's reminder row; branch `calendar-fresh`) -, most overdue first, `SPACING` 4 s apart, each in its own task - a parse that panics
   is caught (`catch_unwind`: the source's `unreadable`), a task that panics anyway is stored as that source's
   `unreadable` failure, and the pass goes on (QA H1); a fetch that couldn't be stored waits the interval (nit 6) - through `music_fetch` (one request in flight server-wide) with `Kind::Calendar` (5 MB,
   60 s; `SourceResponse.content_type` since design 72). Redirects are followed in `get`, one hop at a time (at most 5):
   never https → http (`insecure`), a LAN link only on its own host and port. Conditional GET; a 304 keeps the set; a
-  failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the interval - 30 min, 6 h under UID churn; daily after 7 days of
+  failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the interval but at least
+  `INTERVAL` - 30 min, a 60-min source's 60, 6 h under UID churn; daily after 7 days of
   failing). A 200 with no events while the set had some is held (`empty`) until the third such answer in a row or 24 h
   after the first (its validators aren't kept, so the next fetch asks again; QA M1). UID churn - every series new at
   three fetches in a row - fetches every 6 h. A new rev is stored (`WHERE id AND uid`: a source removed mid-fetch
@@ -421,6 +423,41 @@ accounts are one group on Device › Calendar and each has a page of its own (`h
   the refusals' kind and field in `a_refused_add_renders_the_form_as_typed` and
   `a_refused_test_renders_the_form_as_typed_and_never_the_password`, the three GETs in
   `every_calendar_route_needs_a_session` and `shell::every_form_on_every_page_lands_on_its_own_group`.
+
+## How often a source is checked (the owner's ask of 2026-11-28, migration `0188_calendar_check.sql`, branch `calendar-interval`)
+
+- **Where the choice lives**: a CalDAV account's `caldav_accounts.check_minutes` (5 / 15 / 30 / 60, default 5 - an
+  unchanged calendar is one PROPFIND), for all its calendars, set on its owner's page only (as "Delt i familien"; a
+  shared account's row on another phone's page has no select), so a calendar shared by two phones has one value. A
+  link's `device_calendar_feeds.check_minutes` (15 / 30 / 60, default 30), each phone's own as its name is; the
+  shared fetch takes the shortest of the rows that name the source (`calendar_feeds::interval_of`, read after each
+  fetch). A CalDAV calendar's phone rows keep that column's default, unread. CHECKs in the migration hold the values.
+  A shared account whose owner phone was deleted (no owner, design 136) shows no Check anywhere: it keeps its value
+  until a phone claims it with a passing Test, and that phone's page has it.
+- **A CalDAV calendar with no validator** (its server gives neither `getctag` nor `sync-token`, `etag` NULL) reads the
+  whole calendar at every check, so it is checked at most every 30 min (`INTERVAL`) whatever the choice; a longer
+  choice still counts. The fetch judges by the validator its own answer gave (`interval_for`), `reschedule` by the
+  stored one.
+- **The scheduler** is unchanged: each pass takes the due sources by `next_at`, so a 5-min source never starves an
+  hourly one (a fetched source's next is its interval on; one due longer goes first in the next pass); 50 sources
+  (`MAX_SOURCES`) every 5 minutes is 50 fetches 4 s apart, one in flight server-wide. Churn's 6 h and the backoff stay
+  (the backoff's cap is the interval but at least 30 min: 15, then 30 - a failing 5-min calendar isn't asked every 5
+  minutes; a 60-min link 15, then 60). CalDAV's `REPORT_EVERY` (24 h whatever the ctag says) counts from the last
+  REPORT's time, not the interval: it holds at every choice.
+- **The PWA**: "Sjekk" / "Check" under each row of `#sources` (`SourceRow.check`, `common.n_min` labels): the row's
+  `<a>` and a `label.row` with the select are one `form.cell.cell-rows` (the label row inset to 57 px, `style.css`
+  `.group-icons > .cell-rows`), `data-autosave`, a `<noscript>` Save, `POST .../calendar/links/{uid}/check` or
+  `.../caldav/{account}/check` (`check` = minutes; anything else a 400 `calendar.error.check`, nothing written; a
+  source or account this phone doesn't have or own - a CalDAV uid on the link route - refused back to `#sources`),
+  a 303 to the Calendar page's `#sources`; a save in the settings log (route and ids). No nudge: the policy is
+  unchanged. A changed choice - and a phone attaching to a shared link or leaving it (`calendar_feeds::add`, the
+  link's Remove) - counts the next check from the last (`calendar_feeds::reschedule`: only a source with no failure
+  and no churn that isn't due yet; at the next pass when that is past; a fetch that stored its own `next_at` in
+  between is read again and judged once more). No launcher or contract change.
+- Tests: `tests::calendar_check` (each kind's default and choices, the refused values and owners, the next check
+  counted again - by the choice, an attach and a leave -, the shortest of two phones, the backoff, a CalDAV calendar
+  without a validator, the scheduler's order with a 5-min and a 60-min source, the landing);
+  `tests::calendar::every_calendar_route_needs_a_session` has both routes.
 
 ## CalDAV write-back of the kid's own events (design 72b, `docs/design/72b-caldav-write-back.md`, branch `caldav-write`)
 

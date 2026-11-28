@@ -117,8 +117,12 @@
                 </details></div></div>
         </div>
         {% endif %}
+        {#- 2026-11-28: "Check" under a row, how often the server checks it (a link's on its phone's row, a CalDAV account's
+            on its owner's page only): the row and the select are one cell, the form round both, saving on change back
+            to #sources. -#}
         <div class="group group-icons">
             {% for s in sources %}
+            {% if let Some(pick) = s.check %}<form method="post" action="{{ pick.action }}" class="cell cell-rows" data-check="{{ s.id }}">{% endif %}
             {% if s.caldav %}
             <a class="row" href="{{ s.href }}" data-caldav="{{ s.id }}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M5 13.5h7.3a3 3 0 0 0 .4-6A4.4 4.4 0 0 0 4.4 6.8 3.4 3.4 0 0 0 5 13.5z" fill="currentColor"/></svg></span>
@@ -131,6 +135,16 @@
                 <span class="row-label">{{ s.name }}<span class="row-sub{% if s.failing %} tone-orange{% endif %}"{% if s.failing %} data-link-failing{% endif %}>{{ s.sub }}</span></span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
+            {% endif %}
+            {% if let Some(pick) = s.check %}
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.sources.check") }}</span>
+                    <select class="pick" name="check" data-autosave>
+                        {% for c in pick.choices %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
             {% endif %}
             {% endfor %}
             {% if sources_off %}

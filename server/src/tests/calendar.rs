@@ -1204,6 +1204,8 @@ async fn every_calendar_route_needs_a_session() {
         ),
         (format!("{links}/name"), vec![("name", "Renamed")]),
         (format!("{links}/fetch"), vec![]),
+        // 2026-11-28: how often a source is checked.
+        (format!("{links}/check"), vec![("check", "60")]),
         (format!("{links}/remove"), vec![]),
         // Design 72 step 2: CalDAV.
         (
@@ -1221,6 +1223,7 @@ async fn every_calendar_route_needs_a_session() {
             format!("{page}/caldav/1/sharing"),
             vec![("was_shared", "0"), ("shared", "on")],
         ),
+        (format!("{page}/caldav/1/check"), vec![("check", "60")]),
         (format!("{page}/caldav/1/remove"), vec![("was_shared", "0")]),
     ];
     for (path, fields) in posts {
@@ -1272,6 +1275,11 @@ async fn every_calendar_route_needs_a_session() {
             .await
             .unwrap();
     assert_eq!(rules, [(1, "x".to_string())]);
+    let checks: Vec<i64> = sqlx::query_scalar("SELECT check_minutes FROM device_calendar_feeds")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(checks, [30]);
     // The report's own colour rows are there (the auto-pick, QA L7); nothing else was set.
     let saved: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM device_calendars \

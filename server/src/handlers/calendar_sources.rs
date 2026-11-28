@@ -15,7 +15,8 @@
 //!   a refusal renders this page again (400) as typed - never the password -, its kind chosen, the reason under its
 //!   field; a pass goes to the new source's page.
 //! - The POSTs (`.../links/{uid}/name|fetch|remove`, `.../caldav/{account}/test|calendars|sharing|remove`) go back
-//!   to the page their form is on, at its group, so a save never jumps to the top.
+//!   to the page their form is on, at its group, so a save never jumps to the top; "Check" on the group's rows
+//!   (`.../links/{uid}/check`, `.../caldav/{account}/check`, 2026-11-28) back to `#sources`.
 
 use std::collections::HashSet;
 
@@ -237,6 +238,35 @@ pub struct SourceRow {
     pub sub: String,
     /// The sub says something failed (shown orange).
     pub failing: bool,
+    /// "Check" under the row (2026-11-28): a link's on every phone that has it, a CalDAV account's on its owner's
+    /// page only (another phone's shared row has none).
+    pub check: Option<CheckPick>,
+}
+
+/// A source's "Check" select: where it posts and its choices.
+pub struct CheckPick {
+    pub action: String,
+    pub choices: Vec<CheckChoice>,
+}
+
+pub struct CheckChoice {
+    pub value: i64,
+    pub label: String,
+    pub selected: bool,
+}
+
+fn check_pick(lang: Lang, action: String, allowed: &[i64], chosen: i64) -> CheckPick {
+    CheckPick {
+        action,
+        choices: allowed
+            .iter()
+            .map(|&value| CheckChoice {
+                value,
+                label: t_params(lang, "common.n_min", &[("n", &value.to_string())]),
+                selected: value == chosen,
+            })
+            .collect(),
+    }
 }
 
 /// The rows, and whether a link is sealed with a key the server no longer has (the group's alarm).
@@ -287,6 +317,12 @@ pub(super) fn source_rows(
             name: link.name.clone(),
             sub,
             failing,
+            check: Some(check_pick(
+                lang,
+                format!("{}/check#sources", link_page(id, &link.uid)),
+                &calendar_feeds::LINK_CHECKS,
+                link.check_minutes,
+            )),
         });
     }
     for account in accounts {
@@ -342,6 +378,14 @@ pub(super) fn source_rows(
             name: account.username.clone(),
             sub,
             failing,
+            check: (account.owner_device_id == Some(id)).then(|| {
+                check_pick(
+                    lang,
+                    format!("{}/check#sources", caldav_page(id, account.id)),
+                    &calendar_feeds::CALDAV_CHECKS,
+                    account.check_minutes,
+                )
+            }),
         });
     }
     (rows, key_new)
@@ -510,6 +554,121 @@ pub async fn rename_link(
     }
 }
 
+/// A posted "Check" (2026-11-28): one of `allowed`, else `None` (a 400, nothing written).
+fn check_value(fields: &[(String, String)], allowed: &[i64]) -> Option<i64> {
+    field(fields, "check")
+        .parse::<i64>()
+        .ok()
+        .filter(|v| allowed.contains(v))
+}
+
+fn bad_check(lang: Lang) -> Response {
+    crate::i18n::error(lang, StatusCode::BAD_REQUEST, "calendar.error.check")
+}
+
+/// POST `/devices/{id}/calendar/links/{uid}/check` (2026-11-28, migration 0188): `check` (minutes, one of
+/// `calendar_feeds::LINK_CHECKS`), this phone's row of the link; the shared fetch takes the shortest of the phones'
+/// and its next check is counted again from the last ([calendar_feeds::reschedule]). Back to the Calendar page's
+/// `#sources`, where the select is. No nudge: the phone's policy is unchanged.
+pub async fn save_link_check(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, uid)): Path<(i64, String)>,
+    body: Bytes,
+) -> Response {
+    let fields = form_pairs(&body);
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let Some(minutes) = check_value(&fields, &calendar_feeds::LINK_CHECKS) else {
+        return bad_check(lang);
+    };
+    // A link only: a CalDAV calendar's check is its account's.
+    let found: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT s.id FROM calendar_sources s JOIN device_calendar_feeds d ON d.source_id = s.id \
+         WHERE s.uid = ? AND d.device_id = ? AND s.kind <> 'caldav'",
+    )
+    .bind(&uid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    let source_id = match found {
+        Ok(Some(source)) => source,
+        Ok(None) => return crate::settings_log::refused(back_to_sources(id)),
+        Err(err) => return read_failed(lang, err, "a calendar link"),
+    };
+    let saved = sqlx::query(
+        "UPDATE device_calendar_feeds SET check_minutes = ? WHERE device_id = ? AND source_id = ?",
+    )
+    .bind(minutes)
+    .bind(id)
+    .bind(source_id)
+    .execute(&state.db)
+    .await;
+    if let Err(err) = saved {
+        return failed(lang, err, "couldn't save a calendar link's check");
+    }
+    if let Err(err) = calendar_feeds::reschedule(&state.db, source_id, chrono::Utc::now()).await {
+        tracing::warn!(source_id, %err, "couldn't count a calendar link's next check again");
+    }
+    back_to_sources(id)
+}
+
+/// POST `/devices/{id}/calendar/caldav/{account}/check` (2026-11-28, migration 0188): `check` (minutes, one of
+/// `calendar_feeds::CALDAV_CHECKS`) for all the account's calendars, on its owner's page only (as "Delt i familien");
+/// each calendar's next check counted again from its last. Back to the Calendar page's `#sources`; an account this
+/// phone doesn't own is refused there.
+pub async fn save_caldav_check(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, account)): Path<(i64, i64)>,
+    body: Bytes,
+) -> Response {
+    let fields = form_pairs(&body);
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let Some(minutes) = check_value(&fields, &calendar_feeds::CALDAV_CHECKS) else {
+        return bad_check(lang);
+    };
+    let saved = sqlx::query(
+        "UPDATE caldav_accounts SET check_minutes = ? WHERE id = ? AND owner_device_id = ? \
+         AND principal IS NOT NULL",
+    )
+    .bind(minutes)
+    .bind(account)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match saved {
+        Ok(done) if done.rows_affected() == 0 => {
+            return crate::settings_log::refused(back_to_sources(id));
+        }
+        Ok(_) => {}
+        Err(err) => return failed(lang, err, "couldn't save a CalDAV account's check"),
+    }
+    let sources: Result<Vec<i64>, sqlx::Error> =
+        sqlx::query_scalar("SELECT id FROM calendar_sources WHERE account_id = ?")
+            .bind(account)
+            .fetch_all(&state.db)
+            .await;
+    // Best effort, as the link route's: the choice is saved, and the next fetch counts it anyway.
+    let sources = match sources {
+        Ok(sources) => sources,
+        Err(err) => {
+            tracing::warn!(account_id = account, %err, "couldn't read a CalDAV account's calendars to count their next check again");
+            Vec::new()
+        }
+    };
+    let now = chrono::Utc::now();
+    for source_id in sources {
+        if let Err(err) = calendar_feeds::reschedule(&state.db, source_id, now).await {
+            tracing::warn!(source_id, %err, "couldn't count a CalDAV calendar's next check again");
+        }
+    }
+    back_to_sources(id)
+}
+
 /// POST `/devices/{id}/calendar/links/{uid}/fetch`: "Fetch now", at most once per source per 5 minutes (else back
 /// with `?notice=fetch_wait`); the fetch runs before the answer (at most 60 s), back to the link's page at `#fetch`.
 /// Not a save.
@@ -591,6 +750,12 @@ pub async fn remove_link(
         .await
     {
         Ok(_) => {
+            // A link the siblings keep is checked at their choices now (0188); a source no phone names is gone.
+            if let Err(err) =
+                calendar_feeds::reschedule(&state.db, source_id, chrono::Utc::now()).await
+            {
+                tracing::warn!(source_id, %err, "couldn't count a calendar link's next check again");
+            }
             colors_after_link_save(&state, id).await;
             nudged(&state, id, &back)
         }

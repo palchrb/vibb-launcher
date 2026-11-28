@@ -699,7 +699,7 @@ async fn main() {
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
     tokio::task::spawn(music_sweep::run(state.clone()));
-    // Calendar links (design 72): each linked calendar fetched every half hour (`calendar_feeds::INTERVAL`), its first pass 30 s from now.
+    // Calendar links (design 72): each linked calendar fetched at the parent's interval (`calendar_feeds::interval_of`), its first pass 30 s from now.
     tokio::task::spawn(calendar_feeds::run(state.clone()));
     // Design 72b: the kid's events written to the marked CalDAV calendars - woken by a phone's set, else every minute.
     tokio::task::spawn(calendar_kid_events::run(state.clone()));
@@ -1187,6 +1187,15 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/calendar/links/{uid}/name",
             post(handlers::calendar_sources::rename_link),
+        )
+        // 2026-11-28: how often the server checks a source, on its row in the Calendar page's #sources.
+        .route(
+            "/devices/{id}/calendar/links/{uid}/check",
+            post(handlers::calendar_sources::save_link_check),
+        )
+        .route(
+            "/devices/{id}/calendar/caldav/{account}/check",
+            post(handlers::calendar_sources::save_caldav_check),
         )
         .route(
             "/devices/{id}/calendar/links/{uid}/fetch",
