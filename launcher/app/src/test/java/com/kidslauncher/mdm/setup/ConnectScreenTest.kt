@@ -155,6 +155,33 @@ class ConnectScreenTest {
     }
 
     @Test
+    fun `after a failed QR the screen says why, in a few words`() {
+        // Design 142 M4: kept for a retry and nothing running - trying again; refused - a new code; nothing while busy.
+        assertEquals(QrConnectLine.RETRYING, qrConnectLine(refused = false, pending = true, running = false, witnessEnrolled = false))
+        assertEquals(null, qrConnectLine(refused = false, pending = true, running = true, witnessEnrolled = false))
+        assertEquals(QrConnectLine.REFUSED, qrConnectLine(refused = true, pending = false, running = false, witnessEnrolled = false))
+        assertEquals(null, qrConnectLine(refused = true, pending = false, running = true, witnessEnrolled = false))
+        assertEquals("kept extras are a newer QR's", QrConnectLine.RETRYING, qrConnectLine(refused = true, pending = true, running = false, witnessEnrolled = false))
+        // Design QA M-b: the refused flag is an old QR's word on a witnessed phone; kept extras still say so.
+        assertEquals(null, qrConnectLine(refused = true, pending = false, running = false, witnessEnrolled = true))
+        assertEquals(QrConnectLine.RETRYING, qrConnectLine(refused = false, pending = true, running = false, witnessEnrolled = true))
+        assertEquals(null, qrConnectLine(refused = false, pending = false, running = false, witnessEnrolled = false))
+        // The waiting enrolment's lines and a typed failure come first; the QR's line is read at every render.
+        val render = code("setup/ConnectActivity.kt").substringAfter("private fun render()").substringBefore("private fun qrLine()")
+        assertTrue("EnrolWait.lines(this) ?: lastError.value?.let { getString(it) } ?: qrLine()?.let { getString(it) }" in render)
+        val line = code("setup/ConnectActivity.kt").substringAfter("private fun qrLine()").substringBefore("private fun connect()")
+        assertTrue("QrExtras.keptState(this)" in line)
+        assertTrue("EnrolmentWitness.enrolled(this)" in line)
+        assertTrue("running = QrExtras.running.value > 0" in line)
+        val en = File(main, "res/values/strings.xml").readText()
+        val nb = File(main, "res/values-nb/strings.xml").readText()
+        assertTrue("<string name=\"connect_qr_refused\">QR-koden virket ikke. Bruk en ny oppsettkode.</string>" in nb)
+        assertTrue("<string name=\"connect_qr_retrying\">Ikke koblet til ennå. Prøver igjen.</string>" in nb)
+        assertTrue("<string name=\"connect_qr_refused\">The QR code didn\\'t work. Use a new setup code.</string>" in en)
+        assertTrue("<string name=\"connect_qr_retrying\">Not connected yet. Trying again.</string>" in en)
+    }
+
+    @Test
     fun `the button wants both fields and no enrolment running`() {
         assertTrue(connectButtonEnabled("https://vibb.example.org", "ABCD2345", busy = false))
         assertFalse(connectButtonEnabled("", "ABCD2345", busy = false))

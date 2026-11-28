@@ -331,7 +331,7 @@ object BtPairingWindow {
             if (dpm(app).setApplicationHidden(admin(app), SETTINGS_PACKAGE, true)) return true
         }
         Log.w(LOG_TAG, "Settings didn't hide again: an apply follows")
-        Thread { runCatching { AppEnforcer.apply(app, currentPolicyDecision()) } }.start()
+        Thread { runCatching { AppEnforcer.applyCurrent(app) } }.start()
         return false
     }
 
@@ -383,7 +383,7 @@ object BtPairingWindow {
             Log.w(LOG_TAG, "A pairing window was left open: putting it back")
             try {
                 LockTaskChrome.routeWindow(app, null, LockTaskChrome.RouteOwner.BT_PAIRING)
-                AppEnforcer.apply(app, currentPolicyDecision())
+                AppEnforcer.applyCurrent(app)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "The put-back failed: ${e.javaClass.simpleName}; the marker stays")
                 return

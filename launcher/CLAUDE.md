@@ -52,7 +52,8 @@ default policy after an error) must never become `null` on a managed phone:
   phone that has never applied a policy, otherwise `Fallback`, which enforces the `LastEnforcedPlan` (unreadable too:
   nothing allowed, kiosk on).
 - Only an accepted fresh policy is cached, in one synchronous `commit()` with `policy_ever_applied` and the
-  `LastEnforcedPlan`; every status report carries `policyState`. Offline callers use `currentPolicyDecision()`.
+  `LastEnforcedPlan`; every status report carries `policyState`. Offline callers use `currentPolicyDecision()`;
+  an offline apply is `AppEnforcer.applyCurrent` (design 142 M3).
 - The enrolment's witness (`server/EnrolmentWitness.kt`) keeps a managed phone from being read as new.
 - `allowlist = []` means nothing allowed; `null` means unmanaged.
 - The system dialer is never suspended or hidden; while managed and not allowlisted, `DISALLOW_OUTGOING_CALLS` is

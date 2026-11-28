@@ -761,6 +761,8 @@
     <string name="connect_busy">Connecting…</string>
     <string name="connect_hint">The setup code is on the phone\'s page in the parent app › Advanced › New setup code.</string>
     <string name="connect_other_server">That isn\'t this phone\'s server.</string>
+    <string name="connect_qr_refused">The QR code didn\'t work. Use a new setup code.</string>
+    <string name="connect_qr_retrying">Not connected yet. Trying again.</string>
     <string name="re_enrol_done">The phone is connected again. Try the parent code once it has synced.</string>
     <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
     <!-- Dagen (design 69): the kid's day; its user-facing name since 2026-11-02 is "Calendar" (nb "Kalender"). -->

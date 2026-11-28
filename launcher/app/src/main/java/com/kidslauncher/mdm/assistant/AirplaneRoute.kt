@@ -20,7 +20,6 @@ import com.kidslauncher.mdm.lock.LockTaskChrome
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
-import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.postReportOnly
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -329,7 +328,7 @@ object AirplaneRoute {
                 if (dpm.setApplicationHidden(admin, SETTINGS_PACKAGE, true)) return
             }
             Log.w(LOG_TAG, "Settings didn't hide again: an apply follows")
-            Thread { runCatching { AppEnforcer.apply(context, currentPolicyDecision()) } }.start()
+            Thread { runCatching { AppEnforcer.applyCurrent(context) } }.start()
         }
 
         override fun hideSession() {
@@ -445,7 +444,7 @@ object AirplaneRoute {
             Log.w(LOG_TAG, "The route's window was left open: putting it back")
             try {
                 LockTaskChrome.routeWindow(context, null)
-                AppEnforcer.apply(context, currentPolicyDecision())
+                AppEnforcer.applyCurrent(context)
             } finally {
                 AirplaneRuntime.clearRouteOpen(context)
             }

@@ -109,7 +109,7 @@ object BootHome {
             val app = context.applicationContext
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
-                    com.kidslauncher.mdm.server.AppEnforcer.apply(app, currentPolicyDecision())
+                    com.kidslauncher.mdm.server.AppEnforcer.applyCurrent(app)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Apply after the call failed: ${e.javaClass.simpleName}")
                 }

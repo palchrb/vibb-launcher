@@ -1747,13 +1747,13 @@ fun reevaluateLockReasonFromCache(context: Context, snapshot: TimeRulesRuntime.S
     val appContext = context.applicationContext
     scheduleScope.launch {
         try {
-            AppEnforcer.apply(appContext, currentPolicyDecision())
+            AppEnforcer.applyCurrent(appContext)
             // The Play state may have moved while that apply ran (screen on right after screen
             // off in the update window): apply again until what's enforced is what's current,
             // so the window really ends at once on screen-on.
             var tries = 0
             while (tries++ < 3 && AppEnforcer.lastEnforcedPlayState?.key() != PlayRuntime.state(appContext).key()) {
-                AppEnforcer.apply(appContext, currentPolicyDecision())
+                AppEnforcer.applyCurrent(appContext)
             }
             if (installModeEnded) PlayRuntime.onInstallModeEnded(appContext)
         } catch (e: Exception) {

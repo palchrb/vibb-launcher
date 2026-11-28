@@ -123,9 +123,25 @@ class ConnectActivity : UIObjectActivity() {
         binding.connectButton.setText(if (busyNow) R.string.connect_busy else R.string.connect_title)
         // Design 129b D12: while the enrolment waits for a parent, one line and the attempt's number; after the 45-minute
         // stop, "Koden er utløpt. Be om en ny." (L7).
-        val line = EnrolWait.lines(this) ?: lastError.value?.let { getString(it) }
+        // Design 142 M4: else why the QR didn't connect, read again at every render (QrExtras.running moves it).
+        val line = EnrolWait.lines(this) ?: lastError.value?.let { getString(it) } ?: qrLine()?.let { getString(it) }
         binding.connectError.text = line.orEmpty()
         binding.connectError.visibility = if (line == null) View.GONE else View.VISIBLE
+    }
+
+    /** Design 142 M4: the QR's line, from the kept extras' store and the witness (no Keystore call). */
+    private fun qrLine(): Int? {
+        val kept = QrExtras.keptState(this)
+        val witnessEnrolled = try {
+            EnrolmentWitness.enrolled(this)
+        } catch (e: Exception) {
+            true
+        }
+        return when (qrConnectLine(kept.refused, kept.pending, running = QrExtras.running.value > 0, witnessEnrolled)) {
+            QrConnectLine.RETRYING -> R.string.connect_qr_retrying
+            QrConnectLine.REFUSED -> R.string.connect_qr_refused
+            null -> null
+        }
     }
 
     private fun connect() {

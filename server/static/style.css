@@ -2576,7 +2576,8 @@ details.disclosure > summary { list-style: none; cursor: pointer; }
 details.disclosure > summary::-webkit-details-marker { display: none; }
 details.disclosure[open] > summary .section-chev,
 details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); transform: rotate(90deg); }
-.form-group > .field-switch { padding: 0; margin: 0 0 16px; }
+.form-group > .field-switch,
+.form-group > .qr-wifi > .field-switch { padding: 0; margin: 0 0 16px; }
 .form-group select { width: 100%; }
 
 /* ---- The Music tab (design 31 step 12): library rows, categories, an entry, the import, the shelf ---- */
@@ -3879,6 +3880,15 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 .segment input:focus + .segment-face { outline: 2px solid var(--tint); outline-offset: -2px; }
 .segment input:focus:not(:focus-visible) + .segment-face { outline: none; }
 .segmented-sub { margin-top: 4px; }
+/* Design 142 N3: Connect's Nett. Its two radios come before the rows, so the chosen one raises its segment and
+   Mobildata hides the Wi-Fi fields - sibling selectors only, no script, no :has(). */
+.qr-net { margin-bottom: 16px; }
+.qr-net .segmented { margin-top: 0; }
+.net-wifi:checked ~ .qr-net .seg-wifi .segment-face,
+.net-mobile:checked ~ .qr-net .seg-mobile .segment-face { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.net-wifi:focus-visible ~ .qr-net .seg-wifi .segment-face,
+.net-mobile:focus-visible ~ .qr-net .seg-mobile .segment-face { outline: 2px solid var(--tint); outline-offset: -2px; }
+.net-mobile:checked ~ .qr-wifi { display: none; }
 /* §8.5's RCS step under the SMS row, its ⓘ after the sentence (code QA M1). */
 .rcs-line details.info { display: inline; }
 .rcs-line .info-icon { vertical-align: -3px; }

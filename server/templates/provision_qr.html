@@ -77,6 +77,19 @@
             {% endif %}
             {% endif %}
             <form method="post" action="/devices/{{ device.id }}/provision#qr" class="cell form-group" data-native-post>
+                {#- Design 142 N3: Nett - Wi-Fi or mobile data. The radios come before the rows, so the chosen one marks its
+                    segment and Mobildata hides the Wi-Fi fields (no script, no :has()); the server ignores them then. -#}
+                <input type="radio" class="choice-radio net-wifi" id="net-wifi" name="network" value="wifi"{% if !mobile %} checked{% endif %}>
+                <input type="radio" class="choice-radio net-mobile" id="net-mobile" name="network" value="mobile"{% if mobile %} checked{% endif %}>
+                <div class="field qr-net" data-row="network">
+                    <span class="field-label">{{ self.t("devices.qr.network") }}</span>
+                    <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p data-row="network-info">{{ self.t("devices.qr.network_info") }}</p></div></details>
+                    <div class="segmented">
+                        <label class="segment seg-wifi" for="net-wifi"><span class="segment-face">{{ self.t("devices.qr.network_wifi") }}</span></label>
+                        <label class="segment seg-mobile" for="net-mobile"><span class="segment-face">{{ self.t("devices.qr.network_mobile") }}</span></label>
+                    </div>
+                </div>
+                <div class="qr-wifi" data-row="wifi-fields">
                 <div class="field">
                     <label class="field-label" for="wifi_ssid">{{ self.t("devices.qr.wifi") }}</label>
                     <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" placeholder="{{ self.t("common.optional") }}" autocomplete="off" autocapitalize="none" spellcheck="false"{% if error_field == "wifi_ssid" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
@@ -94,6 +107,7 @@
                 </label>
                 <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p data-row="remember-info">{{ self.t("devices.qr.remember_info") }}</p></div></details>
                 {% endif %}
+                </div>
                 <button type="submit" class="button-wide">{% if qr_svg.is_empty() %}{{ self.t("devices.qr.make") }}{% else %}{{ self.t("devices.qr.make_new") }}{% endif %}</button>
             </form>
             {% if let Some(ssid) = saved_ssid %}

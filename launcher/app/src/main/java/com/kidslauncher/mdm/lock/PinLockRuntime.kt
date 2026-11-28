@@ -1942,7 +1942,7 @@ object PinLockRuntime {
         val app = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                com.kidslauncher.mdm.server.AppEnforcer.apply(app, com.kidslauncher.mdm.server.currentPolicyDecision())
+                com.kidslauncher.mdm.server.AppEnforcer.applyCurrent(app)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Apply after unlock failed", e)
             }

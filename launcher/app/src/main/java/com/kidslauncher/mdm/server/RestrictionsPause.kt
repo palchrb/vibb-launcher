@@ -197,7 +197,7 @@ object RestrictionsPause {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // apply() releases everything itself while the pause is active.
-                AppEnforcer.apply(app, currentPolicyDecision())
+                AppEnforcer.applyCurrent(app)
                 reevaluateLockReasonFromCache(app)
                 com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(app)
                 // Design r13 §2.2: the pause makes the anchor's notice plain "Vibb One" (and its end the time left).

@@ -281,9 +281,10 @@ class HomeRound7Test {
         assertFalse("the cap", appLoadHeld(now = 15_000, heldSince = 5_000))
         // apply holds at its start and releases in a finally; the consumer reads the hold.
         val enforcer = code("server/AppEnforcer.kt")
-        val apply = enforcer.substringAfter("fun apply(context: Context, policy: PolicyResponse?").substringBefore("\n    }\n")
+        val apply = enforcer.substringAfter("fun apply(\n        context: Context,\n        policy: PolicyResponse?,").substringBefore("\n    }\n")
+        assertTrue(enforcer.contains("fun apply(\n        context: Context,\n        policy: PolicyResponse?,"))
         val hold = apply.indexOf("AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())")
-        val body = apply.indexOf("applyHeld(context, policy, fromSync, parentChoice)")
+        val body = apply.indexOf("applyHeld(context, policy, fromSync, parentChoice, calls, kind)")
         val release = apply.indexOf("} finally {\n            com.kidslauncher.mdm.ui.home.AppLoadHold.release(android.os.SystemClock.elapsedRealtime())")
         assertTrue(apply, hold >= 0 && hold < apply.indexOf("try {") && apply.indexOf("try {") < body && body < release)
         assertEquals("the pass itself is applyHeld", 1, Regex("private fun applyHeld\\(").findAll(enforcer).count())

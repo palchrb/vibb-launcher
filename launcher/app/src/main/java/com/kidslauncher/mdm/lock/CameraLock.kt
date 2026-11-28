@@ -12,7 +12,6 @@ import android.util.Log
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.controllablePackages
-import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.inputMethodPackages
 import com.kidslauncher.mdm.server.systemDialerPackage
 import java.util.concurrent.Executors
@@ -240,7 +239,7 @@ object CameraLock {
     private fun requestApply(app: Context) {
         applyScope.launch {
             try {
-                AppEnforcer.apply(app, currentPolicyDecision())
+                AppEnforcer.applyCurrent(app)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Apply after the camera release failed", e)
             }

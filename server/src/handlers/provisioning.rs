@@ -108,6 +108,14 @@ struct ProvisioningPayload {
     /// sees; the phone's own apps must stay installed and enabled for it to allow them.
     #[serde(rename = "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED")]
     leave_all_system_apps_enabled: bool,
+    /// `DevicePolicyManager.EXTRA_PROVISIONING_USE_MOBILE_DATA` (API 29+), design 142 N3: the download over the SIM's
+    /// mobile data. Only with no Wi-Fi in the QR (a Wi-Fi SSID wins), and then the phone offers no Wi-Fi picker - so it
+    /// is the parent's choice per QR ("Mobildata" on Connect), never a default. Left out when false.
+    #[serde(
+        rename = "android.app.extra.PROVISIONING_USE_MOBILE_DATA",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    use_mobile_data: bool,
     #[serde(rename = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE")]
     admin_extras: AdminExtras,
 }
@@ -173,6 +181,8 @@ struct ProvisionQrTemplate {
     launcher_blocks: bool,
     /// Design 114 §5.8: the phone has no Parent PIN - no QR and no setup code, one orange line to the PIN instead.
     no_parent_pin: bool,
+    /// Design 142 N3: "Nett" is "Mobildata" - the QR has no Wi-Fi and asks for mobile data; the Wi-Fi fields hide.
+    mobile: bool,
     wifi_ssid: String,
     /// The saved network's name (the user, 2026-11-22), and whether it has a password: an empty password field uses
     /// it. Never the password itself.
@@ -246,6 +256,7 @@ impl ProvisionQrTemplate {
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
             launcher_blocks: launcher.as_ref().is_some_and(|line| line.blocks_qr()),
             launcher,
+            mobile: false,
             wifi_ssid: saved.as_ref().map(|s| s.ssid.clone()).unwrap_or_default(),
             saved_ssid: saved.as_ref().map(|s| s.ssid.clone()),
             // Only a password this server can open is "Saved" (code QA L3).
@@ -289,6 +300,16 @@ pub struct ProvisionForm {
     /// "Remember" ticked: the network the QR uses is saved, replacing any saved one.
     #[serde(default)]
     remember: Option<String>,
+    /// Design 142 N3: "Nett" - `mobile` for mobile data, anything else (or none) Wi-Fi. Not stored.
+    #[serde(default)]
+    network: String,
+}
+
+impl ProvisionForm {
+    /// "Mobildata" chosen: the Wi-Fi fields are ignored - never checked, never saved, never in the QR.
+    fn mobile(&self) -> bool {
+        self.network == "mobile"
+    }
 }
 
 /// The saved Wi-Fi network's purpose and context for [MusicKey::seal_text](crate::music_secret::MusicKey::seal_text):
@@ -549,9 +570,15 @@ pub async fn provision_qr(
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    let ssid = form.wifi_ssid.trim();
-    let typed = form.wifi_password.trim();
+    let mobile = form.mobile();
+    // Design 142 N3: with mobile data the Wi-Fi fields (hidden on the page, still sent) are never read.
+    let (ssid, typed) = if mobile {
+        ("", "")
+    } else {
+        (form.wifi_ssid.trim(), form.wifi_password.trim())
+    };
     let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, &saved, false).await;
+    page.mobile = mobile;
 
     if let Some((field, why)) = wifi_refusal(lang, ssid, typed) {
         page.error_field = field;
@@ -561,7 +588,9 @@ pub async fn provision_qr(
         page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
         return page.page(StatusCode::BAD_REQUEST);
     }
-    page.wifi_ssid = ssid.to_string();
+    if !mobile {
+        page.wifi_ssid = ssid.to_string();
+    }
     let Some(password) = qr_password(&state, saved.as_ref(), ssid, typed) else {
         tracing::warn!("the saved Wi-Fi password doesn't open with this server's key");
         page.error_field = "wifi_password";
@@ -600,7 +629,8 @@ pub async fn provision_qr(
         return page.page(StatusCode::OK);
     }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password));
-    let payload_for = |code: String| setup_payload(&state.config, &settings, wifi.clone(), code);
+    let payload_for =
+        |code: String| setup_payload(&state.config, &settings, wifi.clone(), mobile, code);
     // The fit is checked before a code is made (qa-31-s15-code L1): an overflow must never
     // replace the phone's live code. A placeholder of the real length in the code's worst case
     // for the QR's encoder (letters, no digits); a real code is never larger.
@@ -651,13 +681,16 @@ fn too_long(lang: Lang) -> Response {
 }
 
 /// The setup QR's payload for Phone Setup's `settings` and an enrollment `code`: its server address
-/// is [server_url]'s (the saved one, else `.env`'s); `None` without the checksum.
+/// is [server_url]'s (the saved one, else `.env`'s); `None` without the checksum. `mobile` (design 142 N3): the
+/// parent chose mobile data - asked for only when the QR has no Wi-Fi (Android uses a Wi-Fi SSID first).
 pub(crate) fn setup_payload(
     config: &ForkConfig,
     settings: &ProvisioningSettings,
     wifi: Option<(String, String)>,
+    mobile: bool,
     code: String,
 ) -> Option<serde_json::Value> {
+    let use_mobile_data = mobile && wifi.is_none();
     provisioning_payload(
         config,
         AdminExtras {
@@ -668,6 +701,7 @@ pub(crate) fn setup_payload(
         wifi,
         &settings.locale,
         &settings.time_zone,
+        use_mobile_data,
     )
 }
 
@@ -709,13 +743,14 @@ pub(crate) fn setup_payload(
 /// configured - there is deliberately no fallback value (see `config::ForkConfig`). `wifi` is
 /// `(ssid, password)`; an empty password means an open network. `locale`/`time_zone` (the
 /// provisioning settings, migrations/0034) set the phone's language and zone during QR setup;
-/// an empty or invalid one is left out.
+/// an empty or invalid one is left out. `use_mobile_data`: `PROVISIONING_USE_MOBILE_DATA` (design 142 N3).
 pub(crate) fn provisioning_payload(
     config: &ForkConfig,
     admin_extras: AdminExtras,
     wifi: Option<(String, String)>,
     locale: &str,
     time_zone: &str,
+    use_mobile_data: bool,
 ) -> Option<serde_json::Value> {
     let signature_checksum = config.launcher_signature_checksum.clone()?;
     let (wifi_ssid, wifi_password) = match wifi {
@@ -733,6 +768,7 @@ pub(crate) fn provisioning_payload(
         locale: valid_locale(locale).then(|| locale.to_string()),
         time_zone: valid_time_zone(time_zone).then(|| time_zone.to_string()),
         leave_all_system_apps_enabled: true,
+        use_mobile_data,
         admin_extras,
     };
     Some(serde_json::to_value(&payload).expect("provisioning payload always serializes"))

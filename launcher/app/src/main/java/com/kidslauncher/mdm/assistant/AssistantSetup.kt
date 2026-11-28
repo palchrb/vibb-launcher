@@ -23,7 +23,6 @@ import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.WindowStart
-import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.systemPageIntent
 import kotlinx.serialization.Serializable
 
@@ -123,7 +122,7 @@ object AssistantSetup {
         if (kept == null) AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())
         scheduleDeadline(context, DEADLINE_PICK, ASSISTANT_PICK_MS)
         Log.i(LOG_TAG, "The default-apps window is open (5 min at most)")
-        AppEnforcer.apply(context, currentPolicyDecision())
+        AppEnforcer.applyCurrent(context)
         return true
     }
 
@@ -135,7 +134,7 @@ object AssistantSetup {
         storeWindow(context, KEY_PICK, start.copy(untilWallMs = 0))
         Log.i(LOG_TAG, "The default-apps window ends ($why)")
         val app = context.applicationContext
-        Thread { runCatching { AppEnforcer.apply(app, currentPolicyDecision()) } }.start()
+        Thread { runCatching { AppEnforcer.applyCurrent(app) } }.start()
     }
 
     private fun movedFrom(context: Context): DefaultAppsSnapshot? = runCatching {
@@ -282,7 +281,7 @@ object AssistantSetup {
     fun onDeadline(context: Context) {
         val step = window(context, KEY_WIFI_STEP)
         if (wifiStepOpen(context) && (step == null || !BootClock.isActive(step, WIFI_STEP_MS))) endWifiStep(context, "deadline")
-        AppEnforcer.apply(context, currentPolicyDecision())
+        AppEnforcer.applyCurrent(context)
     }
 
     /** The deadline [which] ([DEADLINE_PICK], [DEADLINE_WIFI]) [afterMs] from now; the other's alarm stays as it is. */

@@ -1,8 +1,9 @@
 # 142 - The setup QR made robust: what is still open
 
-Status: design rev 2, 2026-11-28, branch `qr-robust` (rev 1 1ce646a22 on `qr-robust-design`; its design QA 2H 4M
-6L, all taken, one corrected - §9; the owner's answers in §8). The locked list's item 9 ("QR setup made robust",
-approved 2026-11-12). An audit of the whole path, then the fixes for what is still open.
+Status: built 2026-11-28 on branch `qr-robust` (§10), not gated, no code QA yet; design rev 2 (rev 1 1ce646a22 on
+`qr-robust-design`; its design QA 2H 4M 6L, all taken, one corrected - §9; the owner's answers in §8). The locked
+list's item 9 ("QR setup made robust", approved 2026-11-12). An audit of the whole path, then the fixes for what is
+still open.
 
 Goal: a parent with a stock Android 14-17 phone with Google Play services (the Jelly Star, Android 16) scans the
 Phone Setup QR and ends with an enrolled, locked-down kid's phone, without adb; every way it fails shows one short line
@@ -213,3 +214,23 @@ N1 XS with them; N2 only on §5's finding.
   also makes no typed code" doesn't hold - `provisioning.rs:599` is the QR's check; `devices::regenerate_code` makes a
   typed code whatever the launcher check says (§0). That is right as it is: a typed code serves a phone whose Vibb One
   came another way.
+
+## 10. The build (2026-11-28, branch `qr-robust`)
+
+- **M3**: `AppEnforcer.applyCurrent` (`@Synchronized`, placed before `apply`), `callsThenDecision` and
+  `PolicyToApply.kind` in `PolicyGate.kt`; `apply`'s bare form takes `calls` and `kind`, and `applyHeld` reads
+  `calls ?: CallPolicyStore.state` once, where the hardening is decided, and uses it for the call roles, the fence,
+  the PIN lock's `managed`, the screen timeout and the notification rule (the second `ensureLoaded` + read is gone).
+  The 23 offline applies in 14 files call `applyCurrent`. The log line: `Apply (<kind>): policy present|none, calls
+  <state> (store: <describe()>), managed <b>, baseline <b>`. Tests: `HardeningTest` (the six orders of the sync's two
+  writes around the two reads; the old order shown to fail; the source scans), and the scans in `HomeRound7Test`,
+  `AndroidLockPlanTest` and `BtPairingPlanTest` follow the new text.
+- **M4**: `qrConnectLine` (`ConnectScreen.kt`), `QrExtras.keptState` (`QrKeptState`, no Keystore call), Koble til's
+  `qrLine()` after `EnrolWait.lines` and `lastError`; `connect_qr_refused`, `connect_qr_retrying` in nb and en.
+  `ConnectScreenTest`.
+- **N3**: `ProvisioningPayload.use_mobile_data`, `setup_payload(.., mobile, ..)`, `provisioning_payload(.., use_mobile_data)`,
+  `ProvisionForm.network`, `ProvisionQrTemplate.mobile`; the template's two radios, the "Nett" row with its (i), the
+  Wi-Fi fields in `.qr-wifi`; `style.css` (`?v=136`); `devices.qr.network*` in nb and en. Tests in
+  `tests::provisioning`. Notes: `docs/notes/server/connectivity.md`, `docs/notes/launcher/setup.md`, `hardening.md`,
+  `fail-closed.md`.
+- Not built: N1 (docs, with the release), N2 (on §5's finding), §2 row 2's baseline at first start (§2).

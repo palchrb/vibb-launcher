@@ -8,7 +8,6 @@ import com.kidslauncher.mdm.assistant.AssistantSetup
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.WindowStart
-import com.kidslauncher.mdm.server.currentPolicyDecision
 
 private const val LOG_TAG = "BrowserRoleStep"
 private const val PREFS = "browser_role_step"
@@ -61,7 +60,7 @@ object BrowserRoleStep {
             .putLong(KEY_UNTIL, start.untilWallMs).putLong(KEY_ELAPSED, start.elapsedStartMs).putInt(KEY_BOOT, start.bootCount)
             .commit()
         Log.i(LOG_TAG, "The browser role's window is open")
-        AppEnforcer.apply(context, currentPolicyDecision())
+        AppEnforcer.applyCurrent(context)
         return true
     }
 
@@ -71,6 +70,6 @@ object BrowserRoleStep {
         prefs(context).edit().remove(KEY_UNTIL).remove(KEY_ELAPSED).remove(KEY_BOOT).commit()
         Log.i(LOG_TAG, "The browser role's window ends")
         val app = context.applicationContext
-        Thread { runCatching { AppEnforcer.apply(app, currentPolicyDecision()) } }.start()
+        Thread { runCatching { AppEnforcer.applyCurrent(app) } }.start()
     }
 }
