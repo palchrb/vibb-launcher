@@ -3,7 +3,7 @@
 Status: design note, revision 2, 2026-11-28, branch `pwa-design` (revision 1: 46669c860, on `main` at 7a6129144).
 Docs only. The locked list's item 9b ("Installed PWAs on the kid's phone", moved from the inbox 2026-11-28; the owner:
 "Vil vi helst ha ordentlig native pwa støtte"). Not built; step 0 (§6) and the owner's answers (§8) come first.
-Revision 2 takes the design QA (2H 5M 7L, all taken, §9).
+Revision 2 takes the design QA (2H 5M 7L, all taken, §9). Step 0's first pass (emulator, no account): §6, "Step 0 results".
 
 Goal: the parent adds a site in the PWA, and the kid gets a tile that opens it as an app - full screen, its own icon,
 working offline - that can't be used to reach the rest of the web. The first use: the family's own offline copy of a
@@ -328,6 +328,51 @@ new `google_apis_playstore` AVD).
 real storage pressure at the Jelly's size; push delivery in Doze; Play's real WebAPK update timing (charging on Wi-Fi);
 battery. Those rows (T1, T3, T6, T9) also run on the Jelly with the owner's site. A failing row revises this note
 before the build.
+
+### Step 0 results (2026-11-28, emulator, first pass)
+
+Run with the owner's OK for the day, 09:04-09:56 UTC, on a wiped copy of `jelly36` (Android 16 Google Play image,
+`BE2A.250530.026.D1`, 8 GB data partition), no Google account, no device owner, the Pixel launcher as Home. Chrome
+133.0.6943.137 (the image's own; Play can't update it without an account), Play 45.3.21 (it updated itself to 54.4.11
+within six minutes, with no account), Play services 25.08.34. Test sites: a small PWA of our own (manifest, service
+worker, a Cache Storage filler, `estimate()`/`persisted()`, a push handler) served from the host over `adb reverse` as
+`http://localhost:8090` and `http://127.0.0.1:8090` (two origins, both secure contexts); a well-known public PWA
+(`squoosh.app`) for the install. Pages driven over Chrome's DevTools socket (`adb forward ...
+localabstract:chrome_devtools_remote`), pushes sent from the host with our own VAPID key through FCM. No probe app, so
+no TWA (T1, T2, T8 open). The host ran short of memory with a second emulator on it: this one was killed three times
+(the data kept each time, which became a row of its own) and the last kill ended the run.
+
+| # | Row | Result |
+|---|---|---|
+| R1 | T6, no account, Play enabled: "Install app" (Chrome's install sheet) for `squoosh.app`, `localhost` and `127.0.0.1` | **No WebAPK, all three times.** Chrome got a minted package name each time (`org.chromium.webapk.a…_v2`), also for the two sites Google's server can't reach, and called Play's install API; Play refused: `WebAPK service unknown_account`. Chrome then fell back to a pinned shortcut (the launcher's "Add to home screen" sheet; `ShortcutInfo` of `com.android.chrome`, `ACTION_START_WEBAPP`, display standalone). With Vibb One as Home that sheet has no taker (§1.2), so nothing is added |
+| R2 | T6, Play suspended | **Not run.** The shell can't suspend Play (`Cannot suspend package "com.android.vending": required for package verification`); only a device owner can (Vibb does, `emulator.md` §6b's check). Without an account the install fails at Play's account check anyway (R1), so the row needs the test account |
+| R3 | T6/T7 with a WebAPK: its signer, `startUrl`, launch with Play suspended, lock task | **Not run**: no WebAPK without an account (R1) |
+| R4 | T3, `persist()` per origin and variant | `squoosh.app` (a shortcut on the launcher): false; true once notifications were allowed for it (and stayed true with a bookmark). `127.0.0.1` in a tab: false; true once notifications were allowed. `localhost`: false in a tab, after the shortcut, with notifications allowed and with a bookmark, and false in its standalone window. A Custom Tab (`CustomTabActivity`, opened by intent) on `127.0.0.1` saw the origin's grant and data as the tab did. So the grant follows the origin, not how it is opened; notification permission is the lever that worked. Likely cause of the `localhost` result: Chromium matches its "important sites" by registrable domain, and `localhost` has none (our reading, not checked in the source this run); a site on a bare home-network name may be refused the same way, a real domain or an IP not |
+| R5 | T3, a 3 GB fill | 3072 MB into Cache Storage on `127.0.0.1` (persisted) in 13 s with `ArrayBuffer` bodies; 1024 MB on `localhost` (best-effort). `estimate()`: quota 4750 MB for each origin (60% of the partition). The first fill, with `Blob` bodies (`new Response(new Blob([16 MB]))`), stopped at 512 MB with `UnknownError: ... Unexpected internal error` while 2.5 GB was free; the re-test was cut by the last emulator kill |
+| R6 | T4, the content after `pm trim-caches 100G`, Chrome force-stopped, `adb reboot`, Chrome suspended and back (`pm suspend`), three hard emulator kills | **Kept**, both origins, every time (the entry count, `localStorage` and IndexedDB markers, `persisted()`). Not run: Chrome hidden and back (a device owner's call; the shell lacks `MANAGE_USERS`), a Chrome update (needs the account) |
+| R7 | T5, the disk filled with a dummy file to 100% (10 MB free) | **No eviction**: in about 8 minutes at a full disk (and across two kills and boots) neither origin lost anything, the best-effort one included. Writes failed with `UnknownError` (not `QuotaExceededError`) at 1.8 MB free, and `estimate()` still said 4750 MB quota with 10 MB free. Android's own low-storage handling didn't touch Chrome's data either. Eviction order not seen |
+| R8 | T9, web push to the probe's own origin (notifications allowed, Chrome not hidden) | **Arrives within seconds, with no account**, as `pkg=com.android.chrome`, channel `web:http://127.0.0.1:8090`, group `Web:127.0.0.1:8090`: under Chrome's name (no WebAPK to carry it, R1). With Chrome **suspended** the push still reached Chrome and the notification was posted, but the shade hid it; it showed when Chrome was unsuspended. After the first reboot three pushes in eight minutes didn't show (the emulator was starved, load ~40); after the next boot delivery worked again at once |
+| R9 | T11, hosts for minting (DNS over mobile data, `-tcpdump`) | One name during an install attempt: `webapk.googleapis.com`. Play's part ended on the phone (R1), so the hosts of a real install (the APK's download) are still open |
+
+**What it means for the WebAPK as the main path:**
+
+- **A WebAPK needs a Google account in Play on the phone.** Without one Chrome falls back to a shortcut, and with
+  Vibb One as Home that is nothing. The account is optional today (`docs/setup/google-account.md`), so the WebAPK path
+  needs it for every phone that uses web apps, and the TWA (option C) stays the path for a phone without one.
+- **Minting doesn't need the site reachable from Google**: package names came back for `localhost` and `127.0.0.1`.
+  Whether such a WebAPK then installs and runs for a site on the home network only is open (the account rows).
+- **Storage doesn't depend on the install**: a tab, a Custom Tab and Chrome's standalone window share the origin's
+  data and its `persist()` grant. A 3 GB store fits, and survived everything we could throw at it here. What gets the
+  grant: notification permission (a WebAPK's install is still untested); the owner's site needs a real domain or an
+  IP, not a bare name. The site's service worker should write `ArrayBuffer`s or fetched responses, not big `Blob`s,
+  until R5's `Blob` stop is re-tested, and should not trust `estimate()` for free space.
+- **Push needs no account**, only Chrome not hidden; under Chrome's name without a WebAPK.
+
+**Left for the owner's test account (emulator) and the Jelly**: T6 in a pause and with Play suspended by Vibb (a
+WebAPK at all, its package, signer and `startUrl`; Vibb's new-package path hides and suspends it until it is listed);
+T7 (the WebAPK under lock task); `persist()` and push under a WebAPK; the install's hosts (R9); a Chrome update and
+Chrome 142's `NotificationsAllowedForUrls` (this image has 133); T1, T2, T8, T10, T12 and T13 with the probe app; R5's
+`Blob` stop again; the Jelly's own Chrome and Play.
 
 ## 7. Size and steps
 
