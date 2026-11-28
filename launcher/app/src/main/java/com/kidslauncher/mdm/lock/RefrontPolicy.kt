@@ -94,7 +94,9 @@ const val POWER_BUDGETS_PER_SCREEN_ON = 4
  * re-fronts, only for a loss inside the change's window ([powerLossAround]); any other loss, also one 30 s after a
  * plug-in, spends [screenOn]. At most [POWER_BUDGETS_PER_SCREEN_ON] budgets per screen-on are spent ([powerSpent]); a
  * change after them opens none. Never an exemption: the "sos" yield and the others come before the cap
- * ([androidLossStep]).
+ * ([androidLossStep]). PLAN 1o's code QA (L2): the budget before the open one stays for a loss in its window
+ * ([prevPowerAtMs]) - a re-plug right after an unplug moved the open budget's stamp past the unplug's loss, which then
+ * read [screenOn]; the open budget comes first where both windows hold.
  */
 data class FaceRefronts(
     val screenOn: Int = 0,
@@ -104,25 +106,48 @@ data class FaceRefronts(
     val powerUsed: Int = 0,
     /** Budgets this screen-on that took a re-front. */
     val powerSpent: Int = 0,
+    /** The budget before the open one (its stamp; `null` = none) and the re-fronts it has taken. */
+    val prevPowerAtMs: Long? = null,
+    val prevPowerUsed: Int = 0,
 ) {
-    /** The loss at [lostAtMs] (the glance's last pause) spends the open power budget. */
-    fun powerCovers(lostAtMs: Long?): Boolean = powerAtMs != null && powerLossAround(powerAtMs, lostAtMs)
+    private enum class Budget { OPEN, PREV, NONE }
 
-    /** The count and the cap a check for the loss at [lostAtMs] reads. */
-    fun forLoss(lostAtMs: Long?): Pair<Int, Int> =
-        if (powerCovers(lostAtMs)) powerUsed to POWER_REFRONT_BUDGET else screenOn to ANDROID_REFRONT_CAP
+    /** A budget's window holds the loss, and the budget may take it: one already spent, or a first re-front while
+     * fewer than [POWER_BUDGETS_PER_SCREEN_ON] are spent (two open budgets can't spend one too many). */
+    private fun holds(atMs: Long?, used: Int, lostAtMs: Long?): Boolean =
+        atMs != null && powerLossAround(atMs, lostAtMs) && (used > 0 || powerSpent < POWER_BUDGETS_PER_SCREEN_ON)
 
-    /** The face re-fronted the glance for the loss at [lostAtMs]. */
-    fun refronted(lostAtMs: Long?): FaceRefronts = when {
-        !powerCovers(lostAtMs) -> copy(screenOn = screenOn + 1)
-        powerUsed == 0 -> copy(powerUsed = 1, powerSpent = powerSpent + 1)
-        else -> copy(powerUsed = powerUsed + 1)
+    private fun budget(lostAtMs: Long?): Budget = when {
+        holds(powerAtMs, powerUsed, lostAtMs) -> Budget.OPEN
+        holds(prevPowerAtMs, prevPowerUsed, lostAtMs) -> Budget.PREV
+        else -> Budget.NONE
     }
 
-    /** A power change stamped at [atMs]: a new budget, unless this screen-on spent [POWER_BUDGETS_PER_SCREEN_ON]
-     * already (then the change's loss reads [screenOn], as any other). */
+    /** The loss at [lostAtMs] (the glance's last pause) spends a power budget - the open one's, or the one before. */
+    fun powerCovers(lostAtMs: Long?): Boolean = budget(lostAtMs) != Budget.NONE
+
+    /** The count and the cap a check for the loss at [lostAtMs] reads. */
+    fun forLoss(lostAtMs: Long?): Pair<Int, Int> = when (budget(lostAtMs)) {
+        Budget.OPEN -> powerUsed to POWER_REFRONT_BUDGET
+        Budget.PREV -> prevPowerUsed to POWER_REFRONT_BUDGET
+        Budget.NONE -> screenOn to ANDROID_REFRONT_CAP
+    }
+
+    /** The face re-fronted the glance for the loss at [lostAtMs]. */
+    fun refronted(lostAtMs: Long?): FaceRefronts = when (budget(lostAtMs)) {
+        Budget.NONE -> copy(screenOn = screenOn + 1)
+        Budget.OPEN -> copy(powerUsed = powerUsed + 1, powerSpent = powerSpent + if (powerUsed == 0) 1 else 0)
+        Budget.PREV -> copy(prevPowerUsed = prevPowerUsed + 1, powerSpent = powerSpent + if (prevPowerUsed == 0) 1 else 0)
+    }
+
+    /** A power change stamped at [atMs]: a new budget (the open one becomes the one before), unless this screen-on spent
+     * [POWER_BUDGETS_PER_SCREEN_ON] already (then none is left: the change's loss reads [screenOn], as any other). */
     fun powerChanged(atMs: Long): FaceRefronts =
-        if (powerSpent >= POWER_BUDGETS_PER_SCREEN_ON) copy(powerAtMs = null, powerUsed = 0) else copy(powerAtMs = atMs, powerUsed = 0)
+        if (powerSpent >= POWER_BUDGETS_PER_SCREEN_ON) {
+            copy(powerAtMs = null, powerUsed = 0, prevPowerAtMs = null, prevPowerUsed = 0)
+        } else {
+            copy(powerAtMs = atMs, powerUsed = 0, prevPowerAtMs = powerAtMs, prevPowerUsed = powerUsed)
+        }
 }
 
 /**
@@ -656,14 +681,17 @@ fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield(
  * power change then looks once ([powerRecheck]) - a fresh loss through the same rule ([refrontAction]), so the kid's own
  * path to Android's PIN pad ([androidLossOurs]), the exempt screens and the cap ([ANDROID_REFRONT_CAP]) all hold.
  * glance-replug (the owner's log, 2026-11-26): a power change's own loss has a re-front budget of its own
- * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back.
+ * ([FaceRefronts]) - three plug-ins on one screen-on each get the glance back. PLAN 1o (2026-11-28): the tag is the
+ * screen-on's, kept until its screen-off ([powerWakeTag]) - an unplug's wake stays one when a re-plug follows.
  */
 
 /** The power change's stamp may come this long after its screen-on: the two are reordered (300 ms, as before), and the
  * broadcast reaches us up to ~0.5 s late - glance-replug's emulator runs, Android 14 and 16: a plug-in in the dark
  * `scheduled +500ms`/`+501ms`, and with the wake right after it +24..+350 ms (the deferral ends once we are in front).
  * Only a screen-on that ends a long dark spell is the change's ([POWER_WAKE_DARK_MS]); a single press's wake up to this
- * long before the stamp can't be told from it (the SOS gesture's last screen-on ends a short one). */
+ * long before the stamp can't be told from it (the SOS gesture's last screen-on ends a short one) - nor can a press-SOS
+ * that starts in the dark ([powerWakeTag]). This constant alone narrows that: the stamp's lateness after the plug-in's
+ * own wake measured +24..+350 ms on the emulator (D1'), ~+500 ms from the broadcast once the glance lost the front. */
 const val POWER_WAKE_BEFORE_MS = 800L
 
 /** glance-replug's code QA: the power change's wake ends a dark spell at least this long (or no screen-off was seen in
@@ -703,9 +731,29 @@ fun powerWokeScreen(powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?)
     return screenOffAtMs == null || screenOnAtMs - screenOffAtMs >= POWER_WAKE_DARK_MS
 }
 
-/** The screen-on [sosGestureLikely] reads: none when it was the power change's own wake ([powerWokeScreen]). */
-fun sosScreenOn(lastScreenOnAtMs: Long?, powerAtMs: Long?, lastScreenOffAtMs: Long?): Long? =
-    lastScreenOnAtMs?.takeUnless { powerWokeScreen(powerAtMs, it, lastScreenOffAtMs) }
+/**
+ * PLAN 1o (the owner's Jelly, Android 16, 2026-11-28: an unplug woke the screen, a re-plug 1.3 s later): the screen-on's
+ * power-wake tag, decided for the screen-on and kept for the rest of it. [tagged] is the tag so far (`false` from each
+ * screen-off and set anew at each screen-on, from the last stamp); each power change stamped at [powerAtMs] may set it
+ * ([powerWokeScreen] against the screen-on at [screenOnAtMs] and the screen-off before it at [screenOffAtMs]) and never
+ * clears it. Before, [powerWokeScreen] read only the latest stamp, so the re-plug's stamp 1.3 s after the unplug's wake
+ * un-tagged it and the charging dialog's loss read as a probable SOS. A press-SOS from a lit screen keeps its mark: the
+ * press that turned the screen off ended any earlier tag, and the next press's screen-on ends a short dark spell
+ * ([POWER_WAKE_DARK_MS]), so no stamp tags it.
+ *
+ * Not told apart (PLAN 1o's code QA M, open - the owner's choice): a press-SOS that starts in the dark. Press 1's
+ * screen-on ends a long dark spell (the rest are swallowed, the screen stays on), so a power change stamped from
+ * [POWER_WAKE_AFTER_MS] before it to [POWER_WAKE_BEFORE_MS] after it tags it as the change's wake: no SOS mark, the
+ * glance is re-fronted over the SOS screen. Since 1o the tag stays - before, a later stamp outside that window un-tagged
+ * it again. A plug-in that woke the screen itself is no such case (press 1 turns the screen off, press 2's spell is
+ * short); a stamp after the press's screen-on is, and only [POWER_WAKE_BEFORE_MS] narrows it.
+ */
+fun powerWakeTag(tagged: Boolean, powerAtMs: Long?, screenOnAtMs: Long?, screenOffAtMs: Long?): Boolean =
+    tagged || powerWokeScreen(powerAtMs, screenOnAtMs, screenOffAtMs)
+
+/** The screen-on [sosGestureLikely] reads: none when the screen-on is a power change's own wake ([powerWake],
+ * [powerWakeTag]). */
+fun sosScreenOn(lastScreenOnAtMs: Long?, powerWake: Boolean): Long? = lastScreenOnAtMs?.takeUnless { powerWake }
 
 /** What the power change's look does ([powerRecheck]). */
 data class PowerRecheck(
@@ -720,8 +768,10 @@ data class PowerRecheck(
  * glance not in front ([lockResumed]) and lost at [lostAtMs] around the change ([POWER_LOSS_BEFORE_MS] ..
  * [POWER_LOSS_AFTER_MS]) - a loss from before (the kid's own PIN pad, a yield that ended into the platform's screen, the
  * cap reached) is left as the rule left it. A probable-SOS mark ([sosMarked]) wins unless the screen-on behind it was
- * the change's own wake ([powerWake], [powerWokeScreen]). The check itself decides the rest (screen on, Android locked,
- * ours, the exemptions, the cap).
+ * the change's own wake ([powerWake]: the screen-on's tag, [powerWakeTag]). The check itself decides the rest (screen
+ * on, Android locked, ours, the exemptions, the cap). PLAN 1o's code QA L1: the look trusts the tag - a tagged screen-on
+ * never sets a mark ([sosScreenOn] is `null` for it), so a mark with [powerWake] is one set before a late stamp tagged
+ * the screen-on, and the look clears it. A new way to set a mark must keep that.
  */
 fun powerRecheck(locked: Boolean, lockResumed: Boolean, powerAtMs: Long, lostAtMs: Long?, powerWake: Boolean, sosMarked: Boolean): PowerRecheck {
     val fresh = locked && !lockResumed && powerLossAround(powerAtMs, lostAtMs) && (!sosMarked || powerWake)
