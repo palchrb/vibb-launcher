@@ -428,4 +428,4 @@ The night gate on 14 (2026-11-27, emulator.md §6cg F1), branch `night-fixes`: o
 the emptying could beat Home's stop (8 of 37 kiosk ends; 5 stuck). §3.5 adds the bounded wait between Home's stop and
 the emptying (`HomeRootStop.settle`, pure `stopSettle`, 10 ms reads up to 300 ms after the stop, the pass's `ASKED` and
 Home's own stop alike; only on 14 and 15, `stopIsOneway` - code QA L1: on 16 a wait would only widen §2's gap); §2 and
-§7 corrected. Owed: rows 2, 3 and 12 again on 14, 10+ times each.
+§7 corrected. Rows 2, 3 and 12 re-run on 14 on 2026-11-28: 11/16/11 of 11/16/11 pass (`docs/testing/emulator.md` §6ci); row 9 passes on 14 and 16 (§6ci, §6cj).
