@@ -57,7 +57,7 @@ class ConnectScreenTest {
         assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = false, witnessEnrolled = false))
         assertFalse(connectScreenDue(deviceOwner = true, enrolled = false, tokenStored = false, keyAdopted = true, policyEverApplied = true, witnessEnrolled = false))
         // The live inputs: the token and the key apart, the key from its own book.
-        val due = code("setup/ConnectActivity.kt").substringAfter("fun due(context: Context)").substringBefore("} catch")
+        val due = code("setup/ConnectActivity.kt").substringAfter("fun due(context: Context, witnessEnrolled: Boolean = EnrolmentWitness.enrolled(context))").substringBefore("} catch")
         assertTrue("tokenStored = DeviceCredentials.tokenStored()," in due)
         assertTrue("keyAdopted = KeyBook.adoptedStored(context)," in due)
         assertFalse("DeviceCredentials.stored(" in due)
@@ -67,7 +67,8 @@ class ConnectScreenTest {
     fun `the screen has the emergency button and asks the witness`() {
         val text = code("setup/ConnectActivity.kt")
         assertTrue("binding.connectEmergency.setOnClickListener { EmergencyCall.confirm(this) }" in text.substringAfter("override fun onCreate("))
-        assertTrue("witnessEnrolled = EnrolmentWitness.enrolled(context)" in text.substringAfter("fun due(context: Context)"))
+        assertTrue("fun due(context: Context, witnessEnrolled: Boolean = EnrolmentWitness.enrolled(context))" in text)
+        assertTrue("witnessEnrolled = witnessEnrolled," in text.substringAfter("fun due(context: Context,"))
         val layout = File(main, "res/layout/activity_connect.xml").readText()
         assertTrue("android:id=\"@+id/connect_emergency\"" in layout)
         assertTrue("android:text=\"@string/calls_emergency\"" in layout.substringAfter("@+id/connect_emergency"))
@@ -155,6 +156,36 @@ class ConnectScreenTest {
     }
 
     @Test
+    fun `after a failed QR the screen says why, in a few words`() {
+        // Design 142 M4: kept for a retry and nothing running - trying again; refused - a new code; nothing while busy.
+        assertEquals(QrConnectLine.RETRYING, qrConnectLine(refused = false, pending = true, running = false, witnessEnrolled = false))
+        assertEquals(null, qrConnectLine(refused = false, pending = true, running = true, witnessEnrolled = false))
+        assertEquals(QrConnectLine.REFUSED, qrConnectLine(refused = true, pending = false, running = false, witnessEnrolled = false))
+        assertEquals(null, qrConnectLine(refused = true, pending = false, running = true, witnessEnrolled = false))
+        assertEquals("kept extras are a newer QR's", QrConnectLine.RETRYING, qrConnectLine(refused = true, pending = true, running = false, witnessEnrolled = false))
+        // Design QA M-b: the refused flag is an old QR's word on a witnessed phone; kept extras still say so.
+        assertEquals(null, qrConnectLine(refused = true, pending = false, running = false, witnessEnrolled = true))
+        assertEquals(QrConnectLine.RETRYING, qrConnectLine(refused = false, pending = true, running = false, witnessEnrolled = true))
+        assertEquals(null, qrConnectLine(refused = false, pending = false, running = false, witnessEnrolled = false))
+        // The waiting enrolment's lines and a typed failure come first; the QR's line is read at every render.
+        val render = code("setup/ConnectActivity.kt").substringAfter("private fun render()").substringBefore("private fun qrLine(")
+        assertTrue("EnrolWait.lines(this) ?: lastError.value?.let { getString(it) } ?: qrLine(witnessEnrolled)?.let { getString(it) }" in render)
+        // Code QA L5: the witness read once per render, for the rule and the line.
+        assertEquals(1, Regex("""EnrolmentWitness\.enrolled\(""").findAll(render).count())
+        assertTrue("val witnessEnrolled = EnrolmentWitness.enrolled(this)" in render)
+        val line = code("setup/ConnectActivity.kt").substringAfter("private fun qrLine(witnessEnrolled: Boolean)").substringBefore("private fun connect()")
+        assertTrue("QrExtras.keptState(this)" in line)
+        assertFalse("EnrolmentWitness." in line)
+        assertTrue("running = QrExtras.running.value > 0" in line)
+        val en = File(main, "res/values/strings.xml").readText()
+        val nb = File(main, "res/values-nb/strings.xml").readText()
+        assertTrue("<string name=\"connect_qr_refused\">QR-koden virket ikke. Bruk en ny oppsettkode.</string>" in nb)
+        assertTrue("<string name=\"connect_qr_retrying\">Ikke koblet til ennå. Prøver igjen.</string>" in nb)
+        assertTrue("<string name=\"connect_qr_refused\">The QR code didn\\'t work. Use a new setup code.</string>" in en)
+        assertTrue("<string name=\"connect_qr_retrying\">Not connected yet. Trying again.</string>" in en)
+    }
+
+    @Test
     fun `the button wants both fields and no enrolment running`() {
         assertTrue(connectButtonEnabled("https://vibb.example.org", "ABCD2345", busy = false))
         assertFalse(connectButtonEnabled("", "ABCD2345", busy = false))
@@ -192,9 +223,9 @@ class ConnectScreenTest {
         for (flow in listOf("QrExtras.running.collect { render() }", "typing.collect { render() }", "lastError.collect { render() }")) {
             assertTrue(flow, flow in text.substringAfter("override fun onStart()"))
         }
-        assertTrue("if (!busyNow && !isFinishing && !due(this)) {" in text.substringAfter("private fun render()"))
+        assertTrue("if (!busyNow && !isFinishing && !due(this, witnessEnrolled)) {" in text.substringAfter("private fun render()"))
         assertTrue("private val typing = MutableStateFlow(false)" in text)
-        assertTrue("connectScreenDue(" in text.substringAfter("fun due(context: Context)"))
+        assertTrue("connectScreenDue(" in text.substringAfter("fun due(context: Context,"))
         assertTrue("FLAG_SECURE" in text)
     }
 

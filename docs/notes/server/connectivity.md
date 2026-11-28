@@ -593,3 +593,11 @@ has `wifi_saved` and `wifi_forgotten` with the name only. A backup holds it seal
 restore elsewhere reads it as "type the password again" (`devices.qr.password_again`, no QR), and a password typed
 under the saved name replaces the one that no longer opens, without "Remember". Test:
 `tests::provisioning::a_remembered_wifi_network_is_sealed_reused_and_forgotten`.
+
+Mobile data instead (design 142 N3, the owner 2026-11-28): the form's "Nett" ("Wi-Fi" / "Mobildata", the form field
+`network`, not stored) is two radios before the rows, so Mobildata hides the Wi-Fi fields by sibling selectors. With
+Mobildata the handler never reads the Wi-Fi fields - no `wifi_refusal`, no `qr_password`, nothing saved - and the QR
+carries `android.app.extra.PROVISIONING_USE_MOBILE_DATA: true` (`setup_payload`: only with no Wi-Fi in the QR, as a
+Wi-Fi SSID wins on the phone; left out otherwise). Without an SSID and with the flag the phone offers no Wi-Fi picker,
+so it is never a default. Whether CloudDPC honours it is design 142 §5 row 11. Tests:
+`mobile_data_goes_into_the_qr_only_without_wifi`, `mobile_data_ignores_the_wifi_fields_and_saves_nothing`.

@@ -350,6 +350,27 @@ object AppEnforcer {
         private set
 
     /**
+     * The offline apply (design 142 M3): what to enforce now, read under this lock - every caller but the sync. The
+     * call state is read first and the decision second ([callsThenDecision]), and the pass runs with that one call
+     * state. The sync stores its policy and then refreshes [CallPolicyStore] outside this lock, so a managed call state
+     * read first means the policy is in the cache when the decision is read: never a stale `Apply(null)` with managed
+     * calls, whose hardening defaults would set DISALLOW_DEBUGGING_FEATURES - and AOSP doesn't switch adb back on when
+     * that is lifted (PLAN 1m(b): the setup hold's apply racing the "enrolled" sync's). Nor an older cached policy,
+     * read before a running pass, applied over a newer one.
+     */
+    @Synchronized
+    fun applyCurrent(context: Context) {
+        val (calls, decision) = callsThenDecision(
+            calls = {
+                CallPolicyStore.ensureLoaded(context)
+                CallPolicyStore.state
+            },
+            decision = { currentPolicyDecision() },
+        )
+        apply(context, decision.policy, parentChoice = decision.carriesParentChoice, calls = calls, kind = decision.kind)
+    }
+
+    /**
      * Synchronized: the sync, the pause switch, the offline override and the schedule re-check
      * ([reevaluateLockReasonFromCache]) can all call this from different threads, and two passes
      * interleaving their suspend/unsuspend loops could leave a mix of both. Never call it on the
@@ -357,24 +378,39 @@ object AppEnforcer {
      */
     @Synchronized
     fun apply(context: Context, decision: PolicyToApply, fromSync: Boolean = false) =
-        apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice)
+        apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice, kind = decision.kind)
 
     /** [parentChoice] (design 59 §3.8, L-1): [policy] is a fresh or `Ok` cached one ([PolicyToApply.carriesParentChoice]);
-     * a bare policy isn't. */
+     * a bare policy isn't. [calls]: the call state [applyCurrent] read with its decision (`null`: read in the pass).
+     * [kind]: the decision's kind, for the pass's log line. */
     @Synchronized
-    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false, parentChoice: Boolean = false) {
+    fun apply(
+        context: Context,
+        policy: PolicyResponse?,
+        fromSync: Boolean = false,
+        parentChoice: Boolean = false,
+        calls: CallPolicyState? = null,
+        kind: String = "bare",
+    ) {
         // The app list loads once when this pass ends, not once per package it hides or suspends (the provisioning
         // storm's follow-up, `ui/home/AppLoads.kt`'s `appLoadHeld`; at most 10 s if a pass hangs).
         com.kidslauncher.mdm.ui.home.AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())
         try {
-            applyHeld(context, policy, fromSync, parentChoice)
+            applyHeld(context, policy, fromSync, parentChoice, calls, kind)
         } finally {
             com.kidslauncher.mdm.ui.home.AppLoadHold.release(android.os.SystemClock.elapsedRealtime())
         }
     }
 
     /** [apply]'s pass, under its lock and its hold of the app-list loads. */
-    private fun applyHeld(context: Context, policy: PolicyResponse?, fromSync: Boolean, parentChoice: Boolean) {
+    private fun applyHeld(
+        context: Context,
+        policy: PolicyResponse?,
+        fromSync: Boolean,
+        parentChoice: Boolean,
+        calls: CallPolicyState?,
+        kind: String,
+    ) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) {
             return
@@ -428,8 +464,16 @@ object AppEnforcer {
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
+        // Design 142 M3: one call state for the whole pass - [applyCurrent]'s, read with its decision, or read here once.
         CallPolicyStore.ensureLoaded(context)
-        val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
+        val callState = calls ?: CallPolicyStore.state
+        val managedForHardening = hardeningManaged(policy?.allowlist, callState.managed)
+        val baseline = ProvisioningBaseline.holds(context)
+        Log.i(
+            LOG_TAG,
+            "Apply ($kind): policy ${if (policy == null) "none" else "present"}, calls ${callState.javaClass.simpleName} " +
+                "(store: ${CallPolicyStore.describe()}), managed $managedForHardening, baseline $baseline",
+        )
         // The VPN's shape (design 95 rev. 3): the filter, Bare Vibb's sink on cellular (the parent's choice, or a roaming
         // session that outlived the roaming lock), the pass shape that stands ready for it - all lifted by the override
         // and the pause. Only true-by-default (filtering on) with no policy yet, as before. Design 97: "I utlandet"'s
@@ -450,7 +494,7 @@ object AppEnforcer {
         // with the filter by the override and the pause, as the filter is. Design 95 §2.2: and with the sink and the
         // pass shape, lifted with them.
         val hardening = withFilterVpnLock(
-            hardeningPlan(policy?.hardening, managedForHardening, baseline = ProvisioningBaseline.holds(context)), policy?.hardening,
+            hardeningPlan(policy?.hardening, managedForHardening, baseline = baseline), policy?.hardening,
             filterOn = policy != null && vpnConfigLocked(vpnShapeNow),
         )
         clearHardening(context, dpm, admin, hardening)
@@ -466,10 +510,8 @@ object AppEnforcer {
 
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.
-        CallPolicyStore.ensureLoaded(context)
         // Design 77 D2: [callState] is the whole policy (managed while either channel is); the calls channel alone
         // decides the dialer role and the call restrictions, the SMS channel the SMS role and DISALLOW_SMS.
-        val callState = CallPolicyStore.state
         val callsState = callState.forCalls()
         val smsMode = callState.smsMode
         // Design 119 §4.1 (D2): the link gate while managed and no free browser is allowed - not a restriction, so a pause
@@ -491,7 +533,7 @@ object AppEnforcer {
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
         // the lock screen uses. A rule without calls (school) also turns managed calls off.
         val lockDecidedAt = android.os.SystemClock.elapsedRealtime()
-        val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive)
+        val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive, calls = callState)
         val scheduleLocked = lock.locked
         // A silent rule's Do Not Disturb (server 0121) from the same lock: off under the override, the pause and a lift.
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.follow(context, lock, lockDecidedAt)
@@ -1818,13 +1860,13 @@ object AppEnforcer {
         if (!dpm.isDeviceOwnerApp(context.packageName)) return false
         // The Play Store (re)installed or updated: the full plan decides its suspension.
         if (packageName == PLAY_STORE) {
-            apply(context, currentPolicyDecision())
+            applyCurrent(context)
             return false
         }
         // Android Auto and the other Home apps: the full plan decides too (planOwnsAddedPackage).
         val pm = context.packageManager
         if (planOwnsAddedPackage(packageName, UpdateFence.homeCandidates(pm), context.packageName, controllablePackages(pm).toSet())) {
-            apply(context, currentPolicyDecision())
+            applyCurrent(context)
             return false
         }
 

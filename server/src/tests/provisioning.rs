@@ -109,6 +109,7 @@ fn provision_payload_uses_configured_values() {
         Some(("homewifi".to_string(), "secret".to_string())),
         "nb_NO",
         "Europe/Oslo",
+        false,
     )
     .expect("payload with a checksum configured");
     assert_eq!(payload["android.app.extra.PROVISIONING_LOCALE"], "nb_NO");
@@ -161,6 +162,7 @@ fn provision_payload_defaults_and_wifi_handling() {
         Some(("cafe".to_string(), String::new())),
         "",
         "",
+        false,
     )
     .unwrap();
     // Not configured: no locale or zone in the QR (the phone keeps its own).
@@ -198,7 +200,8 @@ fn provision_payload_defaults_and_wifi_handling() {
     );
 
     let no_wifi =
-        provisioning::provisioning_payload(&config, extras(), None, "en", "Europe/../x").unwrap();
+        provisioning::provisioning_payload(&config, extras(), None, "en", "Europe/../x", false)
+            .unwrap();
     // Malformed values never reach the QR.
     assert!(
         no_wifi
@@ -218,7 +221,9 @@ fn provision_payload_defaults_and_wifi_handling() {
 
     let mut unconfigured = config.clone();
     unconfigured.launcher_signature_checksum = None;
-    assert!(provisioning::provisioning_payload(&unconfigured, extras(), None, "", "").is_none());
+    assert!(
+        provisioning::provisioning_payload(&unconfigured, extras(), None, "", "", false).is_none()
+    );
 }
 
 #[test]
@@ -882,8 +887,8 @@ async fn the_env_server_url_loses_to_the_saved_one() {
     assert_eq!(provisioning::server_url(&saved(""), &app.state.config), "");
     // The QR's own payload (code QA L4): the env address with nothing saved, the saved one else.
     let qr_url = |settings: &crate::models::ProvisioningSettings| {
-        provisioning::setup_payload(&state.config, settings, None, "ABC123".to_string()).unwrap()
-            ["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"]["server_url"]
+        provisioning::setup_payload(&state.config, settings, None, false, "ABC123".to_string())
+            .unwrap()["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"]["server_url"]
             .clone()
     };
     assert_eq!(qr_url(&saved("")), env);
@@ -1215,4 +1220,148 @@ async fn a_remembered_wifi_network_is_sealed_reused_and_forgotten() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     let html = app.get_page(&action, &cookie).await.text();
     assert!(!html.contains("Forget Hjemme") && !html.contains("value=\"Hjemme\""));
+}
+
+/// Design 142 N3: `PROVISIONING_USE_MOBILE_DATA` only when the parent chose mobile data and the QR has no Wi-Fi (a
+/// Wi-Fi SSID wins on the phone); left out otherwise.
+#[test]
+fn mobile_data_goes_into_the_qr_only_without_wifi() {
+    let config = ForkConfig::for_tests();
+    let settings = crate::models::ProvisioningSettings::default();
+    const KEY: &str = "android.app.extra.PROVISIONING_USE_MOBILE_DATA";
+    let payload = |wifi: Option<(String, String)>, mobile: bool| {
+        provisioning::setup_payload(&config, &settings, wifi, mobile, "ABC123".to_string()).unwrap()
+    };
+    let wifi = || Some(("Hjemme".to_string(), "fake-wifi-pass".to_string()));
+    let mobile = payload(None, true);
+    assert_eq!(mobile[KEY], true);
+    assert!(
+        mobile
+            .get("android.app.extra.PROVISIONING_WIFI_SSID")
+            .is_none()
+    );
+    assert!(payload(wifi(), true).get(KEY).is_none(), "an SSID wins");
+    assert!(payload(None, false).get(KEY).is_none());
+    assert!(payload(wifi(), false).get(KEY).is_none());
+}
+
+/// Design 142 N3: "Mobildata" on Connect - the Wi-Fi fields are ignored (a field that would be refused makes the QR,
+/// nothing is saved), and the answer lands in the QR group with Mobildata still chosen; Wi-Fi is the default.
+#[tokio::test]
+async fn mobile_data_ignores_the_wifi_fields_and_saves_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    app.set_parent_pin(id).await;
+    let action = format!("/devices/{id}/provision");
+    let page = app.get_page(&action, &cookie).await.text();
+    let wifi_radio = settings_pages::part(&page, "id=\"net-wifi\"", ">");
+    let mobile_radio = settings_pages::part(&page, "id=\"net-mobile\"", ">");
+    assert!(wifi_radio.contains("checked"), "{wifi_radio}");
+    assert!(!mobile_radio.contains("checked"), "{mobile_radio}");
+    assert!(page.contains(&format!("action=\"/devices/{id}/provision#qr\"")));
+    // The radios come before the network row and the Wi-Fi fields (CSS hides the fields by sibling selectors).
+    let radio = page.find("id=\"net-mobile\"").unwrap();
+    assert!(radio < page.find("data-row=\"network\"").unwrap());
+    assert!(radio < page.find("data-row=\"wifi-fields\"").unwrap());
+    assert!(
+        page.find("data-row=\"wifi-fields\"").unwrap() < page.find("id=\"wifi_ssid\"").unwrap()
+    );
+    assert!(page.contains("The phone needs a SIM card with data."));
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[
+                ("network", "mobile"),
+                ("wifi_ssid", ""),
+                ("wifi_password", "not-a-real-pass"),
+                ("remember", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let text = res.text();
+    assert!(text.contains("data-row=\"qr\""), "{text}");
+    assert!(!text.contains("Nothing was made."));
+    assert!(settings_pages::part(&text, "id=\"net-mobile\"", ">").contains("checked"));
+    assert!(!settings_pages::part(&text, "id=\"net-wifi\"", ">").contains("checked"));
+    assert!(provisioning::saved_wifi(&app.db).await.unwrap().is_none());
+    let saved: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM security_events WHERE event_type = 'wifi_saved'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(saved, 0);
+    // Code QA M1: a real network typed under Mobildata with "Remember" - still a QR, still nothing saved or logged.
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[
+                ("network", "mobile"),
+                ("wifi_ssid", "Hjemme"),
+                ("wifi_password", "fake-wifi-pass"),
+                ("remember", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let text = res.text();
+    assert!(text.contains("data-row=\"qr\""), "{text}");
+    assert!(!text.contains("fake-wifi-pass"));
+    assert!(provisioning::saved_wifi(&app.db).await.unwrap().is_none());
+    let saved: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'wifi_%'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(saved, 0);
+    // What the handler makes of those fields, and the QR it builds from them: mobile data, no Wi-Fi.
+    let (mobile, ssid, password) = provisioning::form_network("mobile", "Hjemme", "fake-wifi-pass");
+    assert_eq!((mobile, ssid, password), (true, "", ""));
+    let settings = crate::models::ProvisioningSettings::default();
+    let payload = provisioning::setup_payload(
+        &app.state.config,
+        &settings,
+        (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string())),
+        mobile,
+        "ABC123".to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        payload["android.app.extra.PROVISIONING_USE_MOBILE_DATA"],
+        true
+    );
+    assert!(
+        payload
+            .get("android.app.extra.PROVISIONING_WIFI_SSID")
+            .is_none()
+    );
+    // Wi-Fi (or no choice): the fields, trimmed.
+    assert_eq!(
+        provisioning::form_network("wifi", " Hjemme ", " fake-wifi-pass "),
+        (false, "Hjemme", "fake-wifi-pass")
+    );
+    assert_eq!(
+        provisioning::form_network("", "Hjemme", ""),
+        (false, "Hjemme", "")
+    );
+    // Wi-Fi again: the same field is judged as before.
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[
+                ("network", "wifi"),
+                ("wifi_ssid", ""),
+                ("wifi_password", "not-a-real-pass"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
 }

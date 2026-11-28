@@ -169,8 +169,9 @@ object TimeRulesRuntime {
         emptySet()
     }
 
-    private fun messagingApps(context: Context): Set<String> {
-        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
+    /** [calls]: the call state an enforcement pass already holds (design 142 M3: one per pass); `null` reads the store. */
+    private fun messagingApps(context: Context, calls: CallPolicyState? = null): Set<String> {
+        val rules = ((calls ?: CallPolicyStore.state) as? CallPolicyState.Managed)?.rules
         return messagingAppPackages(rules, CallSystem.defaultSmsPackage(context))
     }
 
@@ -194,8 +195,15 @@ object TimeRulesRuntime {
         val usageAccess: Boolean? = null,
     )
 
-    /** [zone] is read once here and passed down; nothing below reads the system zone again. */
-    fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive(), zone: ZoneId = zone()): Snapshot {
+    /** [zone] is read once here and passed down; nothing below reads the system zone again. [calls]: the enforcement
+     * pass's call state ([currentLock]), `null` for the store's. */
+    fun snapshot(
+        context: Context,
+        policy: PolicyResponse?,
+        overrideActive: Boolean = overrideActive(),
+        zone: ZoneId = zone(),
+        calls: CallPolicyState? = null,
+    ): Snapshot {
         val clocks = clocks()
         // The next boot carries this time over (at most once a minute).
         com.kidslauncher.mdm.server.TrustedClock.checkpoint()
@@ -207,7 +215,7 @@ object TimeRulesRuntime {
         val budget = budgetUse(ledger, tp)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
         val decided = decideTimeLock(
-            tp, at, overrideActive, ruleLifts(context, records, tp.lifts, clocks), budget, messagingApps(context),
+            tp, at, overrideActive, ruleLifts(context, records, tp.lifts, clocks), budget, messagingApps(context, calls),
             // Security review S-L8: only the music app with our signer is exempt from the budget.
             musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
@@ -256,9 +264,9 @@ object TimeRulesRuntime {
         }
     }
 
-    /** The lock in force now for [policy] (the one being enforced). */
-    fun currentLock(context: Context, policy: PolicyResponse?, overrideActive: Boolean): TimeLock =
-        snapshot(context, policy, overrideActive).lock
+    /** The lock in force now for [policy] (the one being enforced); [calls] as [snapshot]'s. */
+    fun currentLock(context: Context, policy: PolicyResponse?, overrideActive: Boolean, calls: CallPolicyState? = null): TimeLock =
+        snapshot(context, policy, overrideActive, calls = calls).lock
 
     /** The lock in force now for the cached policy, the override and the pause counted; `null` before [init]. */
     fun lockNow(): TimeLock? {

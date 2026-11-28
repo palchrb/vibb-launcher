@@ -276,6 +276,16 @@ sealed interface PolicyToApply {
      * [Fallback] (the last-enforced plan has no `kid_lock`) nor `Apply(null)`. */
     val carriesParentChoice: Boolean get() = this is Apply && policy != null
 
+    /** For the apply's log line (design 142 M3): which decision, never what is in it. */
+    val kind: String get() = when (this) {
+        is Apply -> when {
+            policy == null -> "Apply(null)"
+            fromServer -> "Apply(fresh)"
+            else -> "Apply(cache)"
+        }
+        is Fallback -> "Fallback"
+    }
+
     /** A real policy (fresh or cached), or `null` on a phone that has never had one. [fromServer]: the server sent it
      * in this sync (accepted by [judgeFresh]); `false` for the cache. */
     data class Apply(override val policy: PolicyResponse?, val fromServer: Boolean = false) : PolicyToApply
@@ -286,6 +296,19 @@ sealed interface PolicyToApply {
      * override or pause ends, instead of leaving it as the override left it (open).
      */
     data class Fallback(override val policy: PolicyResponse) : PolicyToApply
+}
+
+/**
+ * Design 142 M3 (`AppEnforcer.applyCurrent`): the call state read first, the decision second. The invariant it rests
+ * on: `storeAcceptedPolicy` writes the policy cache and `calls_managed_last` in one editor and one `commit()`, and the
+ * sync's `CallPolicyStore.refresh` (which reads the call state from those same CE preferences) runs after it. So a
+ * managed call state read first means the cache already has the policy when the decision is read: an `Apply(null)`
+ * never comes with managed calls, wherever the sync's two writes land between these two reads (`HardeningTest`, which
+ * also scans that the two writes stay in one commit, before the refresh).
+ */
+inline fun <C, D> callsThenDecision(calls: () -> C, decision: () -> D): Pair<C, D> {
+    val callState = calls()
+    return callState to decision()
 }
 
 /** Used when neither the cache nor the last-enforced plan can be read: only our own package. */

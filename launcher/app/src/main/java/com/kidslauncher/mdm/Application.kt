@@ -116,7 +116,7 @@ class Application : android.app.Application() {
                             com.kidslauncher.mdm.music.MusicSync.nudge(this@Application, it)
                         }
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
-                            AppEnforcer.apply(this@Application, com.kidslauncher.mdm.server.currentPolicyDecision())
+                            AppEnforcer.applyCurrent(this@Application)
                             // The block set or cleared reaches the device page now (relock_blocks).
                             com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "relock_block")
                         }

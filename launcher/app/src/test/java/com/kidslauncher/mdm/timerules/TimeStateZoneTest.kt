@@ -110,6 +110,6 @@ class TimeStateZoneTest {
             val body = source.substringAfter(fn).substringAfter("{").substringBefore("\n    }\n")
             assertFalse("$fn reads the system zone again", body.contains("zone()"))
         }
-        assertTrue(source.contains("zone: ZoneId = zone()): Snapshot"))
+        assertTrue(source.contains("zone: ZoneId = zone(),\n        calls: CallPolicyState? = null,\n    ): Snapshot"))
     }
 }

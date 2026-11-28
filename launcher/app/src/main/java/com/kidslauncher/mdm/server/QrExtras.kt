@@ -73,6 +73,15 @@ object QrExtras {
 
     private fun store(context: Context) = QrExtrasStore(context.applicationContext.getSharedPreferences(QrExtrasStore.FILE, Context.MODE_PRIVATE))
 
+    /** Koble til's QR line (design 142 M4): whether the last QR code was refused, and whether its extras are kept for a
+     * retry. No Keystore call, never throws (false, false on a read error). */
+    fun keptState(context: Context): QrKeptState = try {
+        val store = store(context)
+        QrKeptState(refused = store.appliedRefused(), pending = store.hasPending())
+    } catch (e: Exception) {
+        QrKeptState(refused = false, pending = false)
+    }
+
     private fun enrolledNow(): Boolean = LauncherPreferences.mdm().enrolled() || DeviceCredentials.tokenStored()
 
     /**
@@ -261,6 +270,9 @@ object QrExtras {
         }
     }
 }
+
+/** [QrExtras.keptState]: the applied marker's refused flag and whether extras are kept. */
+data class QrKeptState(val refused: Boolean, val pending: Boolean)
 
 /** What one delivery (or retry) of the QR's admin extras does; [qrExtrasAction]. */
 enum class QrExtrasAction { NONE, SKIP_APPLIED, SKIP_ENROLLED, REFUSE, APPLY }

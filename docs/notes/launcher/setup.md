@@ -169,6 +169,11 @@
   recents) or it stops; `startFromHome` starts nothing while it is shown, and Koble til comes back at the next resume
   of Home after Settings. `ConnectScreenTest`. The root cause is unconfirmed (no emulator run behind the guess): §6bp
   row 9 must be run again on 14 and 16 to close the finding.
+- After a failed QR it says why (design 142 M4): its error slot, after `EnrolWait`'s lines and a typed failure, shows
+  "Ikke koblet til ennå. Prøver igjen." while the QR's extras are kept for a retry and nothing runs, or "QR-koden
+  virket ikke. Bruk en ny oppsettkode." once the QR's code was refused - only while the enrolment's witness says never
+  enrolled (the refused flag is cleared only by a QR path). `qrConnectLine`, `QrExtras.keptState` (no Keystore call),
+  read at every render; `ConnectScreenTest`.
 - Back closes it for that one resume of Home; it comes back the next time Home comes to the front. Not exported, out
   of Recents, `FLAG_SECURE`. `ConnectScreenTest`.
 

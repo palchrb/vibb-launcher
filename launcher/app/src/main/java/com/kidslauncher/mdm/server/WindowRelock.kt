@@ -610,7 +610,7 @@ object WindowRelock {
 
         override fun trustedInstallers() = setOf(PLAY_STORE, app.packageName)
 
-        override fun apply() = AppEnforcer.apply(app, currentPolicyDecision())
+        override fun apply() = AppEnforcer.applyCurrent(app)
 
         override fun permittedListsOk() = AppEnforcer.permittedListsOk
 

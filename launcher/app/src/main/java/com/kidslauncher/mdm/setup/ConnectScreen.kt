@@ -71,6 +71,23 @@ private fun urlHost(url: String): String? = try {
     null
 }
 
+/** Design 142 M4: why the QR didn't connect, in Koble til's error slot. */
+enum class QrConnectLine { RETRYING, REFUSED }
+
+/**
+ * Design 142 M4: nothing while an apply runs (the button says busy); the QR's extras kept for a retry (any of
+ * `QrExtrasAfter.RETRY`'s causes: no network, the tailnet, a 5xx, `update_app`, the certificate check, the token) -
+ * "trying again"; the QR's code refused - "use a new code", only while the enrolment's witness says never enrolled
+ * (design QA M-b: the flag is cleared only by a QR path, so on a phone whose preferences were lost it would be an old
+ * QR's word). Kept extras come first: a refusal drops them, so kept ones are a newer QR's.
+ */
+fun qrConnectLine(refused: Boolean, pending: Boolean, running: Boolean, witnessEnrolled: Boolean): QrConnectLine? = when {
+    running -> null
+    pending -> QrConnectLine.RETRYING
+    refused && !witnessEnrolled -> QrConnectLine.REFUSED
+    else -> null
+}
+
 /** The button's state: both fields filled and no enrolment running. */
 fun connectButtonEnabled(serverUrl: String, code: String, busy: Boolean): Boolean =
     !busy && serverUrl.isNotBlank() && code.isNotBlank()

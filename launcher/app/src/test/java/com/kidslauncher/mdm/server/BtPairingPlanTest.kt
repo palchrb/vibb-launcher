@@ -190,7 +190,7 @@ class BtPairingPlanTest {
         assertTrue(close.contains("if (done) {\n            runCatching { prefs(app).edit().remove(KEY_END).commit() }"))
         val putBack = window.substringAfter("fun putBackIfMarked(")
         assertFalse(putBack.contains("finally"))
-        assertTrue(putBack.indexOf("AppEnforcer.apply(app, currentPolicyDecision())") < putBack.indexOf("} catch (e: Exception) {"))
+        assertTrue(putBack.indexOf("AppEnforcer.applyCurrent(app)") in 0 until putBack.indexOf("} catch (e: Exception) {"))
         assertTrue(putBack.indexOf("return\n            }") < putBack.indexOf("prefs(app).edit().remove(KEY_END).commit()"))
         val app = code(src("java/com/kidslauncher/mdm/Application.kt"))
         assertTrue(app.contains("com.kidslauncher.mdm.server.BtPairingWindow.putBackIfMarked(this)"))

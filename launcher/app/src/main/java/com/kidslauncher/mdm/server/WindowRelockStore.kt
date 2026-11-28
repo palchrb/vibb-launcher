@@ -221,7 +221,7 @@ interface RelockPlatform {
     /** The Play Store and our own package. */
     fun trustedInstallers(): Set<String>
 
-    /** `AppEnforcer.apply(currentPolicyDecision())`. */
+    /** `AppEnforcer.applyCurrent(context)`. */
     fun apply()
 
     /** The last apply() set its permitted accessibility and keyboard lists. */
