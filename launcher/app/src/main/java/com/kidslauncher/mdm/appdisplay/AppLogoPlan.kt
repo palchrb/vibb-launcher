@@ -32,13 +32,15 @@ const val LOGO_UPLOAD_CALL_MS = 10_000L
 const val WANTED_LOGOS_MAX_BODY = 16 * 1024
 
 /** What an app's logo was drawn under (§3): an app update, a system update or a change to our own drawing draws it
- * again. No night bit - the drawing is made in a fixed light configuration (R2-M3). */
+ * again. No night bit - the drawing is made in a fixed light configuration (R2-M3). [render] has no default: with
+ * `encodeDefaults = false` a default is never written, so an index from an older [LOGO_RENDER_VERSION] would read
+ * back as current and nothing would be drawn again. Without the key an index doesn't decode, and all is redrawn. */
 @Serializable
 data class AppLogoKey(
     val versionCode: Long,
     val lastUpdateTime: Long,
     val fingerprint: String,
-    val render: Int = LOGO_RENDER_VERSION,
+    val render: Int,
 )
 
 /** One app in the cache's index: its [key], the logo's [hash] - `null` when the draw failed or the PNG was over

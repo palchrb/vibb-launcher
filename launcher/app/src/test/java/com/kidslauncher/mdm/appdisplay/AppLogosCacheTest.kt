@@ -11,7 +11,8 @@ import java.nio.file.Files
 /** Design 87 step 2 §3: the phone's logo cache - the key, what is drawn again, what the report carries, which files
  * go, the drawing's budget and the index's temp-file write (R2-L10). */
 class AppLogosCacheTest {
-    private val key = AppLogoKey(versionCode = 7, lastUpdateTime = 1_000, fingerprint = "example/build:16/1")
+    private val key =
+        AppLogoKey(versionCode = 7, lastUpdateTime = 1_000, fingerprint = "example/build:16/1", render = LOGO_RENDER_VERSION)
     private val h1 = "%064x".format(1)
     private val h2 = "%064x".format(2)
 
@@ -118,6 +119,18 @@ class AppLogosCacheTest {
         assertEquals(AppLogoIndex(), decodeLogoIndex(null))
         assertEquals(AppLogoIndex(), decodeLogoIndex("{\"apps\":"))
         assertEquals(AppLogoIndex(), decodeLogoIndex("[]"))
+        assertTrue(encodeLogoIndex(index).contains("\"render\""))
+    }
+
+    /** An index written before the key carried `render` (no key in the file) is not read as today's: all is drawn. */
+    @Test
+    fun `an index without the render key draws everything again`() {
+        val fake = "a".repeat(64)
+        val old = """{"apps":{"p":{"key":{"version_code":7,"last_update_time":1000,"fingerprint":"f"},"hash":"$fake"}}}"""
+        val index = decodeLogoIndex(old)
+        assertEquals(AppLogoIndex(), index)
+        val current = mapOf("p" to key.copy(fingerprint = "f"))
+        assertEquals(listOf("p"), logoRefreshPlan(index, current, setOf(fake)).toDraw)
     }
 
     @Test

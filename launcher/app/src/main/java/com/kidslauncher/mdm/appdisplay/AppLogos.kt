@@ -58,7 +58,7 @@ object AppLogos {
             val files = hashesOnDisk(dir)
             val bySource = sources.associateBy { it.packageName }
             val current = sources.associate {
-                it.packageName to AppLogoKey(it.versionCode, it.lastUpdateTime, Build.FINGERPRINT.orEmpty())
+                it.packageName to AppLogoKey(it.versionCode, it.lastUpdateTime, Build.FINGERPRINT.orEmpty(), LOGO_RENDER_VERSION)
             }
             val plan = logoRefreshPlan(before, current, files)
             val apps = plan.index.apps.toMutableMap()
