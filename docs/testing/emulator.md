@@ -4007,3 +4007,51 @@ one stream each, the phone's times. §6ch's method, scripts adapted. At the boot
   script now waits for the pad. Not counted.
 
 No product code changed. The emulator was shut down (`sync`, `emu kill`) at 01:05 UTC and the server stopped.
+
+## 6ck. Design 142 M3: the enrolment apply keeps adb (branch `gate-142-m3`) - run 2026-11-28
+
+Design 142 §3 M3's gate row on **Android 14** (`compat34`, Google APIs, port 5556) and **Android 16** (`jelly36`, port
+5558), one after the other, 2026-11-28 09:04-10:04 UTC, with the owner's OK. `main` at `cbd590ac5`: the debug launcher
+(`assembleDebug`, `-PwarningsAsErrors=true`) and the debug server (`--features emulator_keys`, admin `127.0.0.1:3250`,
+phones `10.0.2.2:3251`, fresh data). Each enrolment: a `-wipe-data` cold boot, §4's adb lines (Device Owner, never
+enrolled: no policy ever, so the setup hold starts), a new phone in the PWA with its Parent PIN and Advanced ›
+Restrictions sent with "Block USB debugging" **off**, Koble til with a typed code. Checked every 5 s for 75 s from the
+Connect tap: `adb get-state`, `DISALLOW_DEBUGGING_FEATURES` in `dumpsys device_policy` (a value under the key) and in
+`dumpsys user` (the effective restrictions), `settings get global adb_enabled`. On 16 the policy engine lists a cleared
+key as `UserRestrictionPolicyKey userRestriction_no_debugging_features` with `Per-admin Policy: null` / `Resolved
+Policy (MostRestrictive): null` - present but not set, so a bare grep for the name counts it. Logs from one `logcat`
+stream per image. Scripts and logs in `~/emu-gate-1128/` (not committed).
+
+| Enrolment | Android 14 (`compat34`) | Android 16 (`jelly36`) |
+|---|---|---|
+| 1 | **Pass.** First policy 3.4 s after "Koble til: enrolled"; adb up, no restriction, `adb_enabled=1` at every check (to 67 s after the first policy) | **Pass.** First policy 4.5 s after; the same at every check (to 74 s after) - **the race window hit**, row below |
+| 2 | **Pass.** First policy 2.2 s after; the same to 74 s after | **Pass.** First policy 73 s after (the VM loaded by another agent's build); the same to 59 s after |
+| 3 | **Pass** - **the race window hit**, row below. First policy 5.0 s after; the same to 70 s after | **Pass** (run last, after #4). First policy 1.6 s after; the same to 81 s after |
+| 4 | **Pass.** First policy 3.8 s after; the same to 71 s after | **Pass.** First policy 7.2 s after; the same to 89 s after |
+
+**8 of 8 enrolments kept adb**, `DISALLOW_DEBUGGING_FEATURES` never set (device policy and effective restrictions),
+`adb_enabled=1` throughout. Over the 8 images, 0 passes logged `policy none` with `managed true`.
+
+**The per-apply line at the first apply after the enrolment.** In every run the setup hold's pass came 0.04-0.8 s after
+"Koble til: enrolled": `Apply (Apply(null)): policy none, calls Unmanaged (store: ...), managed false, baseline false`.
+Then the "enrolled" sync's pass: `Apply (Apply(fresh)): policy present, calls Managed (store: Managed from CE), managed
+true, baseline false`, and the `sse_open` sync's pass, the same. In 2 of 8 (14 #3, 16 #1) the hold's line read
+`calls Unmanaged (store: Managed from CE)`: the sync's call state refresh landed while the hold's pass ran, after the pass
+had read its call state and decision (`callsThenDecision`). The old pass read `CallPolicyStore.state` mid-pass there,
+got managed with no policy, and set the hardening defaults - the old failure, 2 of 4 enrolments. The pass kept the pair
+it read and set nothing. `baseline false` throughout: adb provisioning arms no baseline (`ProvisioningBaseline.arm` runs
+only in the QR's compliance step).
+
+**Noted (not counted, no finding).**
+- 14 #2: the first typing of the server address was cut (`http://10.`) on a slow boot, and Koble til refused it on the
+  phone with its https line (no server contact). Retyped on the same fresh image, then enrolled. The fields are now
+  typed and checked on screen (`typefield.sh`).
+- 14 #4's first image: "Koble til: enrolment failed (ConnectException)" on the Connect tap, 28 s after the launcher's
+  filter VPN came up (the other runs had the same order and connected). Koble til showed its error; nothing enrolled.
+  Not tapped again on that image; the row ran on a new wiped image.
+- Android 16: one image was lost before its enrolment (the emulator process ended with no exit line in its log while the
+  VM was short of memory; an emulator of another agent restarted in the same minutes), and on the next image a System
+  UI "isn't responding" dialog on a slow boot (Wait) and `dpm set-device-owner` failing for its whole minute of tries,
+  then succeeding by hand; enrolled on that fresh image. Boots took 72-148 s on 16 against 48-94 s on 14 under that load.
+
+No product code changed. Each emulator was shut down (`emu kill`) after its last row and the server stopped at 10:04 UTC.
