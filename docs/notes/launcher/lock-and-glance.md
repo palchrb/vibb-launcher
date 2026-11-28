@@ -193,9 +193,19 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
     Now the runtime keeps `screenOnPowerWake` (`powerWakeTag`): decided at the screen-on from the last stamp, set by any
     later stamp the screen-on is the wake of, never cleared by one, and false from the screen-off. The SOS rule
     (`sosScreenOn`, at the pause's mark, its delay and the stop's mark) and the look (`powerRecheck`'s `powerWake`) read
-    the tag; the loss inside the re-plug's window takes its budget. A press-SOS still keeps its mark: the press that
-    turned the screen off ended the tag, and its screen-on ends a short dark spell, so no stamp sets it again.
-    `PowerGlanceTest` (the log's sequence, re-plugs 0.3-2 s after the wake, re-plugs on one screen-on, the press-SOS).
+    the tag; the loss inside the re-plug's window takes its budget. A press-SOS from a lit screen keeps its mark: the
+    press that turned the screen off ended the tag, and the next press's screen-on ends a short dark spell, so no stamp
+    sets it again. **Not told apart (the code QA's M, open - the owner's choice):** a press-SOS that starts in the dark -
+    press 1's screen-on ends a long dark spell, so a power change stamped from 2 s before it (`POWER_WAKE_AFTER_MS`) to
+    0.8 s after it (`POWER_WAKE_BEFORE_MS`) tags it: no SOS mark, the glance re-fronted over the SOS screen (the old
+    rule had the same window; since 1o a later stamp no longer un-tags it). A plug-in that woke the screen itself is no
+    such case (press 1 turns it off). Narrowing it is one constant, `POWER_WAKE_BEFORE_MS` (800 -> 350-500 ms): the
+    plug-in's own wake must then be stamped within that - the emulator measured +24..+350 ms, ~+500 ms from the broadcast
+    once the glance has lost the front - or the charging glimpse comes back. The look trusts the tag (a tagged screen-on
+    sets no mark); each change has its own look with its own stamp, and the budget before the open one still takes a
+    loss in its window (`FaceRefronts.prevPowerAtMs`; a re-plug no longer cancels the unplug's look or moves its budget).
+    `PowerGlanceTest` (the log's sequence, re-plugs 0.3-2 s after the wake, re-plugs on one screen-on, the press-SOS lit
+    and in the dark, the unplug's loss after a re-plug).
   - *R2, decided* (the user, 2026-11-02; branch `android-r2`): as the face with Android's secure keyguard locked
     (`AndroidLock.refrontHeld`) **and the kiosk off** (`LockTaskChrome.kioskOn` false) the glance takes **no lock task**
     (`lockTaskEntry(.., androidLocked)` -> NONE, beside the VoIP row; log `AndroidLock: lock task: none of the glance's

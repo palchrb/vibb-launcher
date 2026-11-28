@@ -116,9 +116,10 @@ class PowerGlanceTest {
         assertTrue(runtime.contains("addAction(Intent.ACTION_POWER_CONNECTED)\n                addAction(Intent.ACTION_POWER_DISCONNECTED)\n            },\n            ContextCompat.RECEIVER_NOT_EXPORTED,"))
         assertTrue(runtime.contains("lastScreenOffElapsed = SystemClock.elapsedRealtime()"))
         val receiver = runtime.substringAfter("private val powerReceiver").substringBefore("\n    }\n")
-        assertTrue(receiver.contains("handler.removeCallbacks(powerCheck)"))
-        assertTrue(receiver.contains("handler.postDelayed(powerCheck, POWER_RECHECK_MS)"))
-        val check = runtime.substringAfter("private val powerCheck").substringBefore("\n    }\n")
+        // PLAN 1o's code QA L2: each change its own look with its own stamp - a re-plug cancels no earlier look.
+        assertFalse(receiver.contains("removeCallbacks"))
+        assertTrue(receiver.contains("handler.postDelayed({ powerLook(now) }, POWER_RECHECK_MS)"))
+        val check = runtime.substringAfter("private fun powerLook(powerAt: Long) {").substringBefore("\n    }\n")
         assertTrue(check.contains("powerRecheck(chromeLocked, lockResumed, powerAt, lockPausedAt, powerWake = wake, sosMarked = marked)"))
         assertTrue(check.contains("refrontAttempt = 0"))
         // A yield's pending recheck is replaced, not doubled: removed, then the check (which reposts one).
@@ -290,10 +291,10 @@ class PowerGlanceTest {
     fun `the glue - the receiver opens the budget, the look moves no count`() {
         val runtime = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/PinLockRuntime.kt") }
             .first { it.exists() }.readText().replace(Regex("\\s+"), " ")
-        val receiver = runtime.substringAfter("private val powerReceiver").substringBefore("private val ")
+        val receiver = runtime.substringAfter("private val powerReceiver").substringBefore("private fun powerLook(")
         val open = receiver.indexOf("faceRefronts = faceRefronts.powerChanged(now)")
-        assertTrue(open in receiver.indexOf("powerChangedAt = now") until receiver.indexOf("handler.postDelayed(powerCheck, POWER_RECHECK_MS)"))
-        val look = runtime.substringAfter("private val powerCheck").substringBefore("fun onLockResumed(")
+        assertTrue(open in receiver.indexOf("powerChangedAt = now") until receiver.indexOf("handler.postDelayed({ powerLook(now) }, POWER_RECHECK_MS)"))
+        val look = runtime.substringAfter("private fun powerLook(powerAt: Long) {").substringBefore("fun onLockResumed(")
         assertFalse(look.contains("faceRefronts"))
     }
 
@@ -302,10 +303,11 @@ class PowerGlanceTest {
     /**
      * The runtime's power and SOS bookkeeping (PinLockRuntime's screen receiver, power receiver, the pause's and the
      * stop's marks, the face's check) over the pure steps: the screen-on's tag ([powerWakeTag]), the SOS rule's screen-on
-     * ([sosScreenOn]), the counts ([faceRefrontStep]). An SOS app on the phone.
+     * ([sosScreenOn]), the counts ([faceRefrontStep]). An SOS app on the phone. The code QA's L3: the screen-on before
+     * [screenOff] is there too (5 s before it), as on a phone.
      */
-    private inner class Phone(var screenOff: Long?) {
-        var screenOn: Long? = null
+    private inner class Phone(var screenOff: Long) {
+        var screenOn: Long? = screenOff - 5_000L
         var tag = false
         var face = FaceRefronts()
         var lostAt: Long? = null
@@ -453,6 +455,81 @@ class PowerGlanceTest {
     }
 
     @Test
+    fun `a stamp in the dark tags nothing - not the screen-on before the screen-off`() {
+        val phone = Phone(screenOff = 10_000L)
+        phone.power(10_200L)
+        assertFalse("long before, then dark", phone.tag)
+        // A short lit spell: on, off 0.3 s later, a stamp 0.5 s after the screen-on - inside its window, but in the dark.
+        phone.on(20_000L)
+        phone.off(20_300L)
+        phone.power(20_500L)
+        assertFalse(phone.tag)
+        phone.on(25_000L)
+        assertFalse("the stamp 4.5 s before the next screen-on", phone.tag)
+        phone.lost(25_500L)
+        assertTrue(phone.marked)
+    }
+
+    @Test
+    fun `a press-SOS from the dark with a power change around press 1 - read as the change's wake, no mark (open, the code QA's M)`() {
+        // Today's outcome, documented (powerWakeTag's KDoc): press 1 ends a long dark spell, so a stamp from
+        // POWER_WAKE_AFTER_MS before it to POWER_WAKE_BEFORE_MS after it tags the screen-on. Narrowing it is
+        // POWER_WAKE_BEFORE_MS alone - the owner's choice.
+        val press1 = 30_000L
+        for (stamp in listOf(press1 + 300L, press1 + POWER_WAKE_BEFORE_MS, press1 - POWER_WAKE_AFTER_MS)) {
+            val phone = Phone(screenOff = 20_000L)
+            if (stamp < press1) phone.power(stamp)
+            phone.on(press1)
+            if (stamp > press1) phone.power(stamp)
+            assertTrue("stamp ${stamp - press1}", phone.tag)
+            phone.lost(press1 + 1_200L) // the SOS screen
+            assertFalse("stamp ${stamp - press1}: no mark", phone.marked)
+            assertTrue("stamp ${stamp - press1}: re-fronted over it", phone.check().refronted())
+        }
+        // Outside the window the mark holds.
+        for (stamp in listOf(press1 + POWER_WAKE_BEFORE_MS + 1, press1 - POWER_WAKE_AFTER_MS - 1)) {
+            val phone = Phone(screenOff = 20_000L)
+            if (stamp < press1) phone.power(stamp)
+            phone.on(press1)
+            if (stamp > press1) phone.power(stamp)
+            phone.lost(press1 + 1_200L)
+            assertTrue("stamp ${stamp - press1}", phone.marked)
+        }
+    }
+
+    @Test
+    fun `a re-plug keeps the unplug's budget and look for the unplug's loss - within the bound`() {
+        // The code QA's L2: the unplug at 10 000 and its loss at 10 300, the re-plug's stamp at 11 400 before the
+        // unplug's look (11 000) ran.
+        val unplug = 10_000L
+        val replug = 11_400L
+        val lost = 10_300L
+        assertFalse("before: the re-plug's budget alone - its window misses the loss", FaceRefronts(powerAtMs = replug).powerCovers(lost))
+        val face = FaceRefronts().powerChanged(unplug).powerChanged(replug)
+        assertTrue(face.powerCovers(lost))
+        val (action, after) = check(face, lost)
+        assertTrue(action.refronted())
+        assertEquals(1, after.prevPowerUsed)
+        assertEquals(0, after.powerUsed)
+        assertEquals(1, after.powerSpent)
+        assertEquals(0, after.screenOn)
+        // Each look its own stamp: the unplug's look is a fresh loss, the re-plug's stamp alone would not be.
+        assertEquals(PowerRecheck(false, true), powerRecheck(true, false, unplug, lost, powerWake = true, sosMarked = false))
+        assertEquals(none, powerRecheck(true, false, replug, lost, powerWake = true, sosMarked = false))
+
+        // The bound: two budgets open, one left to spend - the second budget's first re-front falls to the screen-on's count.
+        var two = FaceRefronts(powerSpent = POWER_BUDGETS_PER_SCREEN_ON - 1).powerChanged(10_000L).powerChanged(12_000L)
+        val (first, afterFirst) = check(two, 10_300L)
+        assertTrue(first.refronted())
+        two = afterFirst
+        assertEquals(POWER_BUDGETS_PER_SCREEN_ON, two.powerSpent)
+        assertFalse(two.powerCovers(12_300L))
+        assertEquals(two.screenOn to ANDROID_REFRONT_CAP, two.forLoss(12_300L))
+        // The one before is dropped with the open one once the budgets are spent.
+        assertNull(two.powerChanged(14_000L).prevPowerAtMs)
+    }
+
+    @Test
     fun `the glue - the tag set at the screen-on, kept by the power receiver, ended by the screen-off, read by the SOS rule and the look`() {
         val runtime = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/PinLockRuntime.kt") }
             .first { it.exists() }.readText().replace(Regex("\\s+"), " ")
@@ -460,10 +537,10 @@ class PowerGlanceTest {
         val on = runtime.indexOf("lastScreenOnElapsed = SystemClock.elapsedRealtime()")
         assertTrue(on > 0)
         assertTrue(runtime.indexOf("screenOnPowerWake = powerWakeTag(false, powerChangedAt, lastScreenOnElapsed, lastScreenOffElapsed)") in on until on + 300)
-        val receiver = runtime.substringAfter("private val powerReceiver").substringBefore("private val ")
+        val receiver = runtime.substringAfter("private val powerReceiver").substringBefore("private fun powerLook(")
         val tag = receiver.indexOf("screenOnPowerWake = powerWakeTag(screenOnPowerWake, now, lastScreenOnElapsed, lastScreenOffElapsed)")
-        assertTrue(tag in receiver.indexOf("powerChangedAt = now") until receiver.indexOf("handler.postDelayed(powerCheck, POWER_RECHECK_MS)"))
-        assertTrue(runtime.substringAfter("private val powerCheck").substringBefore("fun onLockResumed(").contains("val wake = screenOnPowerWake"))
+        assertTrue(tag in receiver.indexOf("powerChangedAt = now") until receiver.indexOf("handler.postDelayed({ powerLook(now) }, POWER_RECHECK_MS)"))
+        assertTrue(runtime.substringAfter("private fun powerLook(powerAt: Long) {").substringBefore("fun onLockResumed(").contains("val wake = screenOnPowerWake"))
         assertEquals("the pause's mark and delay, the stop's mark", 3, Regex("sosScreenOn\\(lastScreenOnElapsed, screenOnPowerWake\\)").findAll(runtime).count())
         assertFalse("the latest stamp alone is read nowhere", runtime.contains("powerWokeScreen("))
     }

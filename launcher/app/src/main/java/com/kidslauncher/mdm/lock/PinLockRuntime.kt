@@ -127,7 +127,7 @@ object PinLockRuntime {
     private var sosFlowUntilElapsed = 0L
 
     /** (4i) The last `ACTION_POWER_CONNECTED` or `ACTION_POWER_DISCONNECTED` (elapsed ms; `null` = none in this process):
-     * its own wake is no SOS gesture ([sosScreenOn]), and [powerCheck] looks at the glance after it. Main thread. */
+     * its own wake is no SOS gesture ([sosScreenOn]), and its own look ([powerLook]) reads the glance after it. Main thread. */
     private var powerChangedAt: Long? = null
 
     /** (4i) The last screen-off (elapsed ms): a screen-off after a power change's wake ends its tag ([powerWokeScreen]).
@@ -1558,8 +1558,9 @@ object PinLockRuntime {
 
     private val refrontCheck = Runnable { runRefrontCheck() }
 
-    /** (4i) `ACTION_POWER_CONNECTED`/`DISCONNECTED`: stamped, and [powerCheck] once, [POWER_RECHECK_MS] later. Main
-     * thread. */
+    /** (4i) `ACTION_POWER_CONNECTED`/`DISCONNECTED`: stamped, and the change's own look ([powerLook]) once,
+     * [POWER_RECHECK_MS] later - each change its own (PLAN 1o's code QA L2: a re-plug no longer cancels the unplug's
+     * look). Main thread. */
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_POWER_CONNECTED && intent.action != Intent.ACTION_POWER_DISCONNECTED) return
@@ -1571,8 +1572,7 @@ object PinLockRuntime {
             // glance-replug: the loss this change causes has a re-front budget of its own (the owner's third plug-in on
             // one screen-on met the cap of the two before it).
             faceRefronts = faceRefronts.powerChanged(now)
-            handler.removeCallbacks(powerCheck)
-            handler.postDelayed(powerCheck, POWER_RECHECK_MS)
+            handler.postDelayed({ powerLook(now) }, POWER_RECHECK_MS)
         }
     }
 
@@ -1580,15 +1580,17 @@ object PinLockRuntime {
      * (4i) The charging glimpse: the glance lost the front around a plug-in or unplug (Android's `BlockedAppActivity` over
      * it) - a probable-SOS mark the change's own wake set ends (any other mark wins), and the re-front check runs now as
      * a fresh loss: the same rule as any loss ([refrontAction]), so the kid's PIN pad, the exempt screens and the cap all
-     * hold. A yield's pending recheck is replaced by this check (which reposts its own). Main thread.
+     * hold. A yield's pending recheck is replaced by this check (which reposts its own). [powerAt] is this change's
+     * stamp, not the latest one. The look trusts the screen-on's tag ([screenOnPowerWake]): a tagged screen-on never sets
+     * a mark ([sosScreenOn] is `null` for it), so a mark with the tag set is one set before a late stamp tagged the
+     * screen-on - the change's own wake's, cleared here. A new way to set a mark must keep that. Main thread.
      */
-    private val powerCheck = Runnable {
-        val app = appContext ?: return@Runnable
-        val powerAt = powerChangedAt ?: return@Runnable
+    private fun powerLook(powerAt: Long) {
+        val app = appContext ?: return
         val wake = screenOnPowerWake
         val marked = SystemClock.elapsedRealtime() < sosFlowUntilElapsed
         val step = powerRecheck(chromeLocked, lockResumed, powerAt, lockPausedAt, powerWake = wake, sosMarked = marked)
-        if (!step.freshLoss) return@Runnable
+        if (!step.freshLoss) return
         if (step.clearSosMark) {
             sosFlowUntilElapsed = 0L
             sosMarkUnlogged = false
